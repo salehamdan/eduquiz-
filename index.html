@@ -3725,6 +3725,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 }
 
 // ── ROOT ──────────────────────────────────────────────────────
+
+function removeReadingProgressStalePanels(){
+  ["rp-student-practice-panel","rp-student-progress-panel","rp-v11-student-status"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.remove();
+  });
+}
+
 function App() {
   const [user,setUser]=useState(null);
   const [data,setData]=useState(null);
@@ -3752,7 +3760,7 @@ function App() {
   },[]);
 
   function handleLogin(u){setUser(u);reload();}
-  function handleLogout(){clearSession();setUser(null);}
+  function handleLogout(){clearSession();removeReadingProgressStalePanels();setUser(null);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -3765,7 +3773,7 @@ function App() {
       <div style={{fontSize:"18px",fontWeight:"800",color:C.tx,marginBottom:"6px",textAlign:"center"}}>{directQuiz.title}</div>
       <div style={{fontSize:"13px",color:C.mu,marginBottom:"22px",textAlign:"center"}}>You're logged in as a teacher. This is a student quiz link.</div>
       <button onClick={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:C.p,color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F,marginBottom:"10px"}}>Go to my Teacher Dashboard →</button>
-      <button onClick={()=>{clearSession();setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
+      <button onClick={()=>{clearSession();removeReadingProgressStalePanels();setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
     </div>;
   }
   if(directQuiz && user && user.role==="student"){
@@ -4431,14 +4439,24 @@ function rpBalancedScore(r){
   }
 
   function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
+    const box=document.getElementById("rp-v11-student-status");
+    const txt=document.body.innerText||"";
+    const loginVisible=txt.includes("EduQuiz")&&txt.includes("دخول")&&!txt.includes("STUDENT DASHBOARD")&&!txt.includes("TEACHER DASHBOARD");
+    if(isTeacher() || loginVisible || !txt.includes("Reading Progress")){
+      if(box) box.remove();
+      return;
+    }
     const u=user(), ok=canSubmit(u.id);
-    let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
-    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
+    let b=box;
+    if(!b){
+      b=document.createElement("div");
+      b.id="rp-v11-student-status";
+      b.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";
+      (document.getElementById("root")||document.body).appendChild(b);
+    }
+    b.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Wait for teacher retake permission.";
+    b.style.background=ok?"#eff6ff":"#fff7ed";
+    b.style.color=ok?"#1d4ed8":"#9a3412";
   }
 
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
@@ -4447,6 +4465,46 @@ function rpBalancedScore(r){
  // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
 </script>
 
+
+
+<script>
+// ===== RP Logout Cleanup Guard =====
+(function(){
+  function session(){
+    try{return JSON.parse(localStorage.getItem("eq_session")||"null")||null;}catch(e){return null;}
+  }
+  function removeOldReadingPanels(){
+    ["rp-student-practice-panel","rp-student-progress-panel","rp-v11-student-status"].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.remove();
+    });
+  }
+  function isLoginScreen(){
+    const txt=document.body.innerText||"";
+    const s=session();
+    return !s || (txt.includes("EduQuiz") && txt.includes("دخول") && !txt.includes("STUDENT DASHBOARD") && !txt.includes("TEACHER DASHBOARD"));
+  }
+  function isTeacherScreen(){
+    const txt=document.body.innerText||"";
+    const s=session()||{};
+    return String(s.role||s.type||"").toLowerCase().includes("teacher") || txt.includes("TEACHER DASHBOARD");
+  }
+  function isWrongPage(){
+    const txt=document.body.innerText||"";
+    return txt.includes("Skill Breakdown") || txt.includes("Back to Quizzes") || (!txt.includes("Reading Progress") && !txt.includes("Record your reading"));
+  }
+  function guard(){
+    if(isLoginScreen() || isTeacherScreen() || isWrongPage()){
+      removeOldReadingPanels();
+    }
+  }
+  window.addEventListener("click",()=>setTimeout(guard,80),true);
+  window.addEventListener("hashchange",guard);
+  setInterval(guard,500);
+  setTimeout(guard,100);
+})();
+ // ===== END RP Logout Cleanup Guard =====
+</script>
 
 </body>
 </html>
