@@ -2449,8 +2449,35 @@ function ReadingProgressStudent({user,data,reload}){
     await fsSet("readingSubmissions",id,{id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"});
     setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
   }
-  if(task)return <div>
+  if(task)
+  function rpStudentStatusMessageV44(s){
+    if(!s) return "";
+    if(s.status==="rejected") return "❌ تم رفض المحاولة من المعلم. انتظر السماح بإعادة المحاولة.";
+    if(s.status==="retake_allowed") return "🔁 تمت إتاحة إعادة المحاولة من المعلم.";
+    if(s.status==="accepted") return "✅ تم اعتماد المحاولة من المعلم.";
+    if(s.analysis) return "📊 تم تحليل المحاولة. يمكنك مراجعة نتيجتك.";
+    return "⏳ تم التسليم، بانتظار تحليل المعلم.";
+  }
+  function rpStudentStatusColorV44(s){
+    if(!s) return "#64748b";
+    if(s.status==="rejected") return C.d;
+    if(s.status==="retake_allowed") return C.w;
+    if(s.status==="accepted") return C.s;
+    if(s.analysis) return C.p;
+    return "#64748b";
+  }
+
+  return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
+
+    <Card style={{marginBottom:"10px",border:"1px solid "+C.br,background:"#fff"}}>
+      <strong style={{fontSize:"14px",color:C.tx}}>📌 حالة آخر محاولة</strong>
+      {subs&&subs.length>0?(()=>{const s=subs.slice().reverse()[0];return <div style={{marginTop:"7px",padding:"9px",borderRadius:"12px",background:"#f8fafc",border:"1px solid "+C.br}}>
+        <div style={{fontSize:"12px",fontWeight:900,color:rpStudentStatusColorV44(s)}}>{rpStudentStatusMessageV44(s)}</div>
+        <div style={{fontSize:"10px",color:C.mu,marginTop:"4px"}}>Status: {s.status||"submitted"} · {s.createdAt||""}</div>
+      </div>})():<p style={{fontSize:"12px",color:C.mu}}>لا توجد محاولات سابقة حتى الآن.</p>}
+    </Card>
+
     <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>setTask(null)}>Back</Btn></div>
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
@@ -2863,6 +2890,29 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const classRows=classComparisonRows();
 
   
+  
+  async function rpRejectOnlyV43(sub){
+    try{
+      if(!sub||!sub.id){alert("No submission selected.");return;}
+      if(!confirm("Reject this Reading Progress attempt?")) return;
+      const payload={...sub,status:"rejected",analysisStatus:sub.analysisStatus||"Completed",rejectedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+      if(sub.__local){
+        try{
+          const arr=localRecords();
+          const i=arr.findIndex(function(x){return x.id===sub.id;});
+          if(i>=0){arr[i]={...arr[i],status:"rejected",analysisStatus:arr[i].analysisStatus||"Completed",rejectedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};saveLocalRecords(arr);}
+        }catch(e){}
+      }
+      await fsSet("readingSubmissions",sub.id,payload);
+      setMsg("✅ Attempt rejected.");
+      alert("✅ تم رفض المحاولة.");
+      await reload();
+    }catch(e){
+      console.error("Reject failed",e);
+      alert("Reject failed: "+((e&&e.message)?e.message:e));
+    }
+  }
+
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}>
@@ -3089,7 +3139,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn>
             <Btn size="sm" color={C.s} onClick={()=>updateSubStatus(s,"accepted")}>Accept</Btn>
             <Btn size="sm" color={C.w} onClick={()=>updateSubStatus(s,"retake_allowed")}>Retake</Btn>
-            <Btn size="sm" color={C.d} onClick={()=>updateSubStatus(s,"rejected")}>Reject</Btn>
+            <Btn size="sm" color={C.d} onClick={()=>rpRejectOnlyV43(s)}>Reject</Btn>
             <Btn size="sm" color={"#475569"} onClick={()=>deleteSub(s)}>Delete</Btn>
           </div>
         </div>
@@ -4362,7 +4412,7 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V42_REMOVE_HIDE_SHOW_KEEP_API_AUDIO -->
+<!-- RP_BUILD_V44_STUDENT_REJECT_STATUS_VISIBLE -->
 
 <script>
 try{
