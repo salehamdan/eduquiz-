@@ -2868,20 +2868,34 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     try{
       if(!sub||!sub.id){alert("No submission selected.");return;}
       if(!confirm("Reject this Reading Progress attempt?")) return;
-      const payload={...sub,status:"rejected",analysisStatus:sub.analysisStatus||"Completed",rejectedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+      setMsg("⏳ Rejecting…");
+      // Send ONLY the changed fields (merge), not the entire submission with its big audio data URL.
+      const extra={
+        id:sub.id,
+        status:"rejected",
+        analysisStatus:sub.analysisStatus||"Completed",
+        rejectedAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
       if(sub.__local){
         try{
           const arr=localRecords();
           const i=arr.findIndex(function(x){return x.id===sub.id;});
-          if(i>=0){arr[i]={...arr[i],status:"rejected",analysisStatus:arr[i].analysisStatus||"Completed",rejectedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};saveLocalRecords(arr);}
+          if(i>=0){arr[i]={...arr[i],...extra};saveLocalRecords(arr);}
         }catch(e){}
       }
-      await fsSet("readingSubmissions",sub.id,payload);
-      setMsg("✅ Attempt rejected.");
+      // Use merge:true so we only update these fields — does NOT re-send the audio.
+      if(FIREBASE_OK && db){
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined?stripUndefined(extra):extra, {merge:true});
+      } else {
+        await fsSet("readingSubmissions",sub.id,extra);
+      }
+      setMsg("✅ تم رفض المحاولة.");
       alert("✅ تم رفض المحاولة.");
       await reload();
     }catch(e){
       console.error("Reject failed",e);
+      setMsg("⚠️ Reject failed: "+((e&&e.message)?e.message:e));
       alert("Reject failed: "+((e&&e.message)?e.message:e));
     }
   }
@@ -3846,8 +3860,14 @@ document.addEventListener("click", function(e){
     };
   }
   function isTeacher(){
-    const u=user(), b=document.body.innerText||"";
-    return u.role.includes("teacher") || b.includes("TEACHER DASHBOARD") || b.includes("Teacher Dashboard") || b.includes("+ Quiz");
+    // Trust ONLY the session role. Page text is unreliable because both
+    // teacher and student screens contain shared words like "Reading Progress".
+    const u=user();
+    return u.role.includes("teacher");
+  }
+  function isStudent(){
+    const u=user();
+    return u.role==="student" || (u.role && !u.role.includes("teacher"));
   }
   function taskId(){return "reading-progress-task-1";}
   function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
@@ -3924,7 +3944,27 @@ function rpBalancedScore(r){
   function finalScore(r){
     const manual = Number(r.teacherScore);
     if(Number.isFinite(manual) && manual > 0) return Math.max(0, Math.min(100, Math.round(manual)));
-    return rpBalancedScore(r);
+    let score = rpBalancedScore(r);
+    if(score === "" || score===null || score===undefined) return score;
+    // Apply teacher-defined difficulty rule:
+    // Avg of accuracy & speed → if ≤30 then Beginner +10%, Advanced −10%; fades to 0 by avg 70.
+    const diff = String(r.difficulty || r.level || "intermediate").toLowerCase();
+    if(diff !== "intermediate"){
+      const acc = Number(r.accuracy);
+      const wcpm = Number(r.wcpm);
+      const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm / 130 * 100)) : null;
+      const parts = [acc, speed].filter(Number.isFinite);
+      if(parts.length){
+        const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
+        let strength;
+        if(avg <= 30) strength = 10;
+        else if(avg >= 70) strength = 0;
+        else strength = Math.round(10 * (70 - avg) / 40);
+        if(diff === "beginner") score = Math.min(100, score + strength);
+        if(diff === "advanced") score = Math.max(0, score - strength);
+      }
+    }
+    return score;
   }
 
   function difficultyBonus(r){
@@ -4319,6 +4359,28 @@ function rpBalancedScore(r){
     return "rp_attempt_records_v11";
   }
   function session(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
+  // Difficulty adjustment: average of accuracy & speed (WCPM as %).
+  // Rule (teacher-defined): if avg is around 30 then Beginner +10%, Advanced -10%, Intermediate unchanged.
+  // Applied smoothly across the whole range so it never gives unfair jumps.
+  function difficultyAdjust(r){
+    const diff = String(r.difficulty || r.level || "intermediate").toLowerCase();
+    if(diff === "intermediate") return 0;
+    const acc = Number(r.accuracy);
+    const wcpm = Number(r.wcpm);
+    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm / 130 * 100)) : null;
+    const parts = [acc, speed].filter(Number.isFinite);
+    if(!parts.length) return 0;
+    const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
+    // Symmetric rule: when avg <= 30 → full bonus/penalty of 10. When avg >= 70 → fades to 0
+    // so weak readers get the full support and strong readers aren't unfairly capped.
+    let strength;
+    if(avg <= 30) strength = 10;
+    else if(avg >= 70) strength = 0;
+    else strength = Math.round(10 * (70 - avg) / 40); // linear fade between 30→70
+    if(diff === "beginner") return +strength;   // Beginner gets bonus
+    if(diff === "advanced") return -strength;   // Advanced gets penalty
+    return 0;
+  }
   function finalScore(r){
     const manual=Number(r.teacherScore); if(Number.isFinite(manual)&&manual>0)return Math.max(0,Math.min(100,Math.round(manual)));
     const acc=Number(r.adjustedAccuracy||r.finalScoreOfficial||r.accuracy);
@@ -4326,7 +4388,8 @@ function rpBalancedScore(r){
     const wcpm=Number(r.wcpm);
     if(!Number.isFinite(acc)&&!Number.isFinite(flu)&&!Number.isFinite(wcpm))return null;
     const speed=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):0;
-    const score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
+    let score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
+    score += difficultyAdjust(r);
     return Math.max(0,Math.min(100,score));
   }
   function progressPercent(scores){
@@ -4350,21 +4413,60 @@ function rpBalancedScore(r){
     return String(u.name||u.fullName||u.studentName||"").trim().toLowerCase();
   }
   function isStudentView(){
-    const txt=document.body.innerText||"";
-    return txt.includes("Student")||txt.includes("Reading Progress")||txt.includes("Record");
+    // Trust the session role. Page text is unreliable.
+    const u=session();
+    const role=String(u.role||u.type||"").toLowerCase();
+    return role==="student" || (role && !role.includes("teacher"));
   }
-  function render(){
+  async function fetchFirebaseRecords(sid, name){
+    try{
+      if(typeof firebase === "undefined" || !firebase.firestore) return [];
+      const db = firebase.firestore();
+      const snap = await db.collection("readingSubmissions").get();
+      const out=[];
+      snap.forEach(d=>{
+        const r=d.data();
+        const matchById = String(r.studentId||"").trim()===sid;
+        const matchByName = String(r.studentName||"").trim().toLowerCase()===name;
+        if(matchById || matchByName) out.push({...r, id:d.id});
+      });
+      return out;
+    }catch(e){ console.warn("Fetch firebase records failed",e); return []; }
+  }
+  async function render(){
     if(document.getElementById("rp-student-progress-panel"))return;
     if(!isStudentView())return;
     const sid=currentStudentId(), name=currentStudentName();
-    const recs=readJSON(rpKey(),[]).filter(r=>{
+    if(!sid && !name) return;
+    // Combine LOCAL + FIREBASE so student sees teacher's analysis (which lives in Firebase).
+    const localRecs = readJSON(rpKey(),[]).filter(r=>{
       return String(r.studentId||"").trim()===sid || String(r.studentName||"").trim().toLowerCase()===name;
-    }).filter(r=>finalScore(r)!==null);
+    });
+    const fbRecs = await fetchFirebaseRecords(sid, name);
+    // Dedupe by id (firebase wins because it has teacher's analysis)
+    const merged = {};
+    localRecs.forEach(r=>{ if(r.id) merged[r.id]=r; });
+    fbRecs.forEach(r=>{
+      const existing = merged[r.id] || {};
+      // Flatten analysis if present so finalScore() can read it
+      const flat = {...existing, ...r};
+      if(r.analysis){
+        if(r.analysis.accuracy!==undefined) flat.accuracy = r.analysis.accuracy;
+        if(r.analysis.wcpm!==undefined) flat.wcpm = r.analysis.wcpm;
+        if(r.analysis.fluency!==undefined) flat.fluency = r.analysis.fluency;
+        if(r.analysis.mistakeCount!==undefined) flat.mistakes = r.analysis.mistakeCount;
+        if(r.analysis.finalScore!==undefined) flat.finalScoreOfficial = r.analysis.finalScore;
+      }
+      merged[r.id] = flat;
+    });
+    const recs = Object.values(merged).filter(r=>finalScore(r)!==null);
     if(!recs.length)return;
     recs.sort((a,b)=>String(a.submittedAt||a.createdAt||"").localeCompare(String(b.submittedAt||b.createdAt||"")));
     const scores=recs.map(finalScore);
     const p=progressPercent(scores);
     const latest=scores[scores.length-1];
+    const best=Math.max.apply(null,scores);
+    const avg=Math.round(scores.reduce((a,b)=>a+b,0)/scores.length);
     const box=document.createElement("div");
     box.id="rp-student-progress-panel";
     box.style.cssText="margin:14px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
@@ -4372,6 +4474,8 @@ function rpBalancedScore(r){
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
       '<div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Latest: '+latest+'%</div>'+
       '<div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Attempts: '+scores.length+'</div>'+
+      '<div style="padding:9px 12px;border-radius:12px;background:#f0fdf4;color:#166534;font-weight:800">Best: '+best+'%</div>'+
+      '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Average: '+avg+'%</div>'+
       '<div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Growth: '+(p!==null?p+"%":"—")+'</div>'+
       '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">'+level(p)+'</div>'+
       '</div>'+renderBars(scores);
