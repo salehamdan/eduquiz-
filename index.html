@@ -2954,7 +2954,7 @@ function ReadingProgressStudent({user,data,reload}){
   }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V32 Hide Removed Stable</div></Card>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V34 Independent AI Key Settings</div></Card>
     <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}><strong style={{fontSize:"13px",color:C.tx}}>📌 Reading Progress Status</strong><p style={{fontSize:"12px",color:C.mu,margin:"6px 0 0",fontWeight:submitStatus?800:500}}>{submitStatus||(mySubs.some(function(s){return s.status==="submitted"&&!s.analysis;})?"Submitted. Waiting for teacher analysis.":"No new submission yet.")}</p><Btn size="sm" color={C.p} onClick={syncMyOldReadingResults} style={{marginTop:"8px"}}>Sync My Old Reading Results</Btn><div style={{fontSize:"10px",color:C.mu,marginTop:"5px"}}>Use once if older results were saved only on this device.</div></Card>
     <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher · Retake practice: {effectiveRequirePractice(t)?"Required":"Optional"}</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,overflow:"hidden",background:"#fff"}}><strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Progress Dashboard</strong><p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Your reading performance summary appears here, including previous saved attempts when they match your account.</p><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginTop:"10px"}}>{chip("Latest",latest!==null?latest+"%":"—","#eff6ff","#1d4ed8")}{chip("Attempts",mySubs.length,"#ecfdf5","#166534")}{chip("Analyzed",analyzedCount,"#eff6ff","#1d4ed8")}{chip("Pending Review",pendingCount,"#fff7ed","#9a3412")}{audioFailedCount?chip("Audio Failed",audioFailedCount,"#fef2f2","#991b1b"):null}{chip("Growth",growth!==null?growth+"%":"—","#fff7ed","#9a3412")}{chip("Best",best!==null?best+"%":"—","#f8fafc","#334155")}{chip("Average",avg!==null?avg+"%":"—","#f8fafc","#334155")}</div>{bars()}</Card>
@@ -2983,6 +2983,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [speedWeight,setSpeedWeight]=useState("reduced");
   const [refreshTick,setRefreshTick]=useState(0);
   const [showPanel,setShowPanel]=useState(true);
+  const [showAiKeySettings,setShowAiKeySettings]=useState(false);
 
   function studentNameById(id){
     const s=(data.students||[]).find(function(x){return String(x.id)===String(id)||String(x.studentId||"")===String(id);});
@@ -3540,17 +3541,34 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const groupStats=statsForStudents(selectedGroup);
   const classRows=classComparisonRows();
 
+  /* Hide disabled: panel stays visible */
   
 
   return <div>
     <div id="rp-teacher-top"></div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,background:"#f8fafc"}}>
-      <strong style={{fontSize:"14px",color:C.tx}}>📌 Hide removed: dashboard always visible</strong>
-      <p style={{fontSize:"11px",color:C.mu,margin:"5px 0 0"}}>Reading Progress, alerts, results, and the performance dashboard will not disappear.</p>
+      <strong style={{fontSize:"14px",color:C.tx}}>📌 Hide disabled: Reading Progress stays visible</strong>
+      <p style={{fontSize:"11px",color:C.mu,margin:"5px 0 0"}}>The teacher panel cannot be hidden, so the dashboard and results remain accessible.</p>
     </Card>
+    <Card style={{marginBottom:"10px",border:"2px solid #2563eb",background:"#ffffff"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
+        <strong style={{fontSize:"15px",color:C.tx}}>🔑 AI Key Settings</strong>
+        <Btn size="sm" color={showAiKeySettings?C.mu:C.p} onClick={()=>setShowAiKeySettings(!showAiKeySettings)}>{showAiKeySettings?"Hide Key Settings":"Show Key Settings"}</Btn>
+      </div>
+      {showAiKeySettings&&<div style={{marginTop:"10px",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",background:"#f8fafc"}}>
+        <input type="password" value={key} onChange={e=>setAiKey(e.target.value)} placeholder="Enter AI API Key" style={inp} />
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+          <Btn color={C.p} onClick={saveKey}>Save Key</Btn>
+          <Btn color={C.s} onClick={testKey}>Test Key</Btn>
+          <Btn color={C.d} onClick={clearKey}>Clear</Btn>
+        </div>
+        <p style={{fontSize:"11px",color:C.mu,margin:"8px 0 0"}}>The key is saved locally in this browser only.</p>
+      </div>}
+    </Card>
+    
     <Card style={{position:"sticky",top:"8px",zIndex:50,marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none",boxShadow:"0 10px 24px rgba(15,23,42,.18)"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
-        <div style={{minWidth:"210px",flex:1}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Build: V32 Hide Removed Stable</div></div>
+        <div style={{minWidth:"210px",flex:1}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Build: V34 Independent AI Key Settings</div></div>
         <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
           
           <Btn size="sm" color={C.p} onClick={()=>document.getElementById("rp-teacher-bottom")?.scrollIntoView({behavior:"smooth",block:"center"})}>Bottom</Btn><Btn size="sm" color={C.s} onClick={syncTeacherLocalReadingRecords}>Sync Local Reading Records</Btn><Btn size="sm" color={C.pu} onClick={()=>document.getElementById("rp-tasks-section")&&document.getElementById("rp-tasks-section").scrollIntoView({behavior:"smooth",block:"start"})}>📚 Tests / Tasks</Btn><Btn size="sm" color={C.w} onClick={()=>document.getElementById("rp-results-section")&&document.getElementById("rp-results-section").scrollIntoView({behavior:"smooth",block:"start"})}>📊 Results</Btn>
@@ -3589,8 +3607,6 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         <span style={{padding:"8px 10px",borderRadius:"12px",background:"#eff6ff",color:C.p,fontWeight:900}}>Submissions: {subs.length}</span>
         <span style={{padding:"8px 10px",borderRadius:"12px",background:"#ecfdf5",color:"#166534",fontWeight:900}}>Analyzed: {analyzed.length}</span>
         <span style={{padding:"8px 10px",borderRadius:"12px",background:"#fff7ed",color:"#9a3412",fontWeight:900}}>Average Final: {avg}%</span>
-        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:800}}>Class: {filter==="all"?"All Classes":className(filter)}</span>
-        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:800}}>Assessment: {sensitivity} / {speedWeight}</span>
       </div>
     </Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p,background:"#ffffff",maxHeight:"70vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -5119,6 +5135,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V32_HIDE_REMOVED_STABLE -->
+<!-- RP_BUILD_V34_INDEPENDENT_AI_KEY_SETTINGS -->
 </body>
 </html>
