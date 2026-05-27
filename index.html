@@ -2597,6 +2597,15 @@ function ReadingProgressStudent({user,data,reload}){
   function taskSubs(t){
     return mySubs.filter(function(s){return s.taskId===t.id;});
   }
+  function effectiveRequirePractice(t){
+    const done=taskSubs(t).filter(function(x){return x.status==="retake_allowed";});
+    if(done.length){
+      const last=done[done.length-1];
+      if(last.requirePracticeOverride!==undefined) return !!last.requirePracticeOverride;
+      if(last.wordPracticeRequired!==undefined) return !!last.wordPracticeRequired;
+    }
+    return !!t.requirePractice;
+  }
   function canOpenTask(t){
     if((t.status||"open")==="closed") return false;
     const done=taskSubs(t);
@@ -2722,7 +2731,7 @@ function ReadingProgressStudent({user,data,reload}){
     return unique.filter(function(w){return hyp.indexOf(w)<0;}).slice(0,7);
   }
   const practiceWords=selectedTask&&blob?wrongWordsFor(selectedTask,transcript):[];
-  const needsPractice=!!(selectedTask&&selectedTask.requirePractice)&&practiceWords.length>0;
+  const needsPractice=!!(selectedTask&&effectiveRequirePractice(selectedTask))&&practiceWords.length>0;
   const passedCount=practiceWords.filter(function(w){return passedWords[w];}).length;
   const practiceDone=!needsPractice || passedCount===practiceWords.length;
   const currentWord=practiceWords[Math.min(practiceIndex,Math.max(0,practiceWords.length-1))]||"";
@@ -2889,7 +2898,7 @@ function ReadingProgressStudent({user,data,reload}){
         classId:user.classId,teacherId:selectedTask.teacherId,
         audioUrl:"",audioStoragePath:"",audioUploadStatus:"uploading",audioUploadMode:"storage",
         transcript:transcript,seconds:seconds,createdAt:today(),submittedAt:new Date().toISOString(),
-        status:"audio_uploading",analysisStatus:"Pending",wordPracticeRequired:!!selectedTask.requirePractice
+        status:"audio_uploading",analysisStatus:"Pending",wordPracticeRequired:!!effectiveRequirePractice(selectedTask)
       });
       setSubmitStatus("Uploading audio...");
       setMsg("Uploading audio...");
@@ -2932,7 +2941,7 @@ function ReadingProgressStudent({user,data,reload}){
         {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
         {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
         {blob&&<Card style={{marginTop:"10px",background:needsPractice?"#fff7ed":"#ecfdf5",border:"1px solid "+(needsPractice?"#fed7aa":"#bbf7d0")}}>
-          <strong style={{fontSize:"13px",color:practiceWords.length?"#9a3412":"#166534"}}>{practiceWords.length?(selectedTask.requirePractice?"🎯 Practice Wrong Words One by One":"🎯 Optional Word Practice"):"✅ No word practice required"}</strong>
+          <strong style={{fontSize:"13px",color:practiceWords.length?"#9a3412":"#166534"}}>{practiceWords.length?(effectiveRequirePractice(selectedTask)?"🎯 Practice Wrong Words One by One":"🎯 Optional Word Practice"):"✅ No word practice required"}</strong>
           {needsPractice?<div><p style={{fontSize:"11px",color:C.mu}}>The platform says the word first, then listens automatically. Close pronunciation is accepted. This practice is required only if your teacher enabled it.</p><div style={{display:"flex",gap:"6px",flexWrap:"wrap",margin:"8px 0"}}>{practiceWords.map(function(w,i){return <span key={w} style={{padding:"6px 10px",borderRadius:"999px",background:passedWords[w]?"#dcfce7":i===practiceIndex?"#fee2e2":"#f1f5f9",color:passedWords[w]?"#166534":i===practiceIndex?"#991b1b":C.tx,fontWeight:800}}>{passedWords[w]?"✅ ":""}{w}</span>;})}</div><div style={{padding:"10px",borderRadius:"12px",background:"#fff",border:"1px solid "+C.br,marginTop:"8px"}}><div style={{fontSize:"12px",color:C.mu}}>Current word {practiceIndex+1} of {practiceWords.length}</div><div style={{fontSize:"28px",fontWeight:900,color:"#991b1b",margin:"4px 0"}}>{currentWord}</div><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn size="sm" color={C.w} onClick={()=>speakWord(currentWord)}>🔊 Listen Again</Btn><Btn size="sm" color={C.pu} disabled={listeningWord||!currentWord} onClick={startPractice}>{listeningWord?"Listening…":"🎙️ Say the Word"}</Btn><Btn size="sm" color={C.mu} onClick={()=>{setPassedWords({});setPracticeIndex(0);setPracticeMsg("");}}>Reset Practice</Btn></div><div style={{fontSize:"11px",color:C.mu,marginTop:"6px"}}>Passed: {passedCount}/{practiceWords.length}</div></div></div>:<p style={{fontSize:"11px",color:"#166534"}}>No major missing words were detected. You can submit directly.</p>}
           {practiceMsg&&<p style={{fontSize:"12px",color:practiceMsg.indexOf("✅")===0?C.s:C.d,fontWeight:800}}>{practiceMsg}</p>}
         </Card>}
@@ -2944,7 +2953,7 @@ function ReadingProgressStudent({user,data,reload}){
   }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V26 Reading Tests Results Icons</div></Card>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V28 ReAnalyze Uses Current Settings</div></Card>
     <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}><strong style={{fontSize:"13px",color:C.tx}}>📌 Reading Progress Status</strong><p style={{fontSize:"12px",color:C.mu,margin:"6px 0 0",fontWeight:submitStatus?800:500}}>{submitStatus||(mySubs.some(function(s){return s.status==="submitted"&&!s.analysis;})?"Submitted. Waiting for teacher analysis.":"No new submission yet.")}</p><Btn size="sm" color={C.p} onClick={syncMyOldReadingResults} style={{marginTop:"8px"}}>Sync My Old Reading Results</Btn><div style={{fontSize:"10px",color:C.mu,marginTop:"5px"}}>Use once if older results were saved only on this device.</div></Card>
     <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,overflow:"hidden",background:"#fff"}}><strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Progress Dashboard</strong><p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Your reading performance summary appears here, including previous saved attempts when they match your account.</p><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginTop:"10px"}}>{chip("Latest",latest!==null?latest+"%":"—","#eff6ff","#1d4ed8")}{chip("Attempts",mySubs.length,"#ecfdf5","#166534")}{chip("Analyzed",analyzedCount,"#eff6ff","#1d4ed8")}{chip("Pending Review",pendingCount,"#fff7ed","#9a3412")}{audioFailedCount?chip("Audio Failed",audioFailedCount,"#fef2f2","#991b1b"):null}{chip("Growth",growth!==null?growth+"%":"—","#fff7ed","#9a3412")}{chip("Best",best!==null?best+"%":"—","#f8fafc","#334155")}{chip("Average",avg!==null?avg+"%":"—","#f8fafc","#334155")}</div>{bars()}</Card>
@@ -3183,6 +3192,20 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(!sub.analysis) return null;
     return viewMode==="official" ? officialScore(sub) : Number(sub.analysis.accuracy);
   }
+  function applyCurrentTeacherScoring(sub){
+    const official=officialScore(sub);
+    const raw=sub.analysis?Number(sub.analysis.accuracy):null;
+    const finalScore=viewMode==="official" ? official : raw;
+    return {
+      finalScore:Number.isFinite(finalScore)?Math.max(0,Math.min(100,Math.round(finalScore))):null,
+      officialScore:Number.isFinite(official)?Math.max(0,Math.min(100,Math.round(official))):null,
+      rawAccuracy:Number.isFinite(raw)?Math.max(0,Math.min(100,Math.round(raw))):null,
+      viewMode:viewMode,
+      sensitivity:sensitivity,
+      speedWeight:speedWeight,
+      reanalyzedAt:new Date().toISOString()
+    };
+  }
   function levelLabel(score){
     if(score===null||score===undefined) return "Not Analyzed";
     let adv=80, pro=70, dev=55;
@@ -3280,9 +3303,10 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     await reload();
   }
   async function allowTaskRetakes(t){
+    const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
     const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id);
     for(const s of related){
-      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",updatedAt:new Date().toISOString()});
+      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,updatedAt:new Date().toISOString()});
     }
     alert("Retake allowed for this task submissions.");
     await reload();
@@ -3292,6 +3316,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return myStudents.filter(st=>!classIds.length||classIds.includes(st.classId));
   }
   async function allowOneStudentRetake(t,studentId){
+    const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
     if(!studentId)return;
     const st=myStudents.find(x=>x.id===studentId);
     const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id&&s.studentId===studentId);
@@ -3300,21 +3325,28 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       return;
     }
     for(const s of related){
-      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",updatedAt:new Date().toISOString()});
+      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,updatedAt:new Date().toISOString()});
     }
     setRetakeStudentPick(p=>({...p,[t.id]:""}));
     alert("Retake allowed for: "+(st?.name||"selected student"));
     await reload();
   }
   async function analyze(sub){
-    if(sub.__local){
-      alert("This Whisper attempt is already linked. Use Analyze Saved Recording in the audio card if you need to re-analyze the audio.");
-      return;
-    }
     const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
     if(!task){alert("Task not found");return;}
     const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0);
-    await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"});
+    const tempSub={...sub,analysis};
+    const teacherScoring=applyCurrentTeacherScoring(tempSub);
+    const mergedAnalysis={...analysis,finalScore:teacherScoring.finalScore,officialScore:teacherScoring.officialScore,rawAccuracy:teacherScoring.rawAccuracy,scoringSettings:{viewMode,sensitivity,speedWeight},reanalyzedAt:teacherScoring.reanalyzedAt};
+    if(sub.__local){
+      const arr=localRecords();
+      const i=arr.findIndex(x=>x.id===sub.id);
+      if(i>=0){arr[i]={...arr[i],analysis:mergedAnalysis,teacherScoring,status:"analyzed",updatedAt:new Date().toISOString()}; saveLocalRecords(arr);}
+      setMsg("✅ Re-analyzed using current settings: "+viewMode+" / "+sensitivity+" / "+speedWeight);
+      return;
+    }
+    await fsSet("readingSubmissions",sub.id,{...sub,analysis:mergedAnalysis,teacherScoring,status:"analyzed",updatedAt:new Date().toISOString()});
+    setMsg("✅ Re-analyzed using current settings: "+viewMode+" / "+sensitivity+" / "+speedWeight);
     await reload();
   }
   async function delTask(t){
@@ -3343,12 +3375,18 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }catch(e){}
   }
   async function updateSubStatus(sub,status){
+    let extra={updatedAt:new Date().toISOString()};
+    if(status==="retake_allowed"){
+      const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
+      extra.wordPracticeRequired=requirePracticeForRetake;
+      extra.requirePracticeOverride=requirePracticeForRetake;
+    }
     if(sub.__local){
       const arr=localRecords();
       const i=arr.findIndex(x=>x.id===sub.id);
-      if(i>=0){arr[i].status=status; arr[i].updatedAt=new Date().toISOString(); saveLocalRecords(arr);}
+      if(i>=0){arr[i]={...arr[i],status:status,...extra}; saveLocalRecords(arr);}
     }else{
-      await fsSet("readingSubmissions",sub.id,{...sub,status});
+      await fsSet("readingSubmissions",sub.id,{...sub,status:status,...extra});
       await reload();
     }
   }
@@ -3365,17 +3403,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }
   }
   async function setClassStatus(status){
-    if(filter==="all"){alert("Choose a class first."); return;}
+    if(filter==="all"){alert("Choose a class first."); return;}\n    const classRequirePracticeForRetake = status==="retake_allowed" ? confirm("Require word practice for this class retake?\\nOK = Required\\nCancel = Optional") : false;
     const arr=localRecords();
     let changed=false;
     arr.forEach(r=>{
       const st=matchStudent(r)||{};
       const cid=classIdFor(r,st);
-      if(cid===filter){r.status=status; r.updatedAt=new Date().toISOString(); changed=true;}
+      if(cid===filter){r.status=status; if(status==="retake_allowed"){r.wordPracticeRequired=classRequirePracticeForRetake;r.requirePracticeOverride=classRequirePracticeForRetake;} r.updatedAt=new Date().toISOString(); changed=true;}
     });
     if(changed) saveLocalRecords(arr);
     const fsubs=firebaseSubs.filter(s=>s.classId===filter);
-    for(const s of fsubs){await fsSet("readingSubmissions",s.id,{...s,status});}
+    for(const s of fsubs){await fsSet("readingSubmissions",s.id,{...s,status,wordPracticeRequired:status==="retake_allowed"?classRequirePracticeForRetake:s.wordPracticeRequired,requirePracticeOverride:status==="retake_allowed"?classRequirePracticeForRetake:s.requirePracticeOverride});}
     if(fsubs.length) await reload();
   }
 
@@ -3495,7 +3533,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
               <div style={{fontSize:"10px",color:C.mu}}>{s.taskTitle||"Reading Progress Task"} · {s.createdAt||s.submittedAt||""} · {s.audioUploadStatus==="failed"?"Audio failed":"Needs analysis"}</div>
             </div>
             <div style={{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}}>
-              <Btn size="sm" color={C.p} onClick={()=>analyzeReading(s)}>Analyze</Btn>
+              <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>{s.analysis?"Re-analyze":"Analyze"}</Btn>
               <Btn size="sm" color={C.w} onClick={()=>jumpToReadingSubmission(s.id)}>Go</Btn>
             </div>
           </div>;
@@ -3538,7 +3576,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
               <div style={{fontSize:"10px",color:C.mu}}>{s.taskTitle||"Reading Progress Task"} · {s.createdAt||s.submittedAt||""} · {s.audioUploadStatus==="failed"?"Audio failed":"Needs analysis"}</div>
             </div>
             <div style={{display:"flex",gap:"6px",flexWrap:"wrap",justifyContent:"flex-end"}}>
-              <Btn size="sm" color={C.p} onClick={()=>analyzeReading(s)}>Analyze</Btn>
+              <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>{s.analysis?"Re-analyze":"Analyze"}</Btn>
               <Btn size="sm" color={C.w} onClick={()=>jumpToReadingSubmission(s.id)}>Go</Btn>
             </div>
           </div>;
@@ -3761,7 +3799,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           <div><strong style={{fontSize:"12px"}}>{st?.name||s.studentName||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Reading Progress"} · {s.createdAt} · {s.seconds||0}s · {s.status}{s.__local?" · Whisper":""}</div></div>
           <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
             {s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}
-            <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn>
+            <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>{s.analysis?"Re-analyze":"Analyze"}</Btn>
             <Btn size="sm" color={C.s} onClick={()=>updateSubStatus(s,"accepted")}>Accept</Btn>
             <Btn size="sm" color={C.w} onClick={()=>updateSubStatus(s,"retake_allowed")}>Retake</Btn>
             <Btn size="sm" color={C.d} onClick={()=>updateSubStatus(s,"rejected")}>Reject</Btn>
@@ -5078,6 +5116,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V26_READING_TESTS_RESULTS_ICONS -->
+<!-- RP_BUILD_V28_REANALYZE_USES_CURRENT_SETTINGS -->
 </body>
 </html>
