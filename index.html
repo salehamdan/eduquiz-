@@ -2457,7 +2457,97 @@ function ReadingProgressStudent({user,data,reload}){
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
+  // Build student progress dashboard from Firebase data (data.readingSubmissions).
+  // This shows the teacher's analysis directly inside the student's Reading tab.
+  function studentDiffAdjust(r){
+    const acc = Number(r.analysis&&r.analysis.accuracy);
+    const wcpm = Number(r.analysis&&r.analysis.wcpm);
+    const diff = String(r.difficulty || (data.readingTasks||[]).find(t=>t.id===r.taskId)?.level || "intermediate").toLowerCase();
+    if(diff === "intermediate") return 0;
+    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm/130*100)) : null;
+    const parts = [acc, speed].filter(Number.isFinite);
+    if(!parts.length) return 0;
+    const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
+    let strength;
+    if(avg <= 30) strength = 10;
+    else if(avg >= 70) strength = 0;
+    else strength = Math.round(10 * (70 - avg) / 40);
+    if(diff === "beginner") return +strength;
+    if(diff === "advanced") return -strength;
+    return 0;
+  }
+  function studentFinalScore(r){
+    if(!r||!r.analysis) return null;
+    const a = r.analysis;
+    const acc = Number(a.accuracy);
+    const flu = Number(a.fluency);
+    const wcpm = Number(a.wcpm);
+    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm)) return null;
+    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm/130*100)) : 0;
+    let score = Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
+    score += studentDiffAdjust(r);
+    return Math.max(0, Math.min(100, score));
+  }
+  const analyzed = subs.filter(s => s.analysis && (s.status==="analyzed" || s.status==="accepted" || s.analysis.accuracy!==undefined))
+                      .sort((a,b) => String(a.createdAt||a.submittedAt||"").localeCompare(String(b.createdAt||b.submittedAt||"")));
+  const scoresArr = analyzed.map(studentFinalScore).filter(s=>s!==null);
+  const latestScore = scoresArr.length ? scoresArr[scoresArr.length-1] : null;
+  const bestScore = scoresArr.length ? Math.max(...scoresArr) : null;
+  const avgScore = scoresArr.length ? Math.round(scoresArr.reduce((a,b)=>a+b,0)/scoresArr.length) : null;
+  let growthPct = null;
+  if(scoresArr.length >= 2){
+    const first = scoresArr[0], last = scoresArr[scoresArr.length-1];
+    growthPct = first===0 ? (last>0?100:0) : Math.round(((last-first)/Math.max(1,first))*100);
+  }
+  function growthLabel(p){
+    if(p===null) return "First attempt";
+    if(p>=25) return "🚀 Strong growth";
+    if(p>=10) return "📈 Good growth";
+    if(p>=1) return "➕ Slight growth";
+    if(p===0) return "➖ Stable";
+    return "📉 Needs work";
+  }
+  const rejectedCount = subs.filter(s=>s.status==="rejected").length;
+  const pendingCount = subs.filter(s=>s.status==="submitted" && !s.analysis).length;
+
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
+    {scoresArr.length>0 && <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}>
+      <strong style={{fontSize:"14px",color:C.tx,display:"block",marginBottom:"8px"}}>📈 My Reading Progress</strong>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:"7px"}}>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#eff6ff",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#1d4ed8",fontWeight:600}}>LATEST</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(latestScore)}}>{latestScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#f0fdf4",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#166534",fontWeight:600}}>BEST</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(bestScore)}}>{bestScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#f8fafc",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#334155",fontWeight:600}}>AVERAGE</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(avgScore)}}>{avgScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#fff7ed",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#9a3412",fontWeight:600}}>ATTEMPTS</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:"#9a3412"}}>{scoresArr.length}</div>
+        </div>
+        {growthPct!==null && <div style={{padding:"9px 11px",borderRadius:"10px",background:"#faf5ff",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:C.pu,fontWeight:600}}>GROWTH</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:growthPct>=0?C.s:C.d}}>{growthPct>=0?"+":""}{growthPct}%</div>
+        </div>}
+      </div>
+      <div style={{fontSize:"12px",color:C.mu,marginTop:"8px",textAlign:"center",fontWeight:700}}>{growthLabel(growthPct)}</div>
+      <div style={{display:"flex",gap:"5px",alignItems:"end",height:"56px",marginTop:"10px",justifyContent:"center",paddingBottom:"4px",borderBottom:"1px solid "+C.br}}>
+        {scoresArr.map((s,i)=><div key={i} title={"Attempt "+(i+1)+": "+s+"%"} style={{width:"22px",height:Math.max(5,Math.round(s/100*52))+"px",background:gc(s),borderRadius:"7px 7px 0 0",position:"relative"}}><span style={{position:"absolute",top:"-15px",left:"50%",transform:"translateX(-50%)",fontSize:"9px",fontWeight:800,color:gc(s)}}>{s}</span></div>)}
+      </div>
+      {(rejectedCount>0||pendingCount>0) && <div style={{display:"flex",gap:"6px",marginTop:"10px",flexWrap:"wrap",fontSize:"11px"}}>
+        {pendingCount>0 && <span style={{padding:"4px 10px",borderRadius:"999px",background:"#fef9c3",color:"#854d0e",fontWeight:700}}>⏳ {pendingCount} awaiting teacher</span>}
+        {rejectedCount>0 && <span style={{padding:"4px 10px",borderRadius:"999px",background:"#fee2e2",color:"#991b1b",fontWeight:700}}>❌ {rejectedCount} rejected</span>}
+      </div>}
+    </Card>}
+    {scoresArr.length===0 && subs.length>0 && <Card style={{marginBottom:"10px",background:"#fef9c3",border:"1px solid #fde047"}}>
+      <strong style={{fontSize:"13px",color:"#854d0e"}}>⏳ Waiting for teacher</strong>
+      <p style={{fontSize:"12px",color:"#854d0e",margin:"4px 0 0"}}>You submitted {subs.length} recording(s). Your teacher will analyze them and your results will appear here.</p>
+    </Card>}
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
@@ -3773,48 +3863,10 @@ document.addEventListener("click", function(e){
 
 
 <script>
-// ===== READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
+// ===== MINIMAL: Audio recording IndexedDB storage (kept for student recording) =====
 (function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const OLD_KEYS = ["rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
-  const API_KEY = "rp_openai_api_key";
   const DB_NAME = "EduQuizRP_AudioDB";
   const STORE = "audios";
-  let panelMade = false;
-
-  function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
-  function writeJSON(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
-  function records(){
-    let cur = readJSON(RP_KEY, null);
-    if(Array.isArray(cur)) return cur;
-    for(const k of OLD_KEYS){
-      let old = readJSON(k, null);
-      if(Array.isArray(old)){ writeJSON(RP_KEY, old); return old; }
-    }
-    writeJSON(RP_KEY, []);
-    return [];
-  }
-  function saveRecords(a){ writeJSON(RP_KEY,a); }
-
-  function migrateReadingScoresV13(){
-    try{
-      const a = records();
-      let changed = false;
-      a.forEach(r=>{
-        if(r && (r.transcript || Number.isFinite(Number(r.accuracy)))){
-          r.finalScoreOfficial = finalScore(r);
-          r.strictScore = finalScore(r);
-          r.adjustedAccuracy = adjustedAccuracy(r);
-          r.adjustedFluency = adjustedFluency(r);
-          changed = true;
-        }
-      });
-      if(changed) saveRecords(a);
-    }catch(e){ console.warn("score migration skipped", e); }
-  }
-
-
-
   function openDB(){
     return new Promise((resolve,reject)=>{
       const req = indexedDB.open(DB_NAME, 1);
@@ -3838,262 +3890,7 @@ document.addEventListener("click", function(e){
     });
     return item;
   }
-  async function getAudio(id){
-    if(!id) return null;
-    const db = await openDB();
-    return await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readonly");
-      const req = tx.objectStore(STORE).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
-  function user(){
-    const u=session();
-    return {
-      id:String(u.id||u.studentId||u.ID||u.number||u.studentNumber||u.name||"unknown").trim(),
-      name:String(u.name||u.fullName||u.studentName||u.id||"Student").trim(),
-      className:String(u.className||u.classId||u.class||u.grade||"Unassigned").trim(),
-      role:String(u.role||u.type||"").toLowerCase()
-    };
-  }
-  function isTeacher(){
-    // Trust ONLY the session role. Page text is unreliable because both
-    // teacher and student screens contain shared words like "Reading Progress".
-    const u=user();
-    return u.role.includes("teacher");
-  }
-  function isStudent(){
-    const u=user();
-    return u.role==="student" || (u.role && !u.role.includes("teacher"));
-  }
-  function taskId(){return "reading-progress-task-1";}
-  function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
-  function canSubmit(studentId){ const r=latest(studentId); return !r || r.status==="retake_allowed"; }
-  
-  function rpScoreWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function rpReferenceText(r){
-    return r.referenceText || r.taskText || r.text || r.readingText ||
-      "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function rpErrorStats(r){
-    const ref = rpScoreWords(rpReferenceText(r));
-    const hyp = rpScoreWords(r.transcript || "");
-    const used = Array(hyp.length).fill(false);
-    let correct = 0, missing = 0, repeated = 0, extra = 0;
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i>=0){ used[i]=true; correct++; if(i>0 && hyp[i-1]===w) repeated++; }
-      else missing++;
-    });
-    hyp.forEach((w,i)=>{ if(!used[i]){ if(i>0 && hyp[i-1]===w) repeated++; else extra++; } });
-    const totalRef = Math.max(1, ref.length);
-    const severeErrors = missing + extra;
-    const errorRatio = severeErrors / totalRef;
-    return {correct, missing, extra, repeated, totalRef, severeErrors, errorRatio};
-  }
-
-function rpBalancedScore(r){
-    const acc = Number(r.accuracy);
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-
-    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-
-    const speedSetting = r.speedSetting || "reduced";
-    const difficulty = r.difficulty || "intermediate";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-
-    let base;
-    if(speedSetting === "excluded"){
-      const vals = [acc, flu].filter(Number.isFinite);
-      base = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0) / vals.length) : (Number.isFinite(acc)?acc:0);
-    }else if(speedSetting === "normal"){
-      base = Math.round((Number.isFinite(acc)?acc*.65:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speedScore)?speedScore*.10:0));
-    }else{
-      base = Math.round((Number.isFinite(acc)?acc*.75:0)+(Number.isFinite(flu)?flu*.22:0)+(Number.isFinite(speedScore)?speedScore*.03:0));
-    }
-
-    const support = difficulty === "beginner" ? 4 : difficulty === "intermediate" ? 2 : 0;
-    let score = Math.round(base + support - es.missing*.75 - es.extra*.60 - es.repeated*.35);
-
-    if(es.errorRatio >= .80) score = Math.min(score, 35);
-    else if(es.errorRatio >= .70) score = Math.min(score, 38);
-    else if(es.errorRatio >= .60) score = Math.min(score, 42);
-    else if(es.errorRatio >= .50) score = Math.min(score, 48);
-    else if(es.errorRatio >= .40) score = Math.min(score, 55);
-    else if(es.errorRatio >= .30) score = Math.min(score, 65);
-
-    if(Number.isFinite(acc)){
-      if(acc < 15) score = Math.min(score, 15);
-      else if(acc < 25) score = Math.min(score, 22);
-      else if(acc < 35) score = Math.min(score, 30);
-      else if(acc < 45) score = Math.min(score, 38);
-      else if(acc < 55) score = Math.min(score, 46);
-      else if(acc < 65 && es.errorRatio >= .35) score = Math.min(score, 35);
-    }
-
-    return Math.max(0, Math.min(100, score));
-  }
-
-  function finalScore(r){
-    const manual = Number(r.teacherScore);
-    if(Number.isFinite(manual) && manual > 0) return Math.max(0, Math.min(100, Math.round(manual)));
-    let score = rpBalancedScore(r);
-    if(score === "" || score===null || score===undefined) return score;
-    // Apply teacher-defined difficulty rule:
-    // Avg of accuracy & speed → if ≤30 then Beginner +10%, Advanced −10%; fades to 0 by avg 70.
-    const diff = String(r.difficulty || r.level || "intermediate").toLowerCase();
-    if(diff !== "intermediate"){
-      const acc = Number(r.accuracy);
-      const wcpm = Number(r.wcpm);
-      const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm / 130 * 100)) : null;
-      const parts = [acc, speed].filter(Number.isFinite);
-      if(parts.length){
-        const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
-        let strength;
-        if(avg <= 30) strength = 10;
-        else if(avg >= 70) strength = 0;
-        else strength = Math.round(10 * (70 - avg) / 40);
-        if(diff === "beginner") score = Math.min(100, score + strength);
-        if(diff === "advanced") score = Math.max(0, score - strength);
-      }
-    }
-    return score;
-  }
-
-  function difficultyBonus(r){
-    const difficulty = r.difficulty || "intermediate";
-    const acc = Number(r.accuracy);
-    if(difficulty === "beginner"){
-      if(Number.isFinite(acc) && acc < 35) return 2;
-      if(Number.isFinite(acc) && acc < 50) return 4;
-      return 6;
-    }
-    if(difficulty === "intermediate"){
-      if(Number.isFinite(acc) && acc < 35) return 0;
-      return 2;
-    }
-    return 0;
-  }
-
-  function adjustedAccuracy(r){
-    const acc = Number(r.accuracy);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(acc) && !r.transcript) return "";
-    let out = Number.isFinite(acc) ? acc : Math.round((es.correct / es.totalRef) * 100);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    out = Math.round(out + support - es.missing*.65 - es.extra*.50 - es.repeated*.25);
-    if(es.errorRatio >= .80) out = Math.min(out, 35);
-    else if(es.errorRatio >= .70) out = Math.min(out, 38);
-    else if(es.errorRatio >= .60) out = Math.min(out, 42);
-    else if(es.errorRatio >= .50) out = Math.min(out, 48);
-    else if(es.errorRatio >= .40) out = Math.min(out, 55);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function adjustedFluency(r){
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-    let base = Number.isFinite(flu) ? flu : speedScore;
-    if((r.speedSetting || "reduced") === "normal") base = Math.round((Number.isFinite(flu)?flu*.85:0)+speedScore*.15);
-    else if((r.speedSetting || "reduced") === "reduced") base = Math.round((Number.isFinite(flu)?flu*.95:0)+speedScore*.05);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    let out = Math.round(base + support - es.missing*.55 - es.extra*.40 - es.repeated*.20);
-    if(es.errorRatio >= .80) out = Math.min(out, 38);
-    else if(es.errorRatio >= .70) out = Math.min(out, 42);
-    else if(es.errorRatio >= .60) out = Math.min(out, 46);
-    else if(es.errorRatio >= .50) out = Math.min(out, 52);
-    else if(es.errorRatio >= .40) out = Math.min(out, 58);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function escapeHtmlRP(s){
-    return String(s||"").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-
-  function referenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-
-  function cleanRP(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-
-  function coloredWordAnalysis(transcript){
-    if(!transcript) return "";
-    const ref = cleanRP(referenceText());
-    const hyp = cleanRP(transcript);
-    const used = Array(hyp.length).fill(false);
-    const out = [];
-    const extra = [];
-    const repeated = [];
-    let correct = 0, missing = 0;
-
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i >= 0){
-        used[i] = true;
-        correct++;
-        const rep = i>0 && hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        out.push(`<span title="correct" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:${rep?"#ede9fe":"#dcfce7"};color:${rep?"#6d28d9":"#166534"};font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }else{
-        missing++;
-        out.push(`<span title="missing" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ffedd5;color:#c2410c;text-decoration:line-through;font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }
-    });
-
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0 && hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-
-    let html = `<div style="line-height:2">${out.join(" ")}</div>`;
-    if(extra.length){
-      html += `<div style="margin-top:8px"><b style="color:#991b1b">Extra / wrong words:</b> ` + extra.map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#fee2e2;color:#991b1b;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    if(repeated.length){
-      html += `<div style="margin-top:6px"><b style="color:#6d28d9">Repeated words:</b> ` + [...new Set(repeated)].map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ede9fe;color:#6d28d9;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px">
-      <span style="padding:5px 8px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800">Correct: ${correct}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ffedd5;color:#c2410c;font-weight:800">Missing: ${missing}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800">Extra/Wrong: ${extra.length}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ede9fe;color:#6d28d9;font-weight:800">Repeated: ${repeated.length}</span>
-    </div>`;
-    return html;
-  }
-
-  function updateRecord(id,updates){
-    const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){
-      const m={...a[i],...updates};
-      m.finalScoreOfficial = finalScore(m);
-      m.adjustedAccuracy = adjustedAccuracy(m);
-      m.adjustedFluency = adjustedFluency(m);
-      m.updatedAt=new Date().toISOString();
-      a[i]=m;
-      saveRecords(a);
-    }
-  }
-  function setClass(cls, status){
-    const a=records();
-    a.forEach(r=>{ if(r.className===cls){ r.status=status; r.updatedAt=new Date().toISOString(); }});
-    saveRecords(a);
-  }
-
-  // Patch MediaRecorder and save the finished audio in IndexedDB.
+  // Patch MediaRecorder so recordings are saved to IndexedDB automatically.
   if(window.MediaRecorder && !window.__rpV11Patched){
     window.__rpV11Patched = true;
     const Original = window.MediaRecorder;
@@ -4109,396 +3906,17 @@ function rpBalancedScore(r){
           window.__RP_LAST_AUDIO_ID = item.id;
           window.__RP_LAST_AUDIO_URL = URL.createObjectURL(blob);
           window.__RP_LAST_AUDIO_SIZE = item.size;
-          alert("Audio saved successfully ✅");
-        }catch(err){
-          alert("Audio save failed: " + (err.message||err));
-        }
+        }catch(err){ console.warn("Audio save failed:", err); }
       });
       return mr;
     };
     window.MediaRecorder.isTypeSupported = Original.isTypeSupported.bind(Original);
   }
-
-  document.addEventListener("click", async function(e){
-    const btn=e.target.closest("button"); if(!btn) return;
-    const label=String(btn.textContent||"").trim().toLowerCase();
-    if(!(label.includes("submit to teacher") || label==="submit")) return;
-    if(isTeacher()) return;
-
-    const u=user();
-    if(!canSubmit(u.id)){
-      e.preventDefault(); e.stopPropagation();
-      alert("تم تسليم التسجيل مسبقًا. لا يمكنك إعادة التسجيل إلا إذا سمح المعلم بذلك.");
-      return false;
-    }
-    if(!window.__RP_LAST_AUDIO_ID){
-      e.preventDefault(); e.stopPropagation();
-      alert("لا يوجد تسجيل محفوظ. سجل الصوت أولًا ثم أوقف التسجيل وانتظر رسالة Audio saved successfully.");
-      return false;
-    }
-    if(!confirm("تأكيد الإرسال: سيتم إرسال هذا التسجيل مرة واحدة فقط. هل تريد الإرسال؟")){
-      e.preventDefault(); e.stopPropagation(); return false;
-    }
-    const item = await getAudio(window.__RP_LAST_AUDIO_ID);
-    if(!item || !item.blob){
-      e.preventDefault(); e.stopPropagation();
-      alert("لم يتم العثور على ملف الصوت. أعد التسجيل.");
-      return false;
-    }
-
-    const a=records();
-    a.push({
-      id:"rp_"+Date.now()+"_"+Math.random().toString(36).slice(2),
-      taskId:taskId(),
-      studentId:u.id,
-      studentName:u.name,
-      className:u.className,
-      submittedAt:new Date().toISOString(),
-      status:"submitted",
-      analysisStatus:"Pending",
-      audioId:item.id,
-      audioStatus:"audio attached",
-      audioSize:item.size,
-      audioType:item.type,
-      accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"",
-      teacherScore:"", teacherNotes:"", transcript:""
-    });
-    saveRecords(a);
-    alert("Audio submitted to teacher ✅");
-    studentStatus();
-  }, true);
-
-  function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
-  function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
-
-  async function transcribe(audioId){
-    const key=getKey();
-    if(!key) throw new Error("Add OpenAI API Key first.");
-    const item=await getAudio(audioId);
-    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
-    const file = new File([item.blob], "student-reading.webm", {type:item.type||"audio/webm"});
-    const form=new FormData();
-    form.append("file",file);
-    form.append("model","whisper-1");
-    form.append("language","en");
-    form.append("response_format","json");
-    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
-    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
-    const data=await resp.json();
-    return (data.text||"").trim();
-  }
-  function refText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
-  function score(ref,spoken,seconds=60){
-    const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
-    const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
-    let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
-    const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const accuracy=a.length?Math.round(correct/a.length*100):0;
-    const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
-    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
-  }
-  async function analyzeOne(id,silent=false){
-    const r=records().find(x=>x.id===id);
-    if(!r) return alert("Submission not found.");
-    if(!r.audioId) return alert("No audio attached. Allow retake and ask student to record again.");
-    updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
-    await migrateReadingScoresV13();
-    renderCards();
-    try{
-      const text=await transcribe(r.audioId);
-      const res=score(refText(),text,60);
-      updateRecord(id,{...res,transcript:text});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
-    }catch(err){
-      updateRecord(id,{analysisStatus:"Failed: "+err.message});
-      if(!silent) alert("فشل التحليل: "+err.message);
-    }
-    await renderCards();
-  }
-  async function testKey(){
-    const key=getKey(); if(!key) return alert("ضع مفتاح OpenAI أولًا.");
-    try{
-      const resp=await fetch("https://api.openai.com/v1/models",{headers:{"Authorization":"Bearer "+key}});
-      if(!resp.ok) throw new Error("Status "+resp.status);
-      alert("API Key works ✅");
-    }catch(e){ alert("API Key test failed: "+e.message); }
-  }
-  function fmt(n){ n=Number(n||0); if(!n)return"-"; if(n<1024)return n+" B"; if(n<1048576)return Math.round(n/1024)+" KB"; return (n/1048576).toFixed(1)+" MB"; }
-
-  function teacherPanel(){
-    if(!isTeacher()||panelMade) return;
-    panelMade=true;
-    const panel=document.createElement("div");
-    panel.id="rp-v11-panel";
-    panel.style.cssText="margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
-    panel.innerHTML=`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2></div>
-      <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
-      <div id="rp-v11-summary" style="margin:12px 0"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><select id="rp-v11-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;max-width:220px"><option value="all">All Classes</option></select><button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button><button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Class</button><button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button><button id="rp-v11-accept-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white">Accept Class</button><button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Class</button><button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Class</button></div>
-      <div style="margin:10px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0">
-        <b>Class Assessment</b>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 8px">Apply difficulty and speed settings to all Reading Progress attempts in the selected class.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="rp-v11-class-difficulty" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="beginner">Beginner / Supportive</option>
-            <option value="intermediate" selected>Intermediate / Normal</option>
-            <option value="advanced">Advanced / Strict</option>
-          </select>
-          <select id="rp-v11-class-speed" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="normal">Speed Normal</option>
-            <option value="reduced" selected>Speed Reduced</option>
-            <option value="excluded">Exclude Speed</option>
-          </select>
-          <button id="rp-v11-apply-class-assessment" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:800">Apply to Class</button>
-        </div>
-        <div id="rp-v11-class-assessment-summary" style="margin-top:8px;font-size:12px;color:#334155"></div>
-      </div>
-      <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
-    (document.getElementById("root")||document.body).prepend(panel);
-
-    panel.addEventListener("click",async e=>{
-      const id=e.target.id;
-      if(id==="rp-v11-refresh"){await renderCards();return;}
-      if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
-      if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
-      if(id==="rp-v11-test-key"){await testKey();return;}
-      if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
-      if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; setClass(cls,st); await renderCards(); return;}
-      if(id==="rp-v11-apply-class-assessment"){
-        const cls=document.getElementById("rp-v11-class").value;
-        if(cls==="all")return alert("اختر فصلًا محددًا أولًا.");
-        const difficulty=document.getElementById("rp-v11-class-difficulty").value;
-        const speedSetting=document.getElementById("rp-v11-class-speed").value;
-        const a=records();
-        let count=0;
-        const selectedText=document.getElementById("rp-v11-class").selectedOptions[0]?.textContent||cls;
-        a.forEach(r=>{
-          if(r.className===cls || r.classId===cls || r.className===selectedText || r.classId===selectedText){
-            r.difficulty=difficulty;
-            r.speedSetting=speedSetting;
-            r.finalScoreOfficial=finalScore(r);
-            r.adjustedAccuracy=adjustedAccuracy(r);
-            r.adjustedFluency=adjustedFluency(r);
-            r.updatedAt=new Date().toISOString();
-            count++;
-          }
-        });
-        saveRecords(a);
-        await renderCards();
-        alert("تم تطبيق تقييم الفصل على "+count+" محاولة.");
-        return;
-      }
-      const delAttempt=e.target.getAttribute("data-delete-attempt"); if(delAttempt){if(confirm("Delete this attempt and its audio?")){const a=records();const rec=a.find(x=>x.id===delAttempt);if(rec&&rec.audioId){try{const db=await openDB();await new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(rec.audioId);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(err){}}saveRecords(a.filter(x=>x.id!==delAttempt));await renderCards();}return;}
-      const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; updateRecord(rid,{status:st}); await renderCards(); }
-    });
-    panel.addEventListener("input",e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)updateRecord(s,{teacherScore:e.target.value}); if(n)updateRecord(n,{teacherNotes:e.target.value});});
-    panel.addEventListener("change",async e=>{const did=e.target.getAttribute("data-difficulty");const sid=e.target.getAttribute("data-speed-setting");if(did){updateRecord(did,{difficulty:e.target.value});await renderCards();return;}if(sid){updateRecord(sid,{speedSetting:e.target.value});await renderCards();return;}if(e.target.id==="rp-v11-class")await renderCards();});
-    renderCards();
-  }
-
-  async function renderCards(){
-    const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=records(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
-    const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
-    sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    sel.value=classes.includes(current)?current:"all";
-    const shown=arr.filter(r=>sel.value==="all"||r.className===sel.value), completed=shown.filter(r=>finalScore(r)!=="");
-    const avg=completed.length?Math.round(completed.reduce((s,r)=>s+Number(finalScore(r)),0)/completed.length):"-";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Average Final: ${avg}${avg==="-"?"":"%"}</div></div>`;
-    const ca=document.getElementById("rp-v11-class-assessment-summary");
-    if(ca){
-      const clsName=sel.value==="all"?"All Classes":sel.value;
-      const levels={beginner:"Supportive",intermediate:"Normal",advanced:"Strict"};
-      const classDiff=document.getElementById("rp-v11-class-difficulty")?.value||"intermediate";
-      const classSpeed=document.getElementById("rp-v11-class-speed")?.value||"reduced";
-      ca.innerHTML=`Current view: <b>${clsName}</b> · Attempts: <b>${shown.length}</b> · Analyzed: <b>${completed.length}</b> · Average: <b>${avg}${avg==="-"?"":"%"}</b> · Selected class assessment: <b>${levels[classDiff]||classDiff}</b> / <b>${classSpeed}</b>`;
-    }
-    const cards=document.getElementById("rp-v11-cards");
-    if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
-    let out="";
-    for(const r of shown){
-      const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):"";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(item.size)+" · "+(item.type||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Official: ${finalScore(r)===""?"-":finalScore(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#dbeafe;color:#1d4ed8;font-weight:800">Official Acc: ${adjustedAccuracy(r)===""?"-":adjustedAccuracy(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Official Fluency: ${adjustedFluency(r)===""?"-":adjustedFluency(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}
-            ${r.transcript?`<div style="padding:10px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155"><b>Colored Word Feedback</b><div style="font-size:12px;color:#64748b;margin:4px 0">Green = correct · Orange = missing · Red = extra/wrong · Purple = repeated</div><div style="font-size:12px;color:#166534;font-weight:800;margin:4px 0">Balanced scoring: Missing + Extra words reduce the score, but correct reading is counted.</div>${coloredWordAnalysis(r.transcript)}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select data-difficulty="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Difficulty</option><option value="beginner" ${r.difficulty==="beginner"?"selected":""}>Beginner</option><option value="intermediate" ${r.difficulty==="intermediate"?"selected":""}>Intermediate</option><option value="advanced" ${r.difficulty==="advanced"?"selected":""}>Advanced</option></select><select data-speed-setting="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Speed Weight</option><option value="normal" ${r.speedSetting==="normal"?"selected":""}>Speed Normal</option><option value="reduced" ${r.speedSetting==="reduced"?"selected":""}>Speed Reduced</option><option value="excluded" ${r.speedSetting==="excluded"?"selected":""}>Exclude Speed</option></select></div><div style="font-size:12px;color:#64748b;margin-top:-2px">Beginner changes the official score immediately. Intermediate is normal. Advanced is strict.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete-attempt="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete</button></div></div></div>`;
-    }
-    cards.innerHTML=out;
-  }
-
-  function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user(), ok=canSubmit(u.id);
-    let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
-    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
-  }
-
-  setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
 })();
- // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
 </script>
 
 
-<script>
-// ===== RP Student Progress Visibility Add-on =====
-(function(){
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function rpKey(){
-    for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
-      const v=readJSON(k,null); if(Array.isArray(v)) return k;
-    }
-    return "rp_attempt_records_v11";
-  }
-  function session(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
-  // Difficulty adjustment: average of accuracy & speed (WCPM as %).
-  // Rule (teacher-defined): if avg is around 30 then Beginner +10%, Advanced -10%, Intermediate unchanged.
-  // Applied smoothly across the whole range so it never gives unfair jumps.
-  function difficultyAdjust(r){
-    const diff = String(r.difficulty || r.level || "intermediate").toLowerCase();
-    if(diff === "intermediate") return 0;
-    const acc = Number(r.accuracy);
-    const wcpm = Number(r.wcpm);
-    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm / 130 * 100)) : null;
-    const parts = [acc, speed].filter(Number.isFinite);
-    if(!parts.length) return 0;
-    const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
-    // Symmetric rule: when avg <= 30 → full bonus/penalty of 10. When avg >= 70 → fades to 0
-    // so weak readers get the full support and strong readers aren't unfairly capped.
-    let strength;
-    if(avg <= 30) strength = 10;
-    else if(avg >= 70) strength = 0;
-    else strength = Math.round(10 * (70 - avg) / 40); // linear fade between 30→70
-    if(diff === "beginner") return +strength;   // Beginner gets bonus
-    if(diff === "advanced") return -strength;   // Advanced gets penalty
-    return 0;
-  }
-  function finalScore(r){
-    const manual=Number(r.teacherScore); if(Number.isFinite(manual)&&manual>0)return Math.max(0,Math.min(100,Math.round(manual)));
-    const acc=Number(r.adjustedAccuracy||r.finalScoreOfficial||r.accuracy);
-    const flu=Number(r.adjustedFluency||r.fluency);
-    const wcpm=Number(r.wcpm);
-    if(!Number.isFinite(acc)&&!Number.isFinite(flu)&&!Number.isFinite(wcpm))return null;
-    const speed=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):0;
-    let score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
-    score += difficultyAdjust(r);
-    return Math.max(0,Math.min(100,score));
-  }
-  function progressPercent(scores){
-    if(!scores||scores.length<2)return null;
-    const first=Number(scores[0]),last=Number(scores[scores.length-1]);
-    if(!Number.isFinite(first)||!Number.isFinite(last))return null;
-    if(first===0)return last>0?100:0;
-    return Math.round(((last-first)/Math.max(1,first))*100);
-  }
-  function level(p){if(p===null)return"First attempt";if(p>=25)return"Strong growth";if(p>=10)return"Good growth";if(p>=1)return"Slight growth";if(p===0)return"Stable";return"Regression";}
-  function color(v){v=Number(v);if(v>=80)return"#16a34a";if(v>=60)return"#2563eb";if(v>=40)return"#f59e0b";return"#dc2626";}
-  function renderBars(scores){
-    return '<div style="display:flex;gap:5px;align-items:end;height:52px;margin-top:8px">'+scores.map((s,i)=>'<div title="Attempt '+(i+1)+': '+s+'%" style="width:20px;height:'+Math.max(5,Math.round(s/100*48))+'px;background:'+color(s)+';border-radius:7px 7px 0 0"></div>').join("")+'</div>';
-  }
-  function currentStudentId(){
-    const u=session();
-    return String(u.id||u.studentId||u.studentNumber||u.number||"").trim();
-  }
-  function currentStudentName(){
-    const u=session();
-    return String(u.name||u.fullName||u.studentName||"").trim().toLowerCase();
-  }
-  function isStudentView(){
-    // Trust the session role. Page text is unreliable.
-    const u=session();
-    const role=String(u.role||u.type||"").toLowerCase();
-    return role==="student" || (role && !role.includes("teacher"));
-  }
-  async function fetchFirebaseRecords(sid, name){
-    try{
-      if(typeof firebase === "undefined" || !firebase.firestore) return [];
-      const db = firebase.firestore();
-      const snap = await db.collection("readingSubmissions").get();
-      const out=[];
-      snap.forEach(d=>{
-        const r=d.data();
-        const matchById = String(r.studentId||"").trim()===sid;
-        const matchByName = String(r.studentName||"").trim().toLowerCase()===name;
-        if(matchById || matchByName) out.push({...r, id:d.id});
-      });
-      return out;
-    }catch(e){ console.warn("Fetch firebase records failed",e); return []; }
-  }
-  async function render(){
-    if(document.getElementById("rp-student-progress-panel"))return;
-    if(!isStudentView())return;
-    const sid=currentStudentId(), name=currentStudentName();
-    if(!sid && !name) return;
-    // Combine LOCAL + FIREBASE so student sees teacher's analysis (which lives in Firebase).
-    const localRecs = readJSON(rpKey(),[]).filter(r=>{
-      return String(r.studentId||"").trim()===sid || String(r.studentName||"").trim().toLowerCase()===name;
-    });
-    const fbRecs = await fetchFirebaseRecords(sid, name);
-    // Dedupe by id (firebase wins because it has teacher's analysis)
-    const merged = {};
-    localRecs.forEach(r=>{ if(r.id) merged[r.id]=r; });
-    fbRecs.forEach(r=>{
-      const existing = merged[r.id] || {};
-      // Flatten analysis if present so finalScore() can read it
-      const flat = {...existing, ...r};
-      if(r.analysis){
-        if(r.analysis.accuracy!==undefined) flat.accuracy = r.analysis.accuracy;
-        if(r.analysis.wcpm!==undefined) flat.wcpm = r.analysis.wcpm;
-        if(r.analysis.fluency!==undefined) flat.fluency = r.analysis.fluency;
-        if(r.analysis.mistakeCount!==undefined) flat.mistakes = r.analysis.mistakeCount;
-        if(r.analysis.finalScore!==undefined) flat.finalScoreOfficial = r.analysis.finalScore;
-      }
-      merged[r.id] = flat;
-    });
-    const recs = Object.values(merged).filter(r=>finalScore(r)!==null);
-    if(!recs.length)return;
-    recs.sort((a,b)=>String(a.submittedAt||a.createdAt||"").localeCompare(String(b.submittedAt||b.createdAt||"")));
-    const scores=recs.map(finalScore);
-    const p=progressPercent(scores);
-    const latest=scores[scores.length-1];
-    const best=Math.max.apply(null,scores);
-    const avg=Math.round(scores.reduce((a,b)=>a+b,0)/scores.length);
-    const box=document.createElement("div");
-    box.id="rp-student-progress-panel";
-    box.style.cssText="margin:14px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
-    box.innerHTML='<h3 style="margin:0 0 8px;color:#1e293b">📈 My Reading Progress</h3>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Latest: '+latest+'%</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Attempts: '+scores.length+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#f0fdf4;color:#166534;font-weight:800">Best: '+best+'%</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Average: '+avg+'%</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Growth: '+(p!==null?p+"%":"—")+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">'+level(p)+'</div>'+
-      '</div>'+renderBars(scores);
-    const root=document.getElementById("root")||document.body;
-    root.appendChild(box);
-  }
-  setTimeout(render,1200);
-  setInterval(render,5000);
-})();
- // ===== END RP Student Progress Visibility Add-on =====
-</script>
 
-
-<!-- RP_BUILD_V43_REJECT_BUTTON_ONLY_FIX -->
-
-<script>
-try{
-  var b=document.getElementById("rp-v11-show");
-  if(b){b.remove();}
-  var p=document.getElementById("rp-v11-panel");
-  if(p){p.style.display="block";}
-}catch(e){}
-</script>
 
 </body>
 </html>
