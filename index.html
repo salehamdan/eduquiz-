@@ -2449,24 +2449,6 @@ function ReadingProgressStudent({user,data,reload}){
     await fsSet("readingSubmissions",id,{id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"});
     setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
   }
-  
-  function rpSafeStudentLatestStatusV44(){
-    try{
-      const arr=(subs||[]).slice().sort(function(a,b){
-        return String(b.updatedAt||b.submittedAt||b.createdAt||"").localeCompare(String(a.updatedAt||a.submittedAt||a.createdAt||""));
-      });
-      const s=arr[0]||null;
-      if(!s) return {text:"لا توجد محاولات Reading Progress حتى الآن.", color:"#64748b", status:"none"};
-      if(s.status==="rejected") return {text:"❌ تم رفض المحاولة من المعلم. انتظر السماح بإعادة المحاولة.", color:C.d, status:"rejected"};
-      if(s.status==="retake_allowed") return {text:"🔁 تمت إتاحة إعادة المحاولة من المعلم.", color:C.w, status:"retake_allowed"};
-      if(s.status==="accepted") return {text:"✅ تم اعتماد المحاولة من المعلم.", color:C.s, status:"accepted"};
-      if(s.analysis) return {text:"📊 تم تحليل المحاولة. يمكنك مراجعة نتيجتك.", color:C.p, status:"analyzed"};
-      return {text:"⏳ تم التسليم، بانتظار تحليل المعلم.", color:"#64748b", status:s.status||"submitted"};
-    }catch(e){
-      return {text:"حالة Reading Progress غير متاحة الآن.", color:"#64748b", status:"error"};
-    }
-  }
-
   if(task)return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
@@ -2476,15 +2458,6 @@ function ReadingProgressStudent({user,data,reload}){
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
-
-    {(()=>{const st=rpSafeStudentLatestStatusV44();return <Card style={{marginBottom:"10px",border:"1px solid "+C.br,background:"#fff"}}>
-      <strong style={{fontSize:"14px",color:C.tx}}>📌 Reading Progress Status</strong>
-      <div style={{marginTop:"7px",padding:"9px",borderRadius:"12px",background:"#f8fafc",border:"1px solid "+C.br}}>
-        <div style={{fontSize:"12px",fontWeight:900,color:st.color}}>{st.text}</div>
-        <div style={{fontSize:"10px",color:C.mu,marginTop:"4px"}}>Status: {st.status}</div>
-      </div>
-    </Card>})()}
-
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
@@ -4412,7 +4385,7 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V44_SAFE_STUDENT_STATUS_CARD_ON_V43 -->
+<!-- RP_BUILD_V43_REJECT_BUTTON_ONLY_FIX -->
 
 <script>
 try{
