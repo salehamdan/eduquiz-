@@ -54,6 +54,25 @@ window.addEventListener("unhandledrejection", function(e){
   }
 });
 </script>
+
+<script>
+
+// RP_SAFE_LOGOUT_CLEANUP_V40
+function rpSafeLogoutCleanup(){
+  try{
+    localStorage.removeItem("rp_selected_task");
+    sessionStorage.removeItem("rp_selected_task");
+    localStorage.removeItem("rp_show_panel");
+    sessionStorage.removeItem("rp_show_panel");
+    localStorage.removeItem("readingProgressOpen");
+    sessionStorage.removeItem("readingProgressOpen");
+    document.querySelectorAll('[id^="rp-"], .rp-floating, .rp-overlay').forEach(function(el){
+      try{ el.style.display="none"; }catch(e){}
+    });
+  }catch(e){}
+}
+
+</script>
 </head>
 <body>
 <div id="root">
@@ -2424,7 +2443,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 // ── TEACHER APP ───────────────────────────────────────────────
 
 function ReadingProgressStudent({user,data,reload}){
-  const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed"&&(!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId)));
+  const tasks=rpAllStudentTasksV40();
   const subs=(data.readingSubmissions||[]).filter(x=>x.studentId===user.id);
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null);
@@ -2450,24 +2469,21 @@ function ReadingProgressStudent({user,data,reload}){
     setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
   }
   
-  function studentFinalScore(s){
-    if(!s||!s.analysis) return null;
-    var a=s.analysis;
-    var v=(a.officialScore!==undefined&&a.officialScore!==null)?a.officialScore:
-          ((a.finalScore!==undefined&&a.finalScore!==null)?a.finalScore:
-          ((a.accuracy!==undefined&&a.accuracy!==null)?a.accuracy:null));
-    v=Number(v);
-    return isNaN(v)?null:Math.round(v);
+  function rpStudentTaskVisibleV40(t){
+    if(!t) return false;
+    const classMatch=!t.classId || !user.classId || t.classId===user.classId || t.classId==="all";
+    const retake=taskSubs(t).some(function(s){return s.status==="retake_allowed";});
+    const closed=t.status==="closed" || t.closed===true || t.isClosed===true;
+    return classMatch && (!closed || retake);
   }
-  const studentAnalyzed=subs.filter(function(s){return !!s.analysis;});
-  const studentScores=studentAnalyzed.map(studentFinalScore).filter(function(v){return v!==null;});
-  const studentLatest=studentScores.length?studentScores[studentScores.length-1]:null;
-  const studentBest=studentScores.length?Math.max.apply(null,studentScores):null;
-  const studentAvg=studentScores.length?Math.round(studentScores.reduce(function(a,b){return a+b;},0)/studentScores.length):null;
-  const studentGrowth=studentScores.length>1?studentScores[studentScores.length-1]-studentScores[0]:null;
-  const studentPending=subs.filter(function(s){return !s.analysis && s.status!=="rejected";}).length;
+  function rpAllStudentTasksV40(){
+    const arr=(data.readingTasks||[]).filter(rpStudentTaskVisibleV40);
+    const seen={};
+    return arr.filter(function(t){ if(seen[t.id]) return false; seen[t.id]=true; return true; });
+  }
 
-  if(task)return <div>
+  if(task)if(window.__RP_LOGGED_OUT__){return null;}
+  return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>setTask(null)}>Back</Btn></div>
@@ -2476,51 +2492,7 @@ function ReadingProgressStudent({user,data,reload}){
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
-
-    <Card style={{marginBottom:"10px",border:"2px solid "+C.p,background:"#fff"}}>
-      <strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Performance Dashboard</strong>
-      <p style={{fontSize:"11px",color:C.mu,margin:"4px 0 10px"}}>This dashboard is linked to your submitted Reading Progress recordings.</p>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px"}}>
-        <div style={{background:"#eff6ff",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.p,fontWeight:900}}>Latest</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:C.p}}>{studentLatest!==null?studentLatest+"%":"—"}</div>
-        </div>
-        <div style={{background:"#ecfdf5",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.s,fontWeight:900}}>Attempts</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:C.s}}>{subs.length}</div>
-        </div>
-        <div style={{background:"#fff7ed",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:"#9a3412",fontWeight:900}}>Pending</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:"#9a3412"}}>{studentPending}</div>
-        </div>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.tx,fontWeight:900}}>Average</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:C.tx}}>{studentAvg!==null?studentAvg+"%":"—"}</div>
-        </div>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.mu,fontWeight:900}}>Best</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:C.tx}}>{studentBest!==null?studentBest+"%":"—"}</div>
-        </div>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.mu,fontWeight:900}}>Growth</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:(studentGrowth||0)>=0?C.s:C.d}}>{studentGrowth!==null?(studentGrowth>0?"+":"")+studentGrowth+"%":"—"}</div>
-        </div>
-      </div>
-    </Card>
-
-    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}
-
-    <Card style={{marginTop:"10px"}}>
-      <strong style={{fontSize:"14px",color:C.tx}}>✅ My Completed Reading Progress</strong>
-      {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No completed reading submissions yet.</p>:subs.slice().reverse().map(function(s){var sc=studentFinalScore(s);return <div key={s.id} style={{padding:"8px 0",borderBottom:"1px solid "+C.br}}>
-        <div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}>
-          <div><strong style={{fontSize:"12px"}}>{(data.readingTasks||[]).find(function(t){return t.id===s.taskId;})?((data.readingTasks||[]).find(function(t){return t.id===s.taskId;}).title):"Reading Progress Task"}</strong>
-          <div style={{fontSize:"10px",color:C.mu}}>{s.createdAt||""} · Status: {s.status||"submitted"} · {s.analysis?"Analyzed":"Pending teacher analysis"}</div></div>
-          <strong style={{fontSize:"14px",color:sc!==null?gc(sc):C.mu}}>{sc!==null?sc+"%":"—"}</strong>
-        </div>
-      </div>})}
-    </Card>
-  </div>;
+    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
 
@@ -2543,7 +2515,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [refreshTick,setRefreshTick]=useState(0);
   const [showPanel,setShowPanel]=useState(true);
 
-  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id);
+  const tasks=rpAllTeacherTasksV40();
 
   function rpKey(){
     for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
@@ -2925,8 +2897,20 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const classRows=classComparisonRows();
 
   if(false && !showPanel){
-    return <div>
-      
+    
+  function rpTaskIsVisibleToTeacherV40(t){
+    if(!t) return false;
+    if(t.teacherId && user && user.id && t.teacherId!==user.id && t.teacherId!=="GLOBAL") return false;
+    return true;
+  }
+  function rpAllTeacherTasksV40(){
+    const arr=(data.readingTasks||[]).filter(rpTaskIsVisibleToTeacherV40);
+    const seen={};
+    return arr.filter(function(t){ if(seen[t.id]) return false; seen[t.id]=true; return true; });
+  }
+
+  return <div>
+      <button onClick={()=>setShowPanel(true)} style={{position:"fixed",right:"12px",bottom:"86px",zIndex:9999,padding:"10px 13px",border:0,borderRadius:"999px",background:C.p,color:"#fff",fontWeight:900,boxShadow:"0 8px 20px rgba(0,0,0,.22)"}}>📖 Show Reading Progress</button>
     </div>;
   }
 
@@ -2939,58 +2923,11 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
 
     
-    <Card style={{marginTop:"10px",marginBottom:"11px",border:"2px solid "+C.p,background:"#fff"}}>
-      <strong style={{fontSize:"16px",color:C.tx}}>📊 Teacher Reading Performance Dashboard</strong>
-      <p style={{fontSize:"11px",color:C.mu,margin:"4px 0 10px"}}>لوحة مرتبطة مباشرة بمحاولات Reading Progress. ليست طبقة عائمة ولا تعطل الأزرار.</p>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginBottom:"10px"}}>
-        <div style={{background:"#eff6ff",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.p,fontWeight:900}}>Submissions</div>
-          <div style={{fontSize:"24px",fontWeight:900,color:C.p}}>{subs.length}</div>
-        </div>
-        <div style={{background:"#ecfdf5",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.s,fontWeight:900}}>Analyzed</div>
-          <div style={{fontSize:"24px",fontWeight:900,color:C.s}}>{analyzedCount}</div>
-        </div>
-        <div style={{background:"#fff7ed",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:"#9a3412",fontWeight:900}}>Pending</div>
-          <div style={{fontSize:"24px",fontWeight:900,color:"#9a3412"}}>{subs.filter(x=>!x.analysis&&x.status!=="rejected").length}</div>
-        </div>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.tx,fontWeight:900}}>Average Final</div>
-          <div style={{fontSize:"24px",fontWeight:900,color:C.tx}}>{avgAll!==null?avgAll+"%":"—"}</div>
-        </div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginBottom:"10px"}}>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.mu,fontWeight:900}}>Class Growth</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:(classProgress.progress||0)>=0?C.s:C.d}}>{classProgress.progress!==null?(classProgress.progress>0?"+":"")+classProgress.progress+"%":"—"}</div>
-        </div>
-        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:C.mu,fontWeight:900}}>Active Tasks</div>
-          <div style={{fontSize:"22px",fontWeight:900,color:C.tx}}>{tasks.length}</div>
-        </div>
-      </div>
-      {classRows&&classRows.length>0&&<div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
-          <thead><tr style={{background:"#f1f5f9"}}>
-            <th style={{padding:"7px",textAlign:"left"}}>Class</th>
-            <th style={{padding:"7px"}}>Students</th>
-            <th style={{padding:"7px"}}>Attempts</th>
-            <th style={{padding:"7px"}}>Average</th>
-            <th style={{padding:"7px"}}>Growth</th>
-          </tr></thead>
-          <tbody>{classRows.map(r=><tr key={r.classObj.id} style={{borderTop:"1px solid "+C.br}}>
-            <td style={{padding:"7px",fontWeight:800}}>{r.classObj.name}</td>
-            <td style={{padding:"7px",textAlign:"center"}}>{r.count}</td>
-            <td style={{padding:"7px",textAlign:"center"}}>{r.scores?r.scores.length:0}</td>
-            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:gc(r.avg)}}>{r.avg!==null?r.avg+"%":"—"}</td>
-            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:(r.progress||0)>=0?C.s:C.d}}>{r.progress!==null?(r.progress>0?"+":"")+r.progress+"%":"—"}</td>
-          </tr>)}</tbody>
-        </table>
-      </div>}
+    <Card style={{marginTop:"8px",marginBottom:"8px",border:"1px solid "+C.br,background:"#f8fafc"}}>
+      <strong style={{fontSize:"12px",color:C.tx}}>🔗 Linked Tasks Source: readingTasks</strong>
+      <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 0"}}>All old and new Reading Progress tasks are now read from one source.</p>
     </Card>
-
-    <Card style={{marginBottom:"11px"}}>
+<Card style={{marginBottom:"11px"}}>
       <strong style={{fontSize:"13px",color:C.tx}}>Create Reading Task</strong>
       <div style={{display:"grid",gridTemplateColumns:"1fr 120px 100px",gap:"8px",marginTop:"9px"}}>
         <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Task title" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
@@ -3037,7 +2974,44 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
 
     
-    
+    <Card style={{marginTop:"10px",border:"2px solid "+C.p,background:"#fff"}}>
+      <strong style={{fontSize:"16px",color:C.tx}}>📊 Internal Performance Dashboard</strong>
+      <p style={{fontSize:"11px",color:C.mu,margin:"4px 0 10px"}}>لوحة أداء داخلية عادية داخل الصفحة، وليست طبقة عائمة حتى لا تعطل أزرار النتائج.</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginBottom:"10px"}}>
+        <div style={{background:"#eff6ff",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.p,fontWeight:900}}>Submissions</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.p}}>{subs.length}</div>
+        </div>
+        <div style={{background:"#ecfdf5",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.s,fontWeight:900}}>Analyzed</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.s}}>{analyzed.length}</div>
+        </div>
+        <div style={{background:"#fff7ed",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:"#9a3412",fontWeight:900}}>Pending</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:"#9a3412"}}>{subs.filter(x=>!x.analysis&&x.status!=="rejected").length}</div>
+        </div>
+        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.tx,fontWeight:900}}>Average Final</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.tx}}>{avg!==null?avg+"%":"—"}</div>
+        </div>
+      </div>
+      {classRows&&classRows.length>0&&<div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
+          <thead><tr style={{background:"#f1f5f9"}}>
+            <th style={{padding:"7px",textAlign:"left"}}>Class</th>
+            <th style={{padding:"7px"}}>Attempts</th>
+            <th style={{padding:"7px"}}>Average</th>
+            <th style={{padding:"7px"}}>Growth</th>
+          </tr></thead>
+          <tbody>{classRows.map(r=><tr key={r.name} style={{borderTop:"1px solid "+C.br}}>
+            <td style={{padding:"7px",fontWeight:800}}>{r.name}</td>
+            <td style={{padding:"7px",textAlign:"center"}}>{r.attempts}</td>
+            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:gc(r.avg)}}>{r.avg!==null?r.avg+"%":"—"}</td>
+            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:(r.growth||0)>=0?C.s:C.d}}>{r.growth!==null?(r.growth>0?"+":"")+r.growth+"%":"—"}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+    </Card>
 
     <Card style={{marginBottom:"11px"}}>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
@@ -3730,7 +3704,10 @@ function App() {
   },[]);
 
   function handleLogin(u){setUser(u);reload();}
-  function handleLogout(){clearSession();setUser(null);}
+  function handleLogout(){
+    rpSafeLogoutCleanup();
+    try{window.__RP_LOGGED_OUT__=true;}catch(e){}
+clearSession();rpSafeLogoutCleanup(); setUser(null);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -3743,7 +3720,7 @@ function App() {
       <div style={{fontSize:"18px",fontWeight:"800",color:C.tx,marginBottom:"6px",textAlign:"center"}}>{directQuiz.title}</div>
       <div style={{fontSize:"13px",color:C.mu,marginBottom:"22px",textAlign:"center"}}>You're logged in as a teacher. This is a student quiz link.</div>
       <button onClick={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:C.p,color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F,marginBottom:"10px"}}>Go to my Teacher Dashboard →</button>
-      <button onClick={()=>{clearSession();setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
+      <button onClick={()=>{clearSession();rpSafeLogoutCleanup(); setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
     </div>;
   }
   if(directQuiz && user && user.role==="student"){
@@ -4457,6 +4434,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V39_LINKED_READING_DASHBOARDS -->
+<!-- RP_BUILD_V40_STEP1_LOGOUT_AND_LINK_TASKS -->
 </body>
 </html>
