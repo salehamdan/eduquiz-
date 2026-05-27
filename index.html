@@ -2436,6 +2436,51 @@ function ReadingProgressStudent({user,data,reload}){
   const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && t.status!=="closed" && (!t.classId || t.classId==="all" || t.classId===user.classId));
   const subs=(data.readingSubmissions||[]).filter(s=>s.studentId===user.id && !s.deleted);
 
+  function speakBrowser(txt){try{if(!window.speechSynthesis){setMsg("Browser voice is not supported.");return;}window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(txt||"");u.lang="en-US";u.rate=.86;u.pitch=1;window.speechSynthesis.speak(u);}catch(e){setMsg("Voice error: "+(e.message||e));}}
+
+  async function startRecording(){
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const r=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":""});
+      const chunks=[]; const start=Date.now();
+      r.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+      r.onstop=()=>{const b=new Blob(chunks,{type:"audio/webm"});setBlob(b);setAudioUrl(URL.createObjectURL(b));setSeconds(Math.max(1,Math.round((Date.now()-start)/1000)));stream.getTracks().forEach(x=>x.stop());setMsg("Recording saved. Submit to teacher.");};
+      r.start(); setRec(r); setMsg("Recording...");
+    }catch(e){setMsg("Microphone error: "+(e.message||e));}
+  }
+  function stopRecording(){try{if(rec&&rec.state!=="inactive")rec.stop();}catch(e){} setRec(null);}
+
+  async function submit(){
+    if(!task||!blob){setMsg("Record first.");return;}
+    setBusy(true); setMsg("Uploading audio...");
+    try{
+      const id=uid();
+      const path=`reading-progress/${user.classId||"class"}/${user.id}/${task.id}-${Date.now()}.webm`;
+      let finalUrl="";
+      if(typeof rpUploadAudio==="function"){const up=await rpUploadAudio(blob,path); finalUrl=(typeof up==="string")?up:(up&&up.url)||"";}
+      else{const ref=firebase.storage().ref().child(path); await ref.put(blob,{contentType:blob.type||"audio/webm"}); finalUrl=await ref.getDownloadURL();}
+      await fsSet("readingSubmissions",id,{id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentName:user.name||"",studentNumber:user.studentId||"",classId:user.classId,teacherId:task.teacherId,transcript:transcript||"",seconds,audioUrl:finalUrl,audioStoragePath:path,audioUploadStatus:"uploaded",status:"submitted",createdAt:today(),submittedAt:new Date().toISOString()});
+      setMsg("✅ Submitted to teacher."); setTask(null); setBlob(null); setAudioUrl(""); setTranscript(""); setSeconds(0); await reload();
+    }catch(e){setMsg("Submit failed: "+(e.message||e));}
+    finally{setBusy(false);}
+  }
+
+  if(task)return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff"}}>📖 {task.title}</strong><p style={{color:C.mu,fontSize:"11px"}}>Listen first, then record your reading.</p></Card><Card><p style={{whiteSpace:"pre-wrap",fontSize:"15px",lineHeight:1.7}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"10px"}}>{task.modelAudioUrl&&<audio controls src={task.modelAudioUrl} style={{height:"34px"}}/>}<Btn color={C.s} onClick={()=>task.modelAudioUrl?setMsg("Use the audio player above."):speakBrowser(task.text)}>🔊 Listen First</Btn></div><textarea value={transcript} onChange={e=>setTranscript(e.target.value)} rows={3} placeholder="Optional transcript..." style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",marginBottom:"8px"}}/><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{!rec?<Btn color={C.p} onClick={startRecording}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRecording}>Stop Recording</Btn>}<Btn color={C.s} onClick={submit} disabled={busy||!blob}>Submit to Teacher</Btn><Btn color={"#64748b"} onClick={()=>setTask(null)}>Back</Btn></div>{audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}{msg&&<p style={{fontSize:"12px",color:C.p,fontWeight:800}}>{msg}</p>}</Card></div>;
+
+  return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"16px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen first, record, and submit your reading.</p></Card><Card style={{marginBottom:"10px"}}><strong>Active Reading Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No active reading tasks.</p>:tasks.slice().reverse().map(t=><div key={t.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}><strong>{t.title}</strong><div style={{fontSize:"11px",color:C.mu}}>Level: {t.level||"intermediate"} · Voice: {t.modelAudioUrl?"AI audio":"Browser fallback"}</div><p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{t.text}</p><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>Start</Btn></div>)}</Card><Card><strong>My Reading Submissions</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const score=s.analysis&&(s.analysis.finalScore||s.analysis.officialScore||s.analysis.accuracy);return <div key={s.id} style={{borderBottom:"1px solid "+C.br,padding:"9px 0"}}><strong>{s.taskTitle||"Reading Task"}</strong><div style={{fontSize:"11px",color:C.mu}}>Status: {s.status||"submitted"} · Score: {score?score+"%":"—"}</div>{s.status==="rejected"&&<div style={{fontSize:"12px",fontWeight:900,color:C.d}}>❌ تم رفض المحاولة من المعلم.</div>}{s.status==="retake_allowed"&&<div style={{fontSize:"12px",fontWeight:900,color:C.w}}>🔁 تمت إتاحة إعادة المحاولة.</div>}</div>})}</Card></div>;
+}){
+  const [task,setTask]=useState(null);
+  const [rec,setRec]=useState(null);
+  const [blob,setBlob]=useState(null);
+  const [audioUrl,setAudioUrl]=useState("");
+  const [seconds,setSeconds]=useState(0);
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [transcript,setTranscript]=useState("");
+
+  const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && t.status!=="closed" && (!t.classId || t.classId==="all" || t.classId===user.classId));
+  const subs=(data.readingSubmissions||[]).filter(s=>s.studentId===user.id && !s.deleted);
+
   function speakBrowser(txt){try{if(!window.speechSynthesis){setMsg("Browser voice is not supported here.");return;}window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(txt||"");u.lang="en-US";u.rate=0.86;u.pitch=1;window.speechSynthesis.speak(u);}catch(e){setMsg("Voice error: "+(e.message||e));}}
 
   async function startRecording(){
@@ -2484,7 +2529,171 @@ function ReadingProgressStudent({user,data,reload}){
 
 
 
-function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
+function ReadingProgressTeacher({user,data,reload}){
+  const [msg,setMsg]=useState("");
+  const [aiKey,setAiKey]=useState(localStorage.getItem("OPENAI_API_KEY")||"");
+  const [voiceMode,setVoiceMode]=useState(localStorage.getItem("RP_VOICE_MODE")||"api");
+  const [voiceModel,setVoiceModel]=useState(localStorage.getItem("RP_VOICE_MODEL")||"gpt-4o-mini-tts");
+  const [level,setLevel]=useState("intermediate");
+  const [topic,setTopic]=useState("school life");
+  const [lines,setLines]=useState(4);
+  const [classId,setClassId]=useState((data.classes&&data.classes[0]&&data.classes[0].id)||"all");
+  const [title,setTitle]=useState("Reading Progress Task");
+  const [text,setText]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  const classes=(data.classes||[]);
+  const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && (!t.teacherId || t.teacherId===user.id || t.teacherId==="GLOBAL"));
+  const submissions=(data.readingSubmissions||[]).filter(s=>!s.deleted);
+  const students=(data.users||[]).filter(u=>u.role==="student");
+
+  function saveAISettings(){
+    localStorage.setItem("OPENAI_API_KEY",aiKey.trim());
+    localStorage.setItem("RP_VOICE_MODE",voiceMode);
+    localStorage.setItem("RP_VOICE_MODEL",voiceModel);
+    setMsg("✅ AI settings saved.");
+  }
+
+  function speakBrowser(t){
+    try{
+      if(!window.speechSynthesis){setMsg("Browser voice is not supported.");return;}
+      window.speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(t||text||"");
+      u.lang="en-US"; u.rate=0.86; u.pitch=1;
+      window.speechSynthesis.speak(u);
+    }catch(e){setMsg("Voice error: "+(e.message||e));}
+  }
+
+  async function generateText(){
+    setBusy(true); setMsg("Generating reading text...");
+    try{
+      const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
+      const prompt=`Create a ${level} English reading passage for Saudi secondary students. Topic: ${topic}. Length: ${lines} short lines. Use clear natural English. Return only the passage.`;
+      if(!key){
+        setText(`${topic} is important in our daily life.\nStudents can read about it and share ideas.\nGood reading helps students improve their English.\nPractice makes reading easier and clearer.`);
+        setMsg("No API key. A simple fallback text was created.");
+        return;
+      }
+      const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"user",content:prompt}],temperature:0.7})});
+      if(!r.ok) throw new Error(await r.text());
+      const j=await r.json();
+      setText((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content||"").trim());
+      setMsg("✅ Text generated.");
+    }catch(e){setMsg("AI text generation failed: "+(e.message||e));}
+    finally{setBusy(false);}
+  }
+
+  async function generateModelAudioForTask(taskId,taskText){
+    if(voiceMode!=="api") return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"browser_fallback"};
+    const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
+    if(!key) return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"missing_api_key"};
+    try{
+      const r=await fetch("https://api.openai.com/v1/audio/speech",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:voiceModel||"gpt-4o-mini-tts",voice:"alloy",input:taskText})});
+      if(!r.ok) throw new Error(await r.text());
+      const blob=await r.blob();
+      const path=`reading-progress-model-audio/${user.id}/${taskId}.mp3`;
+      const ref=firebase.storage().ref().child(path);
+      await ref.put(blob,{contentType:"audio/mpeg"});
+      const url=await ref.getDownloadURL();
+      return {modelAudioUrl:url,modelAudioPath:path,modelAudioStatus:"uploaded"};
+    }catch(e){return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"api_failed"};}
+  }
+
+  async function createTask(){
+    if(!text.trim()){alert("Generate or paste reading text first.");return;}
+    setBusy(true); setMsg("Creating task...");
+    try{
+      const id=uid();
+      const task={id,teacherId:user.id,title:title||"Reading Progress Task",text:text.trim(),level,topic,lines:Number(lines)||4,classId,status:"open",createdAt:today(),createdAtMs:Date.now(),voiceMode,voiceModel,modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"pending"};
+      await fsSet("readingTasks",id,task);
+      const audio=await generateModelAudioForTask(id,task.text);
+      await fsSet("readingTasks",id,{...task,...audio});
+      setText(""); setMsg("✅ Reading task created.");
+      await reload();
+    }catch(e){setMsg("Create task failed: "+(e.message||e));}
+    finally{setBusy(false);}
+  }
+
+  function words(s){return String(s||"").toLowerCase().match(/[a-z']+/g)||[];}
+  function localAnalyze(expected,spoken,seconds,levelValue){
+    const exp=words(expected), sp=words(spoken), setSp=new Set(sp);
+    let acc=exp.length?Math.round(exp.filter(w=>setSp.has(w)).length/exp.length*100):0;
+    acc=Math.min(100,acc+(levelValue==="beginner"?12:levelValue==="intermediate"?7:2));
+    const wcpm=Math.round(sp.length/Math.max(0.05,(Number(seconds)||1)/60));
+    const fluency=Math.max(0,Math.min(100,Math.round(acc*.65+Math.min(100,wcpm/130*100)*.35)));
+    const finalScore=Math.round(acc*.7+fluency*.3);
+    return {accuracy:acc,fluency,wcpm,finalScore,method:"local_level_adjusted",level:levelValue};
+  }
+
+  async function analyzeSubmission(sub){
+    const task=tasks.find(t=>t.id===sub.taskId);
+    if(!task){alert("Task not found.");return;}
+    setBusy(true); setMsg("Analyzing...");
+    try{
+      let analysis=null;
+      const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
+      if(key){
+        const prompt=`Evaluate this oral reading transcript fairly. Level: ${task.level||"intermediate"}. Beginner should be supportive, intermediate moderate, advanced stricter but not harsh. Return JSON only: accuracy, fluency, wcpm, finalScore, missingWords, extraWords, teacherNotes.\nExpected:\n${task.text}\nTranscript:\n${sub.transcript||""}`;
+        const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"user",content:prompt}],temperature:.2,response_format:{type:"json_object"}})});
+        if(r.ok){const j=await r.json(); analysis=JSON.parse(j.choices[0].message.content||"{}");}
+      }
+      if(!analysis) analysis=localAnalyze(task.text,sub.transcript||"",sub.seconds||0,task.level||"intermediate");
+      await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()});
+      setMsg("✅ Analyzed."); await reload();
+    }catch(e){setMsg("Analyze failed: "+(e.message||e));}
+    finally{setBusy(false);}
+  }
+
+  async function updateSub(sub,status){
+    await fsSet("readingSubmissions",sub.id,{...sub,status,updatedAt:new Date().toISOString()});
+    setMsg("✅ Status updated: "+status); await reload();
+  }
+
+  async function deleteTask(t){
+    if(!confirm("Delete this task?"))return;
+    await fsSet("readingTasks",t.id,{...t,deleted:true,updatedAt:new Date().toISOString()});
+    await reload();
+  }
+
+  return <div>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"16px"}}>📖 Reading Progress AI — Clean Phase 1</strong>
+      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>AI text generation, model reading audio, student recording, and AI analysis.</p>
+    </Card>
+
+    <Card style={{marginBottom:"10px"}}>
+      <strong>🔑 AI Settings</strong>
+      <div style={{display:"grid",gap:"8px",marginTop:"8px"}}>
+        <input type="password" value={aiKey} onChange={e=>setAiKey(e.target.value)} placeholder="OpenAI API Key" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <select value={voiceMode} onChange={e=>setVoiceMode(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
+          <option value="api">AI Voice API first</option>
+          <option value="browser">Browser voice fallback</option>
+        </select>
+        <input value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} placeholder="Voice model e.g. gpt-4o-mini-tts" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={saveAISettings}>Save Settings</Btn><Btn color={C.s} onClick={()=>speakBrowser(text||"This is a model reading preview.")}>Test Browser Voice</Btn></div>
+      </div>
+    </Card>
+
+    <Card style={{marginBottom:"10px"}}>
+      <strong>✨ Generate / Create Reading Task</strong>
+      <div style={{display:"grid",gap:"8px",marginTop:"8px"}}>
+        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Task title" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <select value={classId} onChange={e=>setClassId(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}><option value="all">All classes</option>{classes.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}><option value="beginner">Beginner — supportive accuracy</option><option value="intermediate">Intermediate — moderate accuracy</option><option value="advanced">Advanced — stricter but fair</option></select>
+        <input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <input type="number" value={lines} onChange={e=>setLines(e.target.value)} placeholder="Lines" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <Btn color={C.pu} onClick={generateText} disabled={busy}>Generate Text with AI</Btn>
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder="Generated or pasted reading text..." style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.s} onClick={()=>speakBrowser(text)}>Preview Browser Reading</Btn><Btn color={C.p} onClick={createTask} disabled={busy}>Create Task</Btn></div>
+      </div>
+    </Card>
+
+    <Card style={{marginBottom:"10px"}}><strong>📚 Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No reading tasks yet.</p>:tasks.slice().reverse().map(t=><div key={t.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}><strong>{t.title}</strong><div style={{fontSize:"11px",color:C.mu}}>Level: {t.level} · Voice: {t.modelAudioStatus||t.voiceMode}</div><p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{t.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{t.modelAudioUrl&&<audio controls src={t.modelAudioUrl} style={{height:"34px"}}/>}<Btn size="sm" color={C.s} onClick={()=>speakBrowser(t.text)}>Browser Listen</Btn><Btn size="sm" color={C.d} onClick={()=>deleteTask(t)}>Delete</Btn></div></div>)}</Card>
+
+    <Card><strong>📥 Student Submissions</strong>{submissions.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:submissions.slice().reverse().map(s=>{const st=students.find(x=>x.id===s.studentId)||{};const t=tasks.find(x=>x.id===s.taskId)||{};const score=s.analysis&&(s.analysis.finalScore||s.analysis.officialScore||s.analysis.accuracy);return <div key={s.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}><strong>{st.name||s.studentName||"Student"}</strong><div style={{fontSize:"11px",color:C.mu}}>{t.title||s.taskTitle||"Reading Task"} · Status: {s.status||"submitted"} · Score: {score?score+"%":"—"}</div>{s.audioUrl&&<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"6px"}}/>}<div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><Btn size="sm" color={C.p} onClick={()=>analyzeSubmission(s)} disabled={busy}>{s.analysis?"Re-analyze with AI":"Analyze with AI"}</Btn><Btn size="sm" color={C.s} onClick={()=>updateSub(s,"accepted")}>Accept</Btn><Btn size="sm" color={C.d} onClick={()=>updateSub(s,"rejected")}>Reject</Btn><Btn size="sm" color={C.w} onClick={()=>updateSub(s,"retake_allowed")}>Retake</Btn></div>{s.analysis&&<pre style={{whiteSpace:"pre-wrap",fontSize:"10px",background:"#f8fafc",padding:"8px",borderRadius:"10px",overflowX:"auto"}}>{JSON.stringify(s.analysis,null,2)}</pre>}</div>})}</Card>
+    {msg&&<p style={{fontSize:"12px",color:C.p,fontWeight:800}}>{msg}</p>}
+  </div>;
+}){
   const [msg,setMsg]=useState("");
   const [aiKey,setAiKey]=useState(localStorage.getItem("OPENAI_API_KEY")||"");
   const [voiceMode,setVoiceMode]=useState(localStorage.getItem("RP_VOICE_MODE")||"browser");
@@ -3301,554 +3510,7 @@ document.addEventListener("click", function(e){
 
 
 
-<script>
-// ===== READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
-(function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const OLD_KEYS = ["rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
-  const API_KEY = "rp_openai_api_key";
-  const DB_NAME = "EduQuizRP_AudioDB";
-  const STORE = "audios";
-  let panelMade = false;
 
-  function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
-  function writeJSON(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
-  function records(){
-    let cur = readJSON(RP_KEY, null);
-    if(Array.isArray(cur)) return cur;
-    for(const k of OLD_KEYS){
-      let old = readJSON(k, null);
-      if(Array.isArray(old)){ writeJSON(RP_KEY, old); return old; }
-    }
-    writeJSON(RP_KEY, []);
-    return [];
-  }
-  function saveRecords(a){ writeJSON(RP_KEY,a); }
-
-  function migrateReadingScoresV13(){
-    try{
-      const a = records();
-      let changed = false;
-      a.forEach(r=>{
-        if(r && (r.transcript || Number.isFinite(Number(r.accuracy)))){
-          r.finalScoreOfficial = finalScore(r);
-          r.strictScore = finalScore(r);
-          r.adjustedAccuracy = adjustedAccuracy(r);
-          r.adjustedFluency = adjustedFluency(r);
-          changed = true;
-        }
-      });
-      if(changed) saveRecords(a);
-    }catch(e){ console.warn("score migration skipped", e); }
-  }
-
-
-
-  function openDB(){
-    return new Promise((resolve,reject)=>{
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = e => {
-        const db = e.target.result;
-        if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:"id"});
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  async function saveAudio(blob){
-    const db = await openDB();
-    const id = "aud_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-    const item = {id, blob, type:blob.type||"audio/webm", size:blob.size, createdAt:new Date().toISOString()};
-    await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readwrite");
-      tx.objectStore(STORE).put(item);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return item;
-  }
-  async function getAudio(id){
-    if(!id) return null;
-    const db = await openDB();
-    return await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readonly");
-      const req = tx.objectStore(STORE).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
-  function user(){
-    const u=session();
-    return {
-      id:String(u.id||u.studentId||u.ID||u.number||u.studentNumber||u.name||"unknown").trim(),
-      name:String(u.name||u.fullName||u.studentName||u.id||"Student").trim(),
-      className:String(u.className||u.classId||u.class||u.grade||"Unassigned").trim(),
-      role:String(u.role||u.type||"").toLowerCase()
-    };
-  }
-  function isTeacher(){
-    const u=user(), b=document.body.innerText||"";
-    return u.role.includes("teacher") || b.includes("TEACHER DASHBOARD") || b.includes("Teacher Dashboard") || b.includes("+ Quiz");
-  }
-  function taskId(){return "reading-progress-task-1";}
-  function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
-  function canSubmit(studentId){ const r=latest(studentId); return !r || r.status==="retake_allowed"; }
-  
-  function rpScoreWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function rpReferenceText(r){
-    return r.referenceText || r.taskText || r.text || r.readingText ||
-      "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function rpErrorStats(r){
-    const ref = rpScoreWords(rpReferenceText(r));
-    const hyp = rpScoreWords(r.transcript || "");
-    const used = Array(hyp.length).fill(false);
-    let correct = 0, missing = 0, repeated = 0, extra = 0;
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i>=0){ used[i]=true; correct++; if(i>0 && hyp[i-1]===w) repeated++; }
-      else missing++;
-    });
-    hyp.forEach((w,i)=>{ if(!used[i]){ if(i>0 && hyp[i-1]===w) repeated++; else extra++; } });
-    const totalRef = Math.max(1, ref.length);
-    const severeErrors = missing + extra;
-    const errorRatio = severeErrors / totalRef;
-    return {correct, missing, extra, repeated, totalRef, severeErrors, errorRatio};
-  }
-
-function rpBalancedScore(r){
-    const acc = Number(r.accuracy);
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-
-    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-
-    const speedSetting = r.speedSetting || "reduced";
-    const difficulty = r.difficulty || "intermediate";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-
-    let base;
-    if(speedSetting === "excluded"){
-      const vals = [acc, flu].filter(Number.isFinite);
-      base = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0) / vals.length) : (Number.isFinite(acc)?acc:0);
-    }else if(speedSetting === "normal"){
-      base = Math.round((Number.isFinite(acc)?acc*.65:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speedScore)?speedScore*.10:0));
-    }else{
-      base = Math.round((Number.isFinite(acc)?acc*.75:0)+(Number.isFinite(flu)?flu*.22:0)+(Number.isFinite(speedScore)?speedScore*.03:0));
-    }
-
-    const support = difficulty === "beginner" ? 4 : difficulty === "intermediate" ? 2 : 0;
-    let score = Math.round(base + support - es.missing*.75 - es.extra*.60 - es.repeated*.35);
-
-    if(es.errorRatio >= .80) score = Math.min(score, 35);
-    else if(es.errorRatio >= .70) score = Math.min(score, 38);
-    else if(es.errorRatio >= .60) score = Math.min(score, 42);
-    else if(es.errorRatio >= .50) score = Math.min(score, 48);
-    else if(es.errorRatio >= .40) score = Math.min(score, 55);
-    else if(es.errorRatio >= .30) score = Math.min(score, 65);
-
-    if(Number.isFinite(acc)){
-      if(acc < 15) score = Math.min(score, 15);
-      else if(acc < 25) score = Math.min(score, 22);
-      else if(acc < 35) score = Math.min(score, 30);
-      else if(acc < 45) score = Math.min(score, 38);
-      else if(acc < 55) score = Math.min(score, 46);
-      else if(acc < 65 && es.errorRatio >= .35) score = Math.min(score, 35);
-    }
-
-    return Math.max(0, Math.min(100, score));
-  }
-
-  function finalScore(r){
-    const manual = Number(r.teacherScore);
-    if(Number.isFinite(manual) && manual > 0) return Math.max(0, Math.min(100, Math.round(manual)));
-    return rpBalancedScore(r);
-  }
-
-  function difficultyBonus(r){
-    const difficulty = r.difficulty || "intermediate";
-    const acc = Number(r.accuracy);
-    if(difficulty === "beginner"){
-      if(Number.isFinite(acc) && acc < 35) return 2;
-      if(Number.isFinite(acc) && acc < 50) return 4;
-      return 6;
-    }
-    if(difficulty === "intermediate"){
-      if(Number.isFinite(acc) && acc < 35) return 0;
-      return 2;
-    }
-    return 0;
-  }
-
-  function adjustedAccuracy(r){
-    const acc = Number(r.accuracy);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(acc) && !r.transcript) return "";
-    let out = Number.isFinite(acc) ? acc : Math.round((es.correct / es.totalRef) * 100);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    out = Math.round(out + support - es.missing*.65 - es.extra*.50 - es.repeated*.25);
-    if(es.errorRatio >= .80) out = Math.min(out, 35);
-    else if(es.errorRatio >= .70) out = Math.min(out, 38);
-    else if(es.errorRatio >= .60) out = Math.min(out, 42);
-    else if(es.errorRatio >= .50) out = Math.min(out, 48);
-    else if(es.errorRatio >= .40) out = Math.min(out, 55);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function adjustedFluency(r){
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-    let base = Number.isFinite(flu) ? flu : speedScore;
-    if((r.speedSetting || "reduced") === "normal") base = Math.round((Number.isFinite(flu)?flu*.85:0)+speedScore*.15);
-    else if((r.speedSetting || "reduced") === "reduced") base = Math.round((Number.isFinite(flu)?flu*.95:0)+speedScore*.05);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    let out = Math.round(base + support - es.missing*.55 - es.extra*.40 - es.repeated*.20);
-    if(es.errorRatio >= .80) out = Math.min(out, 38);
-    else if(es.errorRatio >= .70) out = Math.min(out, 42);
-    else if(es.errorRatio >= .60) out = Math.min(out, 46);
-    else if(es.errorRatio >= .50) out = Math.min(out, 52);
-    else if(es.errorRatio >= .40) out = Math.min(out, 58);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function escapeHtmlRP(s){
-    return String(s||"").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-
-  function referenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-
-  function cleanRP(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-
-  function coloredWordAnalysis(transcript){
-    if(!transcript) return "";
-    const ref = cleanRP(referenceText());
-    const hyp = cleanRP(transcript);
-    const used = Array(hyp.length).fill(false);
-    const out = [];
-    const extra = [];
-    const repeated = [];
-    let correct = 0, missing = 0;
-
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i >= 0){
-        used[i] = true;
-        correct++;
-        const rep = i>0 && hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        out.push(`<span title="correct" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:${rep?"#ede9fe":"#dcfce7"};color:${rep?"#6d28d9":"#166534"};font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }else{
-        missing++;
-        out.push(`<span title="missing" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ffedd5;color:#c2410c;text-decoration:line-through;font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }
-    });
-
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0 && hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-
-    let html = `<div style="line-height:2">${out.join(" ")}</div>`;
-    if(extra.length){
-      html += `<div style="margin-top:8px"><b style="color:#991b1b">Extra / wrong words:</b> ` + extra.map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#fee2e2;color:#991b1b;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    if(repeated.length){
-      html += `<div style="margin-top:6px"><b style="color:#6d28d9">Repeated words:</b> ` + [...new Set(repeated)].map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ede9fe;color:#6d28d9;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px">
-      <span style="padding:5px 8px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800">Correct: ${correct}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ffedd5;color:#c2410c;font-weight:800">Missing: ${missing}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800">Extra/Wrong: ${extra.length}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ede9fe;color:#6d28d9;font-weight:800">Repeated: ${repeated.length}</span>
-    </div>`;
-    return html;
-  }
-
-  function updateRecord(id,updates){
-    const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){
-      const m={...a[i],...updates};
-      m.finalScoreOfficial = finalScore(m);
-      m.adjustedAccuracy = adjustedAccuracy(m);
-      m.adjustedFluency = adjustedFluency(m);
-      m.updatedAt=new Date().toISOString();
-      a[i]=m;
-      saveRecords(a);
-    }
-  }
-  function setClass(cls, status){
-    const a=records();
-    a.forEach(r=>{ if(r.className===cls){ r.status=status; r.updatedAt=new Date().toISOString(); }});
-    saveRecords(a);
-  }
-
-  // Patch MediaRecorder and save the finished audio in IndexedDB.
-  if(window.MediaRecorder && !window.__rpV11Patched){
-    window.__rpV11Patched = true;
-    const Original = window.MediaRecorder;
-    window.MediaRecorder = function(stream, options){
-      const opts = Original.isTypeSupported("audio/webm;codecs=opus") ? {mimeType:"audio/webm;codecs=opus", audioBitsPerSecond:32000} : options;
-      const mr = new Original(stream, opts);
-      const chunks = [];
-      mr.addEventListener("dataavailable", e => { if(e.data && e.data.size) chunks.push(e.data); });
-      mr.addEventListener("stop", async () => {
-        try{
-          const blob = new Blob(chunks,{type:mr.mimeType||"audio/webm"});
-          const item = await saveAudio(blob);
-          window.__RP_LAST_AUDIO_ID = item.id;
-          window.__RP_LAST_AUDIO_URL = URL.createObjectURL(blob);
-          window.__RP_LAST_AUDIO_SIZE = item.size;
-          alert("Audio saved successfully ✅");
-        }catch(err){
-          alert("Audio save failed: " + (err.message||err));
-        }
-      });
-      return mr;
-    };
-    window.MediaRecorder.isTypeSupported = Original.isTypeSupported.bind(Original);
-  }
-
-  document.addEventListener("click", async function(e){
-    const btn=e.target.closest("button"); if(!btn) return;
-    const label=String(btn.textContent||"").trim().toLowerCase();
-    if(!(label.includes("submit to teacher") || label==="submit")) return;
-    if(isTeacher()) return;
-
-    const u=user();
-    if(!canSubmit(u.id)){
-      e.preventDefault(); e.stopPropagation();
-      alert("تم تسليم التسجيل مسبقًا. لا يمكنك إعادة التسجيل إلا إذا سمح المعلم بذلك.");
-      return false;
-    }
-    if(!window.__RP_LAST_AUDIO_ID){
-      e.preventDefault(); e.stopPropagation();
-      alert("لا يوجد تسجيل محفوظ. سجل الصوت أولًا ثم أوقف التسجيل وانتظر رسالة Audio saved successfully.");
-      return false;
-    }
-    if(!confirm("تأكيد الإرسال: سيتم إرسال هذا التسجيل مرة واحدة فقط. هل تريد الإرسال؟")){
-      e.preventDefault(); e.stopPropagation(); return false;
-    }
-    const item = await getAudio(window.__RP_LAST_AUDIO_ID);
-    if(!item || !item.blob){
-      e.preventDefault(); e.stopPropagation();
-      alert("لم يتم العثور على ملف الصوت. أعد التسجيل.");
-      return false;
-    }
-
-    const a=records();
-    a.push({
-      id:"rp_"+Date.now()+"_"+Math.random().toString(36).slice(2),
-      taskId:taskId(),
-      studentId:u.id,
-      studentName:u.name,
-      className:u.className,
-      submittedAt:new Date().toISOString(),
-      status:"submitted",
-      analysisStatus:"Pending",
-      audioId:item.id,
-      audioStatus:"audio attached",
-      audioSize:item.size,
-      audioType:item.type,
-      accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"",
-      teacherScore:"", teacherNotes:"", transcript:""
-    });
-    saveRecords(a);
-    alert("Audio submitted to teacher ✅");
-    studentStatus();
-  }, true);
-
-  function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
-  function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
-
-  async function transcribe(audioId){
-    const key=getKey();
-    if(!key) throw new Error("Add OpenAI API Key first.");
-    const item=await getAudio(audioId);
-    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
-    const file = new File([item.blob], "student-reading.webm", {type:item.type||"audio/webm"});
-    const form=new FormData();
-    form.append("file",file);
-    form.append("model","whisper-1");
-    form.append("language","en");
-    form.append("response_format","json");
-    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
-    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
-    const data=await resp.json();
-    return (data.text||"").trim();
-  }
-  function refText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
-  function score(ref,spoken,seconds=60){
-    const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
-    const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
-    let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
-    const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const accuracy=a.length?Math.round(correct/a.length*100):0;
-    const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
-    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
-  }
-  async function analyzeOne(id,silent=false){
-    const r=records().find(x=>x.id===id);
-    if(!r) return alert("Submission not found.");
-    if(!r.audioId) return alert("No audio attached. Allow retake and ask student to record again.");
-    updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
-    await migrateReadingScoresV13();
-    renderCards();
-    try{
-      const text=await transcribe(r.audioId);
-      const res=score(refText(),text,60);
-      updateRecord(id,{...res,transcript:text});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
-    }catch(err){
-      updateRecord(id,{analysisStatus:"Failed: "+err.message});
-      if(!silent) alert("فشل التحليل: "+err.message);
-    }
-    await renderCards();
-  }
-  async function testKey(){
-    const key=getKey(); if(!key) return alert("ضع مفتاح OpenAI أولًا.");
-    try{
-      const resp=await fetch("https://api.openai.com/v1/models",{headers:{"Authorization":"Bearer "+key}});
-      if(!resp.ok) throw new Error("Status "+resp.status);
-      alert("API Key works ✅");
-    }catch(e){ alert("API Key test failed: "+e.message); }
-  }
-  function fmt(n){ n=Number(n||0); if(!n)return"-"; if(n<1024)return n+" B"; if(n<1048576)return Math.round(n/1024)+" KB"; return (n/1048576).toFixed(1)+" MB"; }
-
-  function teacherPanel(){
-    if(!isTeacher()||panelMade) return;
-    panelMade=true;
-    const panel=document.createElement("div");
-    panel.id="rp-v11-panel";
-    panel.style.cssText="margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
-    panel.innerHTML=`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2></div>
-      <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
-      <div id="rp-v11-summary" style="margin:12px 0"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><select id="rp-v11-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;max-width:220px"><option value="all">All Classes</option></select><button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button><button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Class</button><button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button><button id="rp-v11-accept-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white">Accept Class</button><button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Class</button><button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Class</button></div>
-      <div style="margin:10px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0">
-        <b>Class Assessment</b>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 8px">Apply difficulty and speed settings to all Reading Progress attempts in the selected class.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="rp-v11-class-difficulty" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="beginner">Beginner / Supportive</option>
-            <option value="intermediate" selected>Intermediate / Normal</option>
-            <option value="advanced">Advanced / Strict</option>
-          </select>
-          <select id="rp-v11-class-speed" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="normal">Speed Normal</option>
-            <option value="reduced" selected>Speed Reduced</option>
-            <option value="excluded">Exclude Speed</option>
-          </select>
-          <button id="rp-v11-apply-class-assessment" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:800">Apply to Class</button>
-        </div>
-        <div id="rp-v11-class-assessment-summary" style="margin-top:8px;font-size:12px;color:#334155"></div>
-      </div>
-      <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
-    (document.getElementById("root")||document.body).prepend(panel);
-
-    panel.addEventListener("click",async e=>{
-      const id=e.target.id;
-      if(id==="rp-v11-refresh"){await renderCards();return;}
-      if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
-      if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
-      if(id==="rp-v11-test-key"){await testKey();return;}
-      if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
-      if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; setClass(cls,st); await renderCards(); return;}
-      if(id==="rp-v11-apply-class-assessment"){
-        const cls=document.getElementById("rp-v11-class").value;
-        if(cls==="all")return alert("اختر فصلًا محددًا أولًا.");
-        const difficulty=document.getElementById("rp-v11-class-difficulty").value;
-        const speedSetting=document.getElementById("rp-v11-class-speed").value;
-        const a=records();
-        let count=0;
-        const selectedText=document.getElementById("rp-v11-class").selectedOptions[0]?.textContent||cls;
-        a.forEach(r=>{
-          if(r.className===cls || r.classId===cls || r.className===selectedText || r.classId===selectedText){
-            r.difficulty=difficulty;
-            r.speedSetting=speedSetting;
-            r.finalScoreOfficial=finalScore(r);
-            r.adjustedAccuracy=adjustedAccuracy(r);
-            r.adjustedFluency=adjustedFluency(r);
-            r.updatedAt=new Date().toISOString();
-            count++;
-          }
-        });
-        saveRecords(a);
-        await renderCards();
-        alert("تم تطبيق تقييم الفصل على "+count+" محاولة.");
-        return;
-      }
-      const delAttempt=e.target.getAttribute("data-delete-attempt"); if(delAttempt){if(confirm("Delete this attempt and its audio?")){const a=records();const rec=a.find(x=>x.id===delAttempt);if(rec&&rec.audioId){try{const db=await openDB();await new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(rec.audioId);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(err){}}saveRecords(a.filter(x=>x.id!==delAttempt));await renderCards();}return;}
-      const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; updateRecord(rid,{status:st}); await renderCards(); }
-    });
-    panel.addEventListener("input",e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)updateRecord(s,{teacherScore:e.target.value}); if(n)updateRecord(n,{teacherNotes:e.target.value});});
-    panel.addEventListener("change",async e=>{const did=e.target.getAttribute("data-difficulty");const sid=e.target.getAttribute("data-speed-setting");if(did){updateRecord(did,{difficulty:e.target.value});await renderCards();return;}if(sid){updateRecord(sid,{speedSetting:e.target.value});await renderCards();return;}if(e.target.id==="rp-v11-class")await renderCards();});
-    renderCards();
-  }
-
-  async function renderCards(){
-    const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=records(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
-    const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
-    sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    sel.value=classes.includes(current)?current:"all";
-    const shown=arr.filter(r=>sel.value==="all"||r.className===sel.value), completed=shown.filter(r=>finalScore(r)!=="");
-    const avg=completed.length?Math.round(completed.reduce((s,r)=>s+Number(finalScore(r)),0)/completed.length):"-";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Average Final: ${avg}${avg==="-"?"":"%"}</div></div>`;
-    const ca=document.getElementById("rp-v11-class-assessment-summary");
-    if(ca){
-      const clsName=sel.value==="all"?"All Classes":sel.value;
-      const levels={beginner:"Supportive",intermediate:"Normal",advanced:"Strict"};
-      const classDiff=document.getElementById("rp-v11-class-difficulty")?.value||"intermediate";
-      const classSpeed=document.getElementById("rp-v11-class-speed")?.value||"reduced";
-      ca.innerHTML=`Current view: <b>${clsName}</b> · Attempts: <b>${shown.length}</b> · Analyzed: <b>${completed.length}</b> · Average: <b>${avg}${avg==="-"?"":"%"}</b> · Selected class assessment: <b>${levels[classDiff]||classDiff}</b> / <b>${classSpeed}</b>`;
-    }
-    const cards=document.getElementById("rp-v11-cards");
-    if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
-    let out="";
-    for(const r of shown){
-      const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):"";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(item.size)+" · "+(item.type||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Official: ${finalScore(r)===""?"-":finalScore(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#dbeafe;color:#1d4ed8;font-weight:800">Official Acc: ${adjustedAccuracy(r)===""?"-":adjustedAccuracy(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Official Fluency: ${adjustedFluency(r)===""?"-":adjustedFluency(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}
-            ${r.transcript?`<div style="padding:10px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155"><b>Colored Word Feedback</b><div style="font-size:12px;color:#64748b;margin:4px 0">Green = correct · Orange = missing · Red = extra/wrong · Purple = repeated</div><div style="font-size:12px;color:#166534;font-weight:800;margin:4px 0">Balanced scoring: Missing + Extra words reduce the score, but correct reading is counted.</div>${coloredWordAnalysis(r.transcript)}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select data-difficulty="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Difficulty</option><option value="beginner" ${r.difficulty==="beginner"?"selected":""}>Beginner</option><option value="intermediate" ${r.difficulty==="intermediate"?"selected":""}>Intermediate</option><option value="advanced" ${r.difficulty==="advanced"?"selected":""}>Advanced</option></select><select data-speed-setting="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Speed Weight</option><option value="normal" ${r.speedSetting==="normal"?"selected":""}>Speed Normal</option><option value="reduced" ${r.speedSetting==="reduced"?"selected":""}>Speed Reduced</option><option value="excluded" ${r.speedSetting==="excluded"?"selected":""}>Exclude Speed</option></select></div><div style="font-size:12px;color:#64748b;margin-top:-2px">Beginner changes the official score immediately. Intermediate is normal. Advanced is strict.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete-attempt="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete</button></div></div></div>`;
-    }
-    cards.innerHTML=out;
-  }
-
-  function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user(), ok=canSubmit(u.id);
-    let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
-    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
-  }
-
-  setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
-})();
- // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
-</script>
 
 
 <script>
@@ -3928,16 +3590,9 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V47_READING_PROGRESS_AI_CLEAN_START -->
+<!-- RP_BUILD_V48_READING_PROGRESS_OLD_REMOVED_AI_CLEAN -->
 
-<script>
-try{
-  var b=document.getElementById("rp-v11-show");
-  if(b){b.remove();}
-  var p=document.getElementById("rp-v11-panel");
-  if(p){p.style.display="block";}
-}catch(e){}
-</script>
+
 
 </body>
 </html>
