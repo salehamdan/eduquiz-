@@ -2478,6 +2478,8 @@ function ReadingProgressStudent({user,data,reload}){
   const [msg,setMsg]=useState("");
   const [submitStatus,setSubmitStatus]=useState("");
   const [submitBusy,setSubmitBusy]=useState(false);
+  const [savedSubmissionId,setSavedSubmissionId]=useState("");
+  const [audioUploadFailed,setAudioUploadFailed]=useState(false);
   const [practiceIndex,setPracticeIndex]=useState(0);
   const [passedWords,setPassedWords]=useState({});
   const [practiceMsg,setPracticeMsg]=useState("");
@@ -2668,6 +2670,8 @@ function ReadingProgressStudent({user,data,reload}){
     if(s.status==="accepted") return "Accepted";
     if(s.status==="rejected") return "Rejected";
     if(s.status==="retake_allowed") return "Retake allowed";
+    if(s.audioUploadStatus==="failed") return "Submitted - audio upload failed";
+    if(s.audioUploadStatus==="uploading") return "Uploading audio";
     if(s.syncedFromLocal) return "Synced old record";
     return "Pending teacher analysis";
   }
@@ -2710,7 +2714,7 @@ function ReadingProgressStudent({user,data,reload}){
     return unique.filter(function(w){return hyp.indexOf(w)<0;}).slice(0,7);
   }
   const practiceWords=selectedTask&&blob?wrongWordsFor(selectedTask,transcript):[];
-  const needsPractice=practiceWords.length>0;
+  const needsPractice=!!(selectedTask&&selectedTask.requirePractice)&&practiceWords.length>0;
   const passedCount=practiceWords.filter(function(w){return passedWords[w];}).length;
   const practiceDone=!needsPractice || passedCount===practiceWords.length;
   const currentWord=practiceWords[Math.min(practiceIndex,Math.max(0,practiceWords.length-1))]||"";
@@ -2798,39 +2802,108 @@ function ReadingProgressStudent({user,data,reload}){
       }catch(e){reject(e);}
     });
   }
+  function withTimeout(promise,ms){
+    return new Promise(function(resolve,reject){
+      let done=false;
+      const t=setTimeout(function(){
+        if(done) return;
+        done=true;
+        reject(new Error("upload_timeout"));
+      },ms);
+      promise.then(function(v){
+        if(done) return;
+        done=true;
+        clearTimeout(t);
+        resolve(v);
+      }).catch(function(e){
+        if(done) return;
+        done=true;
+        clearTimeout(t);
+        reject(e);
+      });
+    });
+  }
+  async function uploadAudioToStorageForSubmission(submissionId,taskObj,audioBlob){
+    const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${taskObj.id}-${Date.now()}.webm`;
+    await fsSet("readingSubmissions",submissionId,{
+      id:submissionId,
+      audioUploadStatus:"uploading",
+      audioStoragePath:path,
+      updatedAt:new Date().toISOString()
+    },true);
+    const url=await withTimeout(rpUploadAudio(audioBlob,path),25000);
+    await fsSet("readingSubmissions",submissionId,{
+      id:submissionId,
+      audioUrl:url,
+      audioStoragePath:path,
+      audioUploadStatus:"uploaded",
+      status:"submitted",
+      analysisStatus:"Pending",
+      updatedAt:new Date().toISOString()
+    },true);
+    return url;
+  }
+  async function retryAudioUpload(){
+    if(!savedSubmissionId||!selectedTask||!blob){setMsg("No saved recording to retry.");return;}
+    setSubmitBusy(true);
+    setAudioUploadFailed(false);
+    try{
+      setMsg("Retrying audio upload...");
+      setSubmitStatus("Retrying audio upload...");
+      await uploadAudioToStorageForSubmission(savedSubmissionId,selectedTask,blob);
+      setMsg("✅ Audio uploaded. Submitted to teacher successfully.");
+      setSubmitStatus("Submitted to teacher successfully. Wait for teacher analysis.");
+      setBlob(null); setAudioUrl(""); setSelectedTask(null); setTranscript(""); setPassedWords({}); setPracticeIndex(0); setSavedSubmissionId("");
+      await reload();
+    }catch(e){
+      setAudioUploadFailed(true);
+      setMsg("The attempt is saved, but audio upload failed again. Try Retry Audio Upload or ask the teacher for retake.");
+      setSubmitStatus("Submitted, but audio upload failed.");
+    }finally{
+      setSubmitBusy(false);
+    }
+  }
   async function submit(){
     if(submitBusy){return;}
     if(!selectedTask||!blob){setMsg("Record your reading first.");return;}
     if(needsPractice&&!practiceDone){setMsg("Practice each wrong word before submitting.");return;}
     setSubmitBusy(true);
+    setAudioUploadFailed(false);
     try{
+      const id=uid();
+      setSavedSubmissionId(id);
       setSubmitStatus("Saving submission...");
       setMsg("Saving submission...");
-      const id=uid();
-      const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${selectedTask.id}-${Date.now()}.webm`;
-      let url="";
-      let mode="dataUrlImmediate";
-      try{
-        url=await blobToDataUrl(blob);
-      }catch(e){
-        setSubmitStatus("Audio preparation failed. Please record again.");
-        setMsg("Audio preparation failed. Please record again.");
-        setSubmitBusy(false);
-        return;
-      }
       await clearRetakeFlags(selectedTask);
       await fsSet("readingSubmissions",id,{
         id:id,taskId:selectedTask.id,taskTitle:selectedTask.title||"Reading Progress Task",
         studentId:user.id,studentName:user.name||"",studentNumber:user.studentId||"",
         classId:user.classId,teacherId:selectedTask.teacherId,
-        audioUrl:url,audioStoragePath:path,audioUploadMode:mode,
+        audioUrl:"",audioStoragePath:"",audioUploadStatus:"uploading",audioUploadMode:"storage",
         transcript:transcript,seconds:seconds,createdAt:today(),submittedAt:new Date().toISOString(),
-        status:"submitted",analysisStatus:"Pending"
+        status:"audio_uploading",analysisStatus:"Pending",wordPracticeRequired:!!selectedTask.requirePractice
       });
-      setSubmitStatus("Submitted to teacher successfully. Wait for teacher analysis.");
-      setMsg("✅ Submitted to teacher successfully. Wait for teacher analysis.");
-      setBlob(null); setAudioUrl(""); setSelectedTask(null); setTranscript(""); setPassedWords({}); setPracticeIndex(0);
-      await reload();
+      setSubmitStatus("Uploading audio...");
+      setMsg("Uploading audio...");
+      try{
+        await uploadAudioToStorageForSubmission(id,selectedTask,blob);
+        setSubmitStatus("Submitted to teacher successfully. Wait for teacher analysis.");
+        setMsg("✅ Submitted to teacher successfully. Wait for teacher analysis.");
+        setBlob(null); setAudioUrl(""); setSelectedTask(null); setTranscript(""); setPassedWords({}); setPracticeIndex(0); setSavedSubmissionId("");
+        await reload();
+      }catch(uploadErr){
+        setAudioUploadFailed(true);
+        await fsSet("readingSubmissions",id,{
+          id:id,
+          status:"submitted",
+          audioUploadStatus:"failed",
+          analysisStatus:"Pending",
+          updatedAt:new Date().toISOString()
+        },true);
+        setSubmitStatus("Submitted, but audio upload failed.");
+        setMsg("The attempt is saved. Audio upload failed. Press Retry Audio Upload while this recording is still here.");
+        await reload();
+      }
     }catch(e){
       setSubmitStatus("Submission was not saved. Please try again.");
       setMsg("Submission was not saved. Please try again.");
@@ -2851,11 +2924,11 @@ function ReadingProgressStudent({user,data,reload}){
         {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
         {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
         {blob&&<Card style={{marginTop:"10px",background:needsPractice?"#fff7ed":"#ecfdf5",border:"1px solid "+(needsPractice?"#fed7aa":"#bbf7d0")}}>
-          <strong style={{fontSize:"13px",color:needsPractice?"#9a3412":"#166534"}}>{needsPractice?"🎯 Practice Wrong Words One by One":"✅ No word practice required"}</strong>
-          {needsPractice?<div><p style={{fontSize:"11px",color:C.mu}}>The platform says the word first, then listens automatically. Close pronunciation is accepted.</p><div style={{display:"flex",gap:"6px",flexWrap:"wrap",margin:"8px 0"}}>{practiceWords.map(function(w,i){return <span key={w} style={{padding:"6px 10px",borderRadius:"999px",background:passedWords[w]?"#dcfce7":i===practiceIndex?"#fee2e2":"#f1f5f9",color:passedWords[w]?"#166534":i===practiceIndex?"#991b1b":C.tx,fontWeight:800}}>{passedWords[w]?"✅ ":""}{w}</span>;})}</div><div style={{padding:"10px",borderRadius:"12px",background:"#fff",border:"1px solid "+C.br,marginTop:"8px"}}><div style={{fontSize:"12px",color:C.mu}}>Current word {practiceIndex+1} of {practiceWords.length}</div><div style={{fontSize:"28px",fontWeight:900,color:"#991b1b",margin:"4px 0"}}>{currentWord}</div><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn size="sm" color={C.w} onClick={()=>speakWord(currentWord)}>🔊 Listen Again</Btn><Btn size="sm" color={C.pu} disabled={listeningWord||!currentWord} onClick={startPractice}>{listeningWord?"Listening…":"🎙️ Say the Word"}</Btn><Btn size="sm" color={C.mu} onClick={()=>{setPassedWords({});setPracticeIndex(0);setPracticeMsg("");}}>Reset Practice</Btn></div><div style={{fontSize:"11px",color:C.mu,marginTop:"6px"}}>Passed: {passedCount}/{practiceWords.length}</div></div></div>:<p style={{fontSize:"11px",color:"#166534"}}>No major missing words were detected. You can submit directly.</p>}
+          <strong style={{fontSize:"13px",color:practiceWords.length?"#9a3412":"#166534"}}>{practiceWords.length?(selectedTask.requirePractice?"🎯 Practice Wrong Words One by One":"🎯 Optional Word Practice"):"✅ No word practice required"}</strong>
+          {needsPractice?<div><p style={{fontSize:"11px",color:C.mu}}>The platform says the word first, then listens automatically. Close pronunciation is accepted. This practice is required only if your teacher enabled it.</p><div style={{display:"flex",gap:"6px",flexWrap:"wrap",margin:"8px 0"}}>{practiceWords.map(function(w,i){return <span key={w} style={{padding:"6px 10px",borderRadius:"999px",background:passedWords[w]?"#dcfce7":i===practiceIndex?"#fee2e2":"#f1f5f9",color:passedWords[w]?"#166534":i===practiceIndex?"#991b1b":C.tx,fontWeight:800}}>{passedWords[w]?"✅ ":""}{w}</span>;})}</div><div style={{padding:"10px",borderRadius:"12px",background:"#fff",border:"1px solid "+C.br,marginTop:"8px"}}><div style={{fontSize:"12px",color:C.mu}}>Current word {practiceIndex+1} of {practiceWords.length}</div><div style={{fontSize:"28px",fontWeight:900,color:"#991b1b",margin:"4px 0"}}>{currentWord}</div><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn size="sm" color={C.w} onClick={()=>speakWord(currentWord)}>🔊 Listen Again</Btn><Btn size="sm" color={C.pu} disabled={listeningWord||!currentWord} onClick={startPractice}>{listeningWord?"Listening…":"🎙️ Say the Word"}</Btn><Btn size="sm" color={C.mu} onClick={()=>{setPassedWords({});setPracticeIndex(0);setPracticeMsg("");}}>Reset Practice</Btn></div><div style={{fontSize:"11px",color:C.mu,marginTop:"6px"}}>Passed: {passedCount}/{practiceWords.length}</div></div></div>:<p style={{fontSize:"11px",color:"#166534"}}>No major missing words were detected. You can submit directly.</p>}
           {practiceMsg&&<p style={{fontSize:"12px",color:practiceMsg.indexOf("✅")===0?C.s:C.d,fontWeight:800}}>{practiceMsg}</p>}
         </Card>}
-        <Btn color={C.p} disabled={submitBusy||!blob||(needsPractice&&!practiceDone)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitBusy?"Submitting...":(needsPractice&&!practiceDone?"Practice words first":"Submit to Teacher")}</Btn>
+        <Btn color={C.p} disabled={submitBusy||!blob||(needsPractice&&!practiceDone)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitBusy?"Working...":(needsPractice&&!practiceDone?"Practice words first":"Submit to Teacher")}</Btn>{audioUploadFailed&&<Btn color={C.w} disabled={submitBusy} onClick={retryAudioUpload} style={{width:"100%",marginTop:"8px"}}>Retry Audio Upload</Btn>}
         <Btn color={C.mu} onClick={backToReadingTasks} style={{width:"100%",marginTop:"8px"}}>← Back without submitting</Btn>
         {msg&&<p style={{fontSize:"12px",color:msg.indexOf("✅")===0?C.s:C.d}}>{msg}</p>}
       </Card>
@@ -2863,7 +2936,7 @@ function ReadingProgressStudent({user,data,reload}){
   }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V22 Submit Direct Save Fix</div></Card>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V24 Storage Submit No Hang</div></Card>
     <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}><strong style={{fontSize:"13px",color:C.tx}}>📌 Reading Progress Status</strong><p style={{fontSize:"12px",color:C.mu,margin:"6px 0 0",fontWeight:submitStatus?800:500}}>{submitStatus||(mySubs.some(function(s){return s.status==="submitted"&&!s.analysis;})?"Submitted. Waiting for teacher analysis.":"No new submission yet.")}</p><Btn size="sm" color={C.p} onClick={syncMyOldReadingResults} style={{marginTop:"8px"}}>Sync My Old Reading Results</Btn><div style={{fontSize:"10px",color:C.mu,marginTop:"5px"}}>Use once if older results were saved only on this device.</div></Card>
     <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,overflow:"hidden",background:"#fff"}}><strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Progress Dashboard</strong><p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Your reading performance summary appears here, including previous saved attempts when they match your account.</p><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginTop:"10px"}}>{chip("Latest",latest!==null?latest+"%":"—","#eff6ff","#1d4ed8")}{chip("Attempts",mySubs.length,"#ecfdf5","#166534")}{chip("Pending",pendingCount,"#fff7ed","#9a3412")}{chip("Growth",growth!==null?growth+"%":"—","#fff7ed","#9a3412")}{chip("Best",best!==null?best+"%":"—","#f8fafc","#334155")}{chip("Average",avg!==null?avg+"%":"—","#f8fafc","#334155")}</div>{bars()}</Card>
@@ -2879,6 +2952,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [lines,setLines]=useState(3);
   const [wordCount,setWordCount]=useState(80);
   const [rpMaxAttempts,setRpMaxAttempts]=useState(1);
+  const [requirePractice,setRequirePractice]=useState(false);
   const [topic,setTopic]=useState("");
   const [text,setText]=useState("");
   const [classIds,setClassIds]=useState([]);
@@ -3154,7 +3228,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;}
     const existing=editTaskId?tasks.find(t=>t.id===editTaskId):null;
     const id=editTaskId||uid();
-    await fsSet("readingTasks",id,{...(existing||{}),id,teacherId:user.id,title:title.trim(),topic:topic.trim(),level,lines:Number(lines),maxAttempts:Number(rpMaxAttempts)||1,text:text.trim(),classIds,status:existing?.status||"open",createdAt:existing?.createdAt||today(),updatedAt:new Date().toISOString()});
+    await fsSet("readingTasks",id,{...(existing||{}),id,teacherId:user.id,title:title.trim(),topic:topic.trim(),level,lines:Number(lines),maxAttempts:Number(rpMaxAttempts)||1,requirePractice:!!requirePractice,text:text.trim(),classIds,status:existing?.status||"open",createdAt:existing?.createdAt||today(),updatedAt:new Date().toISOString()});
     setMsg(editTaskId?"✅ Reading task updated.":"✅ Reading task created.");
     setEditTaskId("");
     setText("");
@@ -3167,6 +3241,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     setLevel(t.level||"beginner");
     setLines(Number(t.lines)||3);
     setRpMaxAttempts(Number(t.maxAttempts)||1);
+    setRequirePractice(!!t.requirePractice);
     setText(t.text||"");
     window.scrollTo({top:0,behavior:"smooth"});
   }
@@ -3439,14 +3514,14 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         {myClasses.map(c=>{const on=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(on?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.p:C.br),background:on?C.p:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"11px"}}>{c.name}</button>})}
       </div>
       <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}>
-        <Btn color={C.pu} onClick={gen}>✨ Generate Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editTaskId?"Update Task":"Save Task"}</Btn>{editTaskId&&<Btn color={C.mu} onClick={()=>{setEditTaskId("");setTitle("Reading Progress Task");setText("");setTopic("");}}>Cancel Edit</Btn>}
+        <label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",color:C.tx,gridColumn:"1 / -1",padding:"8px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px"}}><input type="checkbox" checked={requirePractice} onChange={e=>setRequirePractice(e.target.checked)} /> Require word practice before submit</label><Btn color={C.pu} onClick={gen}>✨ Generate Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editTaskId?"Update Task":"Save Task"}</Btn>{editTaskId&&<Btn color={C.mu} onClick={()=>{setEditTaskId("");setTitle("Reading Progress Task");setText("");setTopic("");setRequirePractice(false);}}>Cancel Edit</Btn>}
       </div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.p}}>{msg}</p>}
     </Card>
 
     <Card style={{marginBottom:"11px",maxHeight:"60vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
       <strong style={{fontSize:"13px"}}>Tasks</strong>
       <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Manage each Reading Progress task: edit, close/open, allow retake for all students, or allow retake for one selected student.</p>
-      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"9px 0",borderBottom:"1px solid "+C.br,alignItems:"center",flexWrap:"wrap"}}><div style={{minWidth:"190px",flex:1}}><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · Attempts: {t.maxAttempts||1} · Status: {t.status||"open"} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",alignItems:"center"}}><select value={retakeStudentPick[t.id]||""} onChange={e=>{const v=e.target.value;setRetakeStudentPick(p=>({...p,[t.id]:v})); if(v)allowOneStudentRetake(t,v);}} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"11px",minWidth:"170px"}}><option value="">Retake Student…</option>{taskEligibleStudents(t).map(st=><option key={st.id} value={st.id}>{st.name} {st.studentId?"("+st.studentId+")":""}</option>)}</select><span style={{fontSize:"10px",color:C.mu}}>Choose one student only</span></div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={(t.status||"open")==="closed"?C.s:C.w} onClick={()=>setTaskStatus(t,(t.status||"open")==="closed"?"open":"closed")}>{(t.status||"open")==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>allowTaskRetakes(t)}>Retake All</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"9px 0",borderBottom:"1px solid "+C.br,alignItems:"center",flexWrap:"wrap"}}><div style={{minWidth:"190px",flex:1}}><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · Attempts: {t.maxAttempts||1} · Status: {t.status||"open"} · Practice: {t.requirePractice?"Required":"Optional"} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",alignItems:"center"}}><select value={retakeStudentPick[t.id]||""} onChange={e=>{const v=e.target.value;setRetakeStudentPick(p=>({...p,[t.id]:v})); if(v)allowOneStudentRetake(t,v);}} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"11px",minWidth:"170px"}}><option value="">Retake Student…</option>{taskEligibleStudents(t).map(st=><option key={st.id} value={st.id}>{st.name} {st.studentId?"("+st.studentId+")":""}</option>)}</select><span style={{fontSize:"10px",color:C.mu}}>Choose one student only</span></div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={(t.status||"open")==="closed"?C.s:C.w} onClick={()=>setTaskStatus(t,(t.status||"open")==="closed"?"open":"closed")}>{(t.status||"open")==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>allowTaskRetakes(t)}>Retake All</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}
     </Card>
 
     <Card style={{marginBottom:"11px"}}>
@@ -4924,6 +4999,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V22_SUBMIT_DIRECT_SAVE_FIX -->
+<!-- RP_BUILD_V24_STORAGE_SUBMIT_NO_HANG -->
 </body>
 </html>
