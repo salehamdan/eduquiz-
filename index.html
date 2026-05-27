@@ -2601,6 +2601,7 @@ function ReadingProgressStudent({user,data,reload}){
     const done=taskSubs(t).filter(function(x){return x.status==="retake_allowed";});
     if(done.length){
       const last=done[done.length-1];
+      if(last.retakePracticeMode!==undefined) return last.retakePracticeMode==="required";
       if(last.requirePracticeOverride!==undefined) return !!last.requirePracticeOverride;
       if(last.wordPracticeRequired!==undefined) return !!last.wordPracticeRequired;
     }
@@ -2869,7 +2870,7 @@ function ReadingProgressStudent({user,data,reload}){
       setSubmitStatus("Retrying audio upload...");
       await uploadAudioToStorageForSubmission(savedSubmissionId,selectedTask,blob);
       setMsg("✅ Audio uploaded. Submitted to teacher successfully.");
-      setSubmitStatus("Submitted to teacher successfully. Wait for teacher analysis.");
+      setSubmitStatus("Submitted to teacher successfully. Waiting for teacher analysis.");
       setBlob(null); setAudioUrl(""); setSelectedTask(null); setTranscript(""); setPassedWords({}); setPracticeIndex(0); setSavedSubmissionId("");
       await reload();
     }catch(e){
@@ -2904,8 +2905,8 @@ function ReadingProgressStudent({user,data,reload}){
       setMsg("Uploading audio...");
       try{
         await uploadAudioToStorageForSubmission(id,selectedTask,blob);
-        setSubmitStatus("Submitted to teacher successfully. Wait for teacher analysis.");
-        setMsg("✅ Submitted to teacher successfully. Wait for teacher analysis.");
+        setSubmitStatus("Submitted to teacher successfully. Waiting for teacher analysis.");
+        setMsg("✅ Submitted to teacher successfully. Waiting for teacher analysis.");
         setBlob(null); setAudioUrl(""); setSelectedTask(null); setTranscript(""); setPassedWords({}); setPracticeIndex(0); setSavedSubmissionId("");
         await reload();
       }catch(uploadErr){
@@ -2953,9 +2954,9 @@ function ReadingProgressStudent({user,data,reload}){
   }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V28 ReAnalyze Uses Current Settings</div></Card>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V30 Panel Restore + Teacher Alerts</div></Card>
     <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}><strong style={{fontSize:"13px",color:C.tx}}>📌 Reading Progress Status</strong><p style={{fontSize:"12px",color:C.mu,margin:"6px 0 0",fontWeight:submitStatus?800:500}}>{submitStatus||(mySubs.some(function(s){return s.status==="submitted"&&!s.analysis;})?"Submitted. Waiting for teacher analysis.":"No new submission yet.")}</p><Btn size="sm" color={C.p} onClick={syncMyOldReadingResults} style={{marginTop:"8px"}}>Sync My Old Reading Results</Btn><div style={{fontSize:"10px",color:C.mu,marginTop:"5px"}}>Use once if older results were saved only on this device.</div></Card>
-    <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
+    <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher · Retake practice: {effectiveRequirePractice(t)?"Required":"Optional"}</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,overflow:"hidden",background:"#fff"}}><strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Progress Dashboard</strong><p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Your reading performance summary appears here, including previous saved attempts when they match your account.</p><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginTop:"10px"}}>{chip("Latest",latest!==null?latest+"%":"—","#eff6ff","#1d4ed8")}{chip("Attempts",mySubs.length,"#ecfdf5","#166534")}{chip("Analyzed",analyzedCount,"#eff6ff","#1d4ed8")}{chip("Pending Review",pendingCount,"#fff7ed","#9a3412")}{audioFailedCount?chip("Audio Failed",audioFailedCount,"#fef2f2","#991b1b"):null}{chip("Growth",growth!==null?growth+"%":"—","#fff7ed","#9a3412")}{chip("Best",best!==null?best+"%":"—","#f8fafc","#334155")}{chip("Average",avg!==null?avg+"%":"—","#f8fafc","#334155")}</div>{bars()}</Card>
     <Card style={{maxHeight:"70vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}><strong style={{fontSize:"13px"}}>Completed Reading Progress</strong>{mySubs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No completed reading submissions yet.</p>:mySubs.slice().reverse().map(function(s,i){const t=taskById(s.taskId);const sc=finalScore(s);const a=s.analysis||{};return <div key={s.id||i} style={{padding:"9px 0",borderBottom:i<mySubs.length-1?"1px solid "+C.br:"none"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><strong style={{fontSize:"12px"}}>{t.title}</strong><span style={{fontSize:"13px",fontWeight:900,color:sc!==null?gc(sc):C.w}}>{sc!==null?sc+"%":"Pending"}</span></div><div style={{fontSize:"10px",color:C.mu}}>{s.createdAt||""} · Status: {statusText(s)}</div>{s.analysis&&<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}><span style={{fontSize:"10px",padding:"4px 7px",borderRadius:"999px",background:"#eff6ff",color:C.p,fontWeight:800}}>Acc: {a.accuracy||"-"}%</span><span style={{fontSize:"10px",padding:"4px 7px",borderRadius:"999px",background:"#ecfdf5",color:"#166534",fontWeight:800}}>WCPM: {a.wcpm||"-"}</span><span style={{fontSize:"10px",padding:"4px 7px",borderRadius:"999px",background:"#fff7ed",color:"#9a3412",fontWeight:800}}>Fluency: {a.fluency||"-"}%</span></div>}</div>;})}</Card>
   </div>;
@@ -3303,12 +3304,13 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     await reload();
   }
   async function allowTaskRetakes(t){
-    const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
+    const requirePracticeForRetake=window.confirm("Require word practice for this retake?\n\nOK = Required\nCancel = Optional");
     const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id);
+    if(!related.length){alert("No submitted attempts found for this task.");return;}
     for(const s of related){
-      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,updatedAt:new Date().toISOString()});
+      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,retakePracticeMode:requirePracticeForRetake?"required":"optional",updatedAt:new Date().toISOString()});
     }
-    alert("Retake allowed for this task submissions.");
+    alert("Retake allowed for this task submissions. Word practice: "+(requirePracticeForRetake?"Required":"Optional"));
     await reload();
   }
   function taskEligibleStudents(t){
@@ -3316,8 +3318,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return myStudents.filter(st=>!classIds.length||classIds.includes(st.classId));
   }
   async function allowOneStudentRetake(t,studentId){
-    const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
     if(!studentId)return;
+    const requirePracticeForRetake=window.confirm("Require word practice for this retake?\n\nOK = Required\nCancel = Optional");
     const st=myStudents.find(x=>x.id===studentId);
     const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id&&s.studentId===studentId);
     if(!related.length){
@@ -3325,10 +3327,10 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       return;
     }
     for(const s of related){
-      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,updatedAt:new Date().toISOString()});
+      await fsSet("readingSubmissions",s.id,{...s,status:"retake_allowed",wordPracticeRequired:requirePracticeForRetake,requirePracticeOverride:requirePracticeForRetake,retakePracticeMode:requirePracticeForRetake?"required":"optional",updatedAt:new Date().toISOString()});
     }
-    setRetakeStudentPick(p=>({...p,[t.id]:""}));
-    alert("Retake allowed for: "+(st?.name||"selected student"));
+    setSelectedGroup(prev=>({...prev,[t.id]:""}));
+    alert("Retake allowed for: "+((st&&st.name)||"selected student")+"\nWord practice: "+(requirePracticeForRetake?"Required":"Optional"));
     await reload();
   }
   async function analyze(sub){
@@ -3377,9 +3379,10 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function updateSubStatus(sub,status){
     let extra={updatedAt:new Date().toISOString()};
     if(status==="retake_allowed"){
-      const requirePracticeForRetake=confirm("Require word practice for this retake?\nOK = Required\nCancel = Optional");
+      const requirePracticeForRetake=window.confirm("Require word practice for this retake?\n\nOK = Required\nCancel = Optional");
       extra.wordPracticeRequired=requirePracticeForRetake;
       extra.requirePracticeOverride=requirePracticeForRetake;
+      extra.retakePracticeMode=requirePracticeForRetake?"required":"optional";
     }
     if(sub.__local){
       const arr=localRecords();
@@ -3403,18 +3406,34 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }
   }
   async function setClassStatus(status){
-    if(filter==="all"){alert("Choose a class first."); return;}\n    const classRequirePracticeForRetake = status==="retake_allowed" ? confirm("Require word practice for this class retake?\\nOK = Required\\nCancel = Optional") : false;
+    if(filter==="all"){alert("Choose a class first."); return;}
+    const classRequirePracticeForRetake = status==="retake_allowed" ? window.confirm("Require word practice for this class retake?\n\nOK = Required\nCancel = Optional") : false;
     const arr=localRecords();
     let changed=false;
     arr.forEach(r=>{
       const st=matchStudent(r)||{};
       const cid=classIdFor(r,st);
-      if(cid===filter){r.status=status; if(status==="retake_allowed"){r.wordPracticeRequired=classRequirePracticeForRetake;r.requirePracticeOverride=classRequirePracticeForRetake;} r.updatedAt=new Date().toISOString(); changed=true;}
+      if(cid===filter){
+        r.status=status;
+        if(status==="retake_allowed"){
+          r.wordPracticeRequired=classRequirePracticeForRetake;
+          r.requirePracticeOverride=classRequirePracticeForRetake;
+          r.retakePracticeMode=classRequirePracticeForRetake?"required":"optional";
+        }
+        r.updatedAt=new Date().toISOString();
+        changed=true;
+      }
     });
     if(changed) saveLocalRecords(arr);
-    const fsubs=firebaseSubs.filter(s=>s.classId===filter);
-    for(const s of fsubs){await fsSet("readingSubmissions",s.id,{...s,status,wordPracticeRequired:status==="retake_allowed"?classRequirePracticeForRetake:s.wordPracticeRequired,requirePracticeOverride:status==="retake_allowed"?classRequirePracticeForRetake:s.requirePracticeOverride});}
-    if(fsubs.length) await reload();
+    const fsubs=(data.readingSubmissions||[]).filter(s=>{
+      const st=matchStudent(s)||{};
+      return classIdFor(s,st)===filter;
+    });
+    for(const s of fsubs){
+      await fsSet("readingSubmissions",s.id,{...s,status,wordPracticeRequired:status==="retake_allowed"?classRequirePracticeForRetake:s.wordPracticeRequired,requirePracticeOverride:status==="retake_allowed"?classRequirePracticeForRetake:s.requirePracticeOverride,retakePracticeMode:status==="retake_allowed"?(classRequirePracticeForRetake?"required":"optional"):s.retakePracticeMode,updatedAt:new Date().toISOString()});
+    }
+    alert("Class records updated. "+(status==="retake_allowed"?("Word practice: "+(classRequirePracticeForRetake?"Required":"Optional")):""));
+    await reload();
   }
 
   function progressPercent(scores){
@@ -3589,6 +3608,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <strong style={{fontSize:"14px",color:C.tx}}>📊 Reading Progress Results</strong>
       <p style={{fontSize:"11px",color:C.mu,margin:"5px 0 0"}}>Student submissions, alerts, analysis, and performance dashboard are here.</p>
     </Card>
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p,background:"#ffffff"}}>
+      <strong style={{fontSize:"15px",color:C.tx}}>📊 Reading Progress Quick Summary</strong>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"10px"}}>
+        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#eff6ff",color:C.p,fontWeight:900}}>Submissions: {subs.length}</span>
+        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#ecfdf5",color:"#166534",fontWeight:900}}>Analyzed: {analyzed.length}</span>
+        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#fff7ed",color:"#9a3412",fontWeight:900}}>Average Final: {avg}%</span>
+        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:800}}>Class: {filter==="all"?"All Classes":className(filter)}</span>
+        <span style={{padding:"8px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:800}}>Assessment: {sensitivity} / {speedWeight}</span>
+      </div>
+    </Card>
+    
 
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p,background:"#ffffff",maxHeight:"70vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
       <strong style={{fontSize:"14px",color:C.tx}}>📊 Reading Progress Performance Dashboard</strong>
@@ -3638,7 +3668,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px",maxHeight:"60vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
       <strong style={{fontSize:"13px"}}>📚 Previous Reading Tests / Tasks</strong>
       <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Manage each Reading Progress task: edit, close/open, allow retake for all students, or allow retake for one selected student.</p>
-      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"9px 0",borderBottom:"1px solid "+C.br,alignItems:"center",flexWrap:"wrap"}}><div style={{minWidth:"190px",flex:1}}><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · Attempts: {t.maxAttempts||1} · Status: {t.status||"open"} · Practice: {t.requirePractice?"Required":"Optional"} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",alignItems:"center"}}><select value={retakeStudentPick[t.id]||""} onChange={e=>{const v=e.target.value;setRetakeStudentPick(p=>({...p,[t.id]:v})); if(v)allowOneStudentRetake(t,v);}} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"11px",minWidth:"170px"}}><option value="">Retake Student…</option>{taskEligibleStudents(t).map(st=><option key={st.id} value={st.id}>{st.name} {st.studentId?"("+st.studentId+")":""}</option>)}</select><span style={{fontSize:"10px",color:C.mu}}>Choose one student only</span></div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={(t.status||"open")==="closed"?C.s:C.w} onClick={()=>setTaskStatus(t,(t.status||"open")==="closed"?"open":"closed")}>{(t.status||"open")==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>allowTaskRetakes(t)}>Retake All</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"9px 0",borderBottom:"1px solid "+C.br,alignItems:"center",flexWrap:"wrap"}}><div style={{minWidth:"190px",flex:1}}><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · Attempts: {t.maxAttempts||1} · Status: {t.status||"open"} · Practice: {t.requirePractice?"Required":"Optional"} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",alignItems:"center"}}><select value={retakeStudentPick[t.id]||""} onChange={e=>{const v=e.target.value;setRetakeStudentPick(p=>({...p,[t.id]:v})); if(v)allowOneStudentRetake(t,v);}} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"11px",minWidth:"170px"}}><option value="">Retake Student…</option>{taskEligibleStudents(t).map(st=><option key={st.id} value={st.id}>{st.name} {st.studentId?"("+st.studentId+")":""}</option>)}</select><span style={{fontSize:"10px",color:C.mu}}>Choose one student only</span></div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={(t.status||"open")==="closed"?C.s:C.w} onClick={()=>setTaskStatus(t,(t.status||"open")==="closed"?"open":"closed")}>{(t.status||"open")==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>allowTaskRetakes(t)}>Retake All ⚙️</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}
     </Card>
 
     <Card style={{marginBottom:"11px"}}>
@@ -3801,7 +3831,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}
             <Btn size="sm" color={C.p} onClick={()=>analyze(s)}>{s.analysis?"Re-analyze":"Analyze"}</Btn>
             <Btn size="sm" color={C.s} onClick={()=>updateSubStatus(s,"accepted")}>Accept</Btn>
-            <Btn size="sm" color={C.w} onClick={()=>updateSubStatus(s,"retake_allowed")}>Retake</Btn>
+            <Btn size="sm" color={C.w} onClick={()=>updateSubStatus(s,"retake_allowed")}>Retake ⚙️</Btn>
             <Btn size="sm" color={C.d} onClick={()=>updateSubStatus(s,"rejected")}>Reject</Btn>
             <Btn size="sm" color={"#475569"} onClick={()=>deleteSub(s)}>Delete</Btn>
           </div>
@@ -5116,6 +5146,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V28_REANALYZE_USES_CURRENT_SETTINGS -->
+<!-- RP_BUILD_V30_PANEL_RESTORE_TEACHER_ALERTS -->
 </body>
 </html>
