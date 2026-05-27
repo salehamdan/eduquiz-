@@ -3810,10 +3810,12 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function rpResultAction(sub, action, forcePractice=false){
     try{
       if(!sub||!sub.id){alert("لم يتم العثور على المحاولة.");return;}
+      console.log("rpResultAction:", action, "sub.id:", sub.id);
       if(action==="analyze"){
         const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
         if(!task){alert("Task not found");return;}
-        const opts=askAnalysisSettings ? askAnalysisSettings() : {chosenSensitivity:sensitivity,chosenSpeedWeight:speedWeight};
+        // Use current settings directly — skip the two browser prompts which often fail on mobile WebView.
+        const opts={chosenSensitivity:sensitivity,chosenSpeedWeight:speedWeight};
         if(setSensitivity) setSensitivity(opts.chosenSensitivity);
         if(setSpeedWeight) setSpeedWeight(opts.chosenSpeedWeight);
         const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0);
@@ -3828,33 +3830,34 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           scoringSettings:{viewMode:viewMode,sensitivity:opts.chosenSensitivity,speedWeight:opts.chosenSpeedWeight},
           reanalyzedAt:new Date().toISOString()
         };
-        const payload={...sub,analysis:savedAnalysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()};
+        const payload={analysis:savedAnalysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()};
         if(sub.__local){
           const arr=localRecords();
           const i=arr.findIndex(x=>x.id===sub.id);
           if(i>=0){arr[i]={...arr[i],analysis:savedAnalysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()};saveLocalRecords(arr);}
-          try{await fsSet("readingSubmissions",sub.id,payload);}catch(e){}
+          try{await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined(payload),{merge:true});}catch(e){console.warn(e);}
           setMsg("✅ تم التحليل حسب الخيارات.");
-          alert("✅ تمت إعادة التحليل\nالدقة: "+opts.chosenSensitivity+"\nالسرعة: "+opts.chosenSpeedWeight+"\nالنتيجة: "+savedAnalysis.finalScore+"%");
+          alert("✅ تمت إعادة التحليل\nالنتيجة: "+savedAnalysis.finalScore+"%");
           setRefreshTick(x=>x+1);
           return;
         }
-        await fsSet("readingSubmissions",sub.id,payload);
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined(payload),{merge:true});
         setMsg("✅ تم التحليل حسب الخيارات.");
-        alert("✅ تمت إعادة التحليل\nالدقة: "+opts.chosenSensitivity+"\nالسرعة: "+opts.chosenSpeedWeight+"\nالنتيجة: "+savedAnalysis.finalScore+"%");
+        alert("✅ تمت إعادة التحليل\nالنتيجة: "+savedAnalysis.finalScore+"%");
         await reload();
         return;
       }
 
       if(action==="retake"){
         const extra={
+          id:sub.id,
           status:"retake_allowed",
           wordPracticeRequired:!!forcePractice,
           requirePracticeOverride:!!forcePractice,
           retakePracticeMode:forcePractice?"required":"optional",
           updatedAt:new Date().toISOString()
         };
-        try{await saveRetakePermission(sub,forcePractice);}catch(e){}
+        try{await saveRetakePermission(sub,forcePractice);}catch(e){console.warn("saveRetakePermission failed (non-fatal):",e);}
         if(sub.__local){
           const arr=localRecords();
           const i=arr.findIndex(x=>x.id===sub.id);
@@ -3864,7 +3867,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           setRefreshTick(x=>x+1);
           return;
         }
-        await fsSet("readingSubmissions",sub.id,{...sub,...extra});
+        // Use merge:true to update only these fields (avoids resending the huge audio data URL)
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined(extra),{merge:true});
         setMsg("✅ تم إرسال الإعادة للطالب.");
         alert(forcePractice?"✅ تم إرسال إعادة الاختبار للطالب مع تدريب الكلمات.":"✅ تم إرسال إعادة الاختبار للطالب.");
         await reload();
@@ -3873,18 +3877,18 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
 
       if(action==="accept"||action==="reject"){
         const newStatus=action==="accept"?"accepted":"rejected";
-        const payload={...sub,status:newStatus,updatedAt:new Date().toISOString()};
+        const extra={id:sub.id,status:newStatus,updatedAt:new Date().toISOString()};
         if(sub.__local){
           const arr=localRecords();
           const i=arr.findIndex(x=>x.id===sub.id);
           if(i>=0){arr[i]={...arr[i],status:newStatus,updatedAt:new Date().toISOString()};saveLocalRecords(arr);}
-          try{await fsSet("readingSubmissions",sub.id,payload);}catch(e){}
+          try{await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined(extra),{merge:true});}catch(e){console.warn(e);}
           setMsg(action==="accept"?"✅ تم قبول المحاولة.":"✅ تم رفض المحاولة.");
           alert(action==="accept"?"✅ تم قبول المحاولة.":"✅ تم رفض المحاولة.");
           setRefreshTick(x=>x+1);
           return;
         }
-        await fsSet("readingSubmissions",sub.id,payload);
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined(extra),{merge:true});
         setMsg(action==="accept"?"✅ تم قبول المحاولة.":"✅ تم رفض المحاولة.");
         alert(action==="accept"?"✅ تم قبول المحاولة.":"✅ تم رفض المحاولة.");
         await reload();
