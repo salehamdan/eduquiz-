@@ -2443,11 +2443,47 @@ function ReadingProgressStudent({user,data,reload}){
   function stopRec(){try{mediaRef.current&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
   async function submit(){
     if(!task||!blob){setMsg("Record your reading first.");return;}
-    setMsg("Uploading…");
-    const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
-    let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setMsg("Upload failed. Check Firebase Storage permissions.");return;}
-    await fsSet("readingSubmissions",id,{id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"});
-    setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
+    setMsg("⏳ Uploading…");
+    const id=uid();
+    const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
+    // Try Firebase Storage upload with a hard timeout so it can never hang forever.
+    let url="";
+    try{
+      url=await Promise.race([
+        rpUploadAudio(blob,path),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),15000))
+      ]);
+    }catch(e){
+      console.warn("Storage upload failed/timed out, using data-URL fallback",e);
+      // Fallback: inline the audio as a data URL if it's small enough for Firestore (<850KB).
+      try{
+        if(blob.size < 850000){
+          url=await rpBlobToDataUrl(blob);
+        }
+      }catch(e2){ console.warn("data-url fallback failed",e2); }
+    }
+    // Always keep the local IndexedDB audio id too (set by the MediaRecorder patch), so the
+    // teacher can still analyze on the same device even if the cloud upload failed.
+    const audioId=window.__RP_LAST_AUDIO_ID||"";
+    if(!url && !audioId){
+      setMsg("⚠️ Upload failed. Recording too large and Storage unavailable. Ask teacher to enable Firebase Storage.");
+      return;
+    }
+    setMsg("⏳ Saving…");
+    try{
+      await fsSet("readingSubmissions",id,{
+        id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,
+        audioUrl:url||"",audioId:audioId,transcript:transcript||"",seconds:seconds||0,
+        studentName:user.name||user.shortName||"",
+        createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted"
+      });
+      setMsg("✅ Submitted. Your teacher will analyze it.");
+      setBlob(null); setAudioUrl(""); setTask(null);
+      await reload();
+    }catch(e){
+      console.error("Save failed",e);
+      setMsg("⚠️ Save failed: "+((e&&e.message)?e.message:e));
+    }
   }
   if(task)return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
@@ -2489,7 +2525,8 @@ function ReadingProgressStudent({user,data,reload}){
     score += studentDiffAdjust(r);
     return Math.max(0, Math.min(100, score));
   }
-  const analyzed = subs.filter(s => s.analysis && (s.status==="analyzed" || s.status==="accepted" || s.analysis.accuracy!==undefined))
+  const analyzed = subs.filter(s => s.analysis && (s.status==="analyzed" || s.status==="accepted")
+                      && (Number(s.analysis.accuracy)>0 || Number(s.analysis.wcpm)>0 || Number(s.analysis.fluency)>0))
                       .sort((a,b) => String(a.createdAt||a.submittedAt||"").localeCompare(String(b.createdAt||b.submittedAt||"")));
   const scoresArr = analyzed.map(studentFinalScore).filter(s=>s!==null);
   const latestScore = scoresArr.length ? scoresArr[scoresArr.length-1] : null;
@@ -3932,21 +3969,8 @@ try {
 
 
 
-<script>
-document.addEventListener("click", function(e){
-  const text = (e.target && e.target.textContent || "").toLowerCase();
-  if(text.includes("submit to teacher") || text.includes("submit")){
-    setTimeout(function(){
-      document.querySelectorAll("*").forEach(function(el){
-        if((el.textContent||"").trim()==="Uploading..."){
-          el.textContent = "Saved locally for teacher review ✅";
-          el.style.color = "#16a34a";
-        }
-      });
-    }, 2500);
-  }
-}, true);
-</script>
+
+
 
 
 
