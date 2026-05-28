@@ -2501,46 +2501,22 @@ function ReadingProgressStudent({user,data,reload}){
     }
     return false;
   }
-  function looksLikeReadingRecord(x){
-    if(!x || typeof x!=="object") return false;
-    if(x.audioUrl||x.transcript||x.wcpm||x.fluency||x.finalScore||x.strictScore||x.official||x.adjustedAccuracy) return true;
-    if(x.analysis && (x.taskId||x.studentId||x.studentName||x.name)) return true;
-    const txt=String((x.type||"")+" "+(x.kind||"")+" "+(x.title||"")+" "+(x.taskTitle||"")).toLowerCase();
-    return txt.indexOf("reading")>=0 && (x.studentId||x.studentName||x.name||x.score||x.accuracy);
-  }
-  function collectReadingRecordsDeep(obj,out,sourceKey,depth){
-    if(!obj || depth>5) return;
-    if(Array.isArray(obj)){
-      obj.forEach(function(v){collectReadingRecordsDeep(v,out,sourceKey,depth+1);});
-      return;
-    }
-    if(typeof obj!=="object") return;
-    if(looksLikeReadingRecord(obj)) out.push(Object.assign({__local:true,__key:sourceKey},obj));
-    Object.keys(obj).forEach(function(k){
-      const low=String(k).toLowerCase();
-      const v=obj[k];
-      if(low.indexOf("reading")>=0||low.indexOf("submission")>=0||low.indexOf("record")>=0||low.indexOf("rp")>=0||Array.isArray(v)){
-        collectReadingRecordsDeep(v,out,sourceKey,depth+1);
-      }
-    });
-  }
-  function allPossibleRemoteReadingRecords(){
-    const out=[];
-    collectReadingRecordsDeep(data.readingSubmissions||[],out,"data.readingSubmissions",0);
-    collectReadingRecordsDeep(data.readingProgressRecords||[],out,"data.readingProgressRecords",0);
-    collectReadingRecordsDeep(data.readingProgress||[],out,"data.readingProgress",0);
-    collectReadingRecordsDeep(data.rpSubmissions||[],out,"data.rpSubmissions",0);
-    collectReadingRecordsDeep(data.submissions||[],out,"data.submissions",0);
-    return out;
-  }
   function localReadingRecords(){
     const out=[];
     try{
       for(let i=0;i<localStorage.length;i++){
         const k=localStorage.key(i)||"";
+        const low=k.toLowerCase();
+        if(low.indexOf("reading")<0 && low.indexOf("rp-")<0 && low.indexOf("submission")<0) continue;
         let v=null;
         try{v=JSON.parse(localStorage.getItem(k)||"null");}catch(e){v=null;}
-        collectReadingRecordsDeep(v,out,k,0);
+        if(Array.isArray(v)){
+          v.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+        }else if(v&&typeof v==="object"){
+          if(Array.isArray(v.records)) v.records.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+          if(Array.isArray(v.submissions)) v.submissions.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+          if(v.studentId||v.studentName||v.audioUrl||v.analysis||v.finalScore||v.accuracy) out.push(Object.assign({__local:true,__key:k},v));
+        }
       }
     }catch(e){}
     return out;
@@ -2563,9 +2539,9 @@ function ReadingProgressStudent({user,data,reload}){
   async function syncMyOldReadingResults(){
     try{
       const old=localReadingRecords().filter(sameStudentRecord).map(normalizeSub);
-      if(!old.length){alert("No old local Reading Progress results found on this device. If the old result is already in Firebase, it should appear automatically after refresh.");return;}
+      if(!old.length){alert("No old local Reading Progress results found on this device.");return;}
       let added=0;
-      const remote=allPossibleRemoteReadingRecords().filter(sameStudentRecord);
+      const remote=(data.readingSubmissions||[]).filter(sameStudentRecord);
       for(let i=0;i<old.length;i++){
         const s=old[i];
         const exists=remote.some(function(r){
@@ -2582,7 +2558,7 @@ function ReadingProgressStudent({user,data,reload}){
       alert("Sync failed. Please try again.");
     }
   }
-  const remoteSubs=allPossibleRemoteReadingRecords().filter(sameStudentRecord);
+  const remoteSubs=(data.readingSubmissions||[]).filter(sameStudentRecord);
   const legacySubs=localReadingRecords().filter(sameStudentRecord);
   const mySubs=remoteSubs.concat(legacySubs).map(normalizeSub).filter(function(s,idx,arr){
     const key=String(s.id||"")+"|"+String(s.taskId||"")+"|"+String(s.createdAt||"");
@@ -2817,7 +2793,7 @@ function ReadingProgressStudent({user,data,reload}){
   }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V20 Robust Reading Sync</div></Card>
+    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Active tasks appear here. Your progress dashboard stays visible below.</p><div style={{fontSize:"10px",color:"#cbd5e1",marginTop:"3px"}}>Student Build: V19 Safe Local Sync</div></Card>
     <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}><strong style={{fontSize:"13px",color:C.tx}}>📌 Reading Progress Status</strong><p style={{fontSize:"12px",color:C.mu,margin:"6px 0 0",fontWeight:submitStatus?800:500}}>{submitStatus||(mySubs.some(function(s){return s.status==="submitted"&&!s.analysis;})?"Submitted. Waiting for teacher analysis.":"No new submission yet.")}</p><Btn size="sm" color={C.p} onClick={syncMyOldReadingResults} style={{marginTop:"8px"}}>Sync My Old Reading Results</Btn><div style={{fontSize:"10px",color:C.mu,marginTop:"5px"}}>Use once if older results were saved only on this device.</div></Card>
     <Card style={{marginBottom:"10px"}}><strong style={{fontSize:"13px"}}>Active Reading Tasks</strong>{activeTasks.length===0?<p style={{textAlign:"center",color:C.mu,fontSize:"12px"}}>No active Reading Progress tasks now.</p>:activeTasks.map(function(t){const done=taskSubs(t);const retake=done.some(function(x){return x.status==="retake_allowed";});return <div key={t.id} style={{display:"flex",gap:"10px",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+C.br}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · Attempts: {done.length}/{t.maxAttempts||1}</div>{retake&&<div style={{fontSize:"10px",color:C.w,fontWeight:800}}>Retake allowed by teacher</div>}</div><Btn size="sm" color={C.p} onClick={()=>setSelectedTask(t)}>{done.length?"Retake":"Start"}</Btn></div>;})}</Card>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p,overflow:"hidden",background:"#fff"}}><strong style={{fontSize:"15px",color:C.tx}}>📈 My Reading Progress Dashboard</strong><p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Your reading performance summary appears here, including previous saved attempts when they match your account.</p><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginTop:"10px"}}>{chip("Latest",latest!==null?latest+"%":"—","#eff6ff","#1d4ed8")}{chip("Attempts",mySubs.length,"#ecfdf5","#166534")}{chip("Pending",pendingCount,"#fff7ed","#9a3412")}{chip("Growth",growth!==null?growth+"%":"—","#fff7ed","#9a3412")}{chip("Best",best!==null?best+"%":"—","#f8fafc","#334155")}{chip("Average",avg!==null?avg+"%":"—","#f8fafc","#334155")}</div>{bars()}</Card>
@@ -2846,34 +2822,22 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [refreshTick,setRefreshTick]=useState(0);
   const [showPanel,setShowPanel]=useState(true);
 
-  function teacherLooksLikeReadingRecord(x){
-    if(!x || typeof x!=="object") return false;
-    if(x.audioUrl||x.transcript||x.wcpm||x.fluency||x.finalScore||x.strictScore||x.official||x.adjustedAccuracy) return true;
-    if(x.analysis && (x.taskId||x.studentId||x.studentName||x.name)) return true;
-    const txt=String((x.type||"")+" "+(x.kind||"")+" "+(x.title||"")+" "+(x.taskTitle||"")).toLowerCase();
-    return txt.indexOf("reading")>=0 && (x.studentId||x.studentName||x.name||x.score||x.accuracy);
-  }
-  function teacherCollectReadingRecordsDeep(obj,out,sourceKey,depth){
-    if(!obj || depth>5) return;
-    if(Array.isArray(obj)){obj.forEach(function(v){teacherCollectReadingRecordsDeep(v,out,sourceKey,depth+1);});return;}
-    if(typeof obj!=="object") return;
-    if(teacherLooksLikeReadingRecord(obj)) out.push(Object.assign({__local:true,__key:sourceKey},obj));
-    Object.keys(obj).forEach(function(k){
-      const low=String(k).toLowerCase();
-      const v=obj[k];
-      if(low.indexOf("reading")>=0||low.indexOf("submission")>=0||low.indexOf("record")>=0||low.indexOf("rp")>=0||Array.isArray(v)){
-        teacherCollectReadingRecordsDeep(v,out,sourceKey,depth+1);
-      }
-    });
-  }
   function teacherLocalReadingRecords(){
     const out=[];
     try{
       for(let i=0;i<localStorage.length;i++){
         const k=localStorage.key(i)||"";
+        const low=k.toLowerCase();
+        if(low.indexOf("reading")<0 && low.indexOf("rp-")<0 && low.indexOf("submission")<0) continue;
         let v=null;
         try{v=JSON.parse(localStorage.getItem(k)||"null");}catch(e){v=null;}
-        teacherCollectReadingRecordsDeep(v,out,k,0);
+        if(Array.isArray(v)){
+          v.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+        }else if(v&&typeof v==="object"){
+          if(Array.isArray(v.records)) v.records.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+          if(Array.isArray(v.submissions)) v.submissions.forEach(function(x){if(x&&typeof x==="object") out.push(Object.assign({__local:true,__key:k},x));});
+          if(v.studentId||v.studentName||v.audioUrl||v.analysis||v.finalScore||v.accuracy) out.push(Object.assign({__local:true,__key:k},v));
+        }
       }
     }catch(e){}
     return out;
@@ -2881,7 +2845,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function syncTeacherLocalReadingRecords(){
     try{
       const old=teacherLocalReadingRecords();
-      if(!old.length){alert("No local Reading Progress records found on this device. If records are in Firebase, no sync is needed.");return;}
+      if(!old.length){alert("No local Reading Progress records found on this device.");return;}
       let added=0;
       const existing=data.readingSubmissions||[];
       for(let i=0;i<old.length;i++){
@@ -4878,6 +4842,6 @@ function rpBalancedScore(r){
 </script>
 
 
-<!-- RP_BUILD_V20_ROBUST_READING_SYNC -->
+<!-- RP_BUILD_V19_SAFE_LOCAL_SYNC -->
 </body>
 </html>
