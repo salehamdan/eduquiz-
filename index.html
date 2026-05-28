@@ -3174,6 +3174,65 @@ document.addEventListener("click", function(e){
     });
   }
 
+  function blobToDataUrl(blob){
+    return new Promise((resolve,reject)=>{
+      try{
+        const reader=new FileReader();
+        reader.onload=()=>resolve(reader.result);
+        reader.onerror=()=>reject(reader.error||new Error("FileReader failed"));
+        reader.readAsDataURL(blob);
+      }catch(e){reject(e);}
+    });
+  }
+
+  function normalizeRecord(r){
+    if(!r) return r;
+    return {
+      ...r,
+      taskId:r.taskId||taskId(),
+      className:r.className||r.classId||"Unassigned",
+      studentName:r.studentName||r.name||"Student",
+      studentId:String(r.studentId||r.id||"unknown").trim(),
+      source:r.source||"rp_shared_submission"
+    };
+  }
+
+  function mergeRecords(local, remote){
+    const map={};
+    (local||[]).forEach(r=>{ if(r&&r.id) map[r.id]=normalizeRecord(r); });
+    (remote||[]).forEach(r=>{ if(r&&r.id) map[r.id]={...(map[r.id]||{}),...normalizeRecord(r)}; });
+    return Object.values(map);
+  }
+
+  async function cloudRecords(){
+    try{
+      if(typeof fsAll!=="function") return [];
+      const arr=await fsAll("readingSubmissions");
+      return (arr||[]).filter(r=>r && (r.source==="rp_shared_submission" || r.taskId===taskId() || r.audioDataUrl || r.audioUrl));
+    }catch(e){
+      console.warn("RP cloud read failed", e);
+      return [];
+    }
+  }
+
+  async function cloudSaveRecord(record){
+    try{
+      if(typeof fsSet!=="function" || !record || !record.id) return false;
+      const copy={...normalizeRecord(record)};
+      await fsSet("readingSubmissions", copy.id, copy);
+      return true;
+    }catch(e){
+      console.warn("RP cloud save failed", e);
+      return false;
+    }
+  }
+
+  async function syncCloudIntoLocal(){
+    const merged=mergeRecords(records(), await cloudRecords());
+    saveRecords(merged);
+    return merged;
+  }
+
   function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
   function user(){
     const u=session();
@@ -3203,11 +3262,27 @@ document.addEventListener("click", function(e){
   }
   function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){ const m={...a[i],...updates}; m.finalScore=finalScore(m); m.updatedAt=new Date().toISOString(); a[i]=m; saveRecords(a); }
+    if(i>=0){
+      const m={...a[i],...updates};
+      m.finalScore=finalScore(m);
+      m.updatedAt=new Date().toISOString();
+      m.reviewedAt=m.updatedAt;
+      a[i]=m;
+      saveRecords(a);
+      cloudSaveRecord(m);
+    }
   }
   function setClass(cls, status){
     const a=records();
-    a.forEach(r=>{ if(r.className===cls){ r.status=status; r.updatedAt=new Date().toISOString(); }});
+    a.forEach(r=>{
+      if(r.className===cls){
+        r.status=status;
+        r.updatedAt=new Date().toISOString();
+        r.reviewedAt=r.updatedAt;
+        r.finalScore=finalScore(r);
+        cloudSaveRecord(r);
+      }
+    });
     saveRecords(a);
   }
 
@@ -3265,13 +3340,15 @@ document.addEventListener("click", function(e){
     }
 
     const a=records();
-    a.push({
+    const rec={
       id:"rp_"+Date.now()+"_"+Math.random().toString(36).slice(2),
       taskId:taskId(),
       studentId:u.id,
       studentName:u.name,
       className:u.className,
+      classId:u.className,
       submittedAt:new Date().toISOString(),
+      createdAt:new Date().toISOString(),
       status:"submitted",
       analysisStatus:"Pending",
       audioId:item.id,
@@ -3279,9 +3356,20 @@ document.addEventListener("click", function(e){
       audioSize:item.size,
       audioType:item.type,
       accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"",
-      teacherScore:"", teacherNotes:"", transcript:""
-    });
+      teacherScore:"", teacherNotes:"", transcript:"",
+      source:"rp_shared_submission"
+    };
+    a.push(rec);
     saveRecords(a);
+    try{
+      rec.audioDataUrl=await blobToDataUrl(item.blob);
+      rec.storageStatus="firestore_audio_copy";
+      await cloudSaveRecord(rec);
+    }catch(syncErr){
+      console.warn("Cloud delivery failed; local copy remains", syncErr);
+      alert("تم حفظ التسجيل محليًا، لكن لم يصل للمعلم. تحقق من الإنترنت ثم حاول الإرسال مرة أخرى.");
+      return false;
+    }
     alert("Audio submitted to teacher ✅");
     studentStatus();
   }, true);
@@ -3289,12 +3377,10 @@ document.addEventListener("click", function(e){
   function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
   function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
 
-  async function transcribe(audioId){
+  async function transcribeBlob(blob,type){
     const key=getKey();
     if(!key) throw new Error("Add OpenAI API Key first.");
-    const item=await getAudio(audioId);
-    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
-    const file = new File([item.blob], "student-reading.webm", {type:item.type||"audio/webm"});
+    const file = new File([blob], "student-reading.webm", {type:type||"audio/webm"});
     const form=new FormData();
     form.append("file",file);
     form.append("model","whisper-1");
@@ -3304,6 +3390,26 @@ document.addEventListener("click", function(e){
     if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
     const data=await resp.json();
     return (data.text||"").trim();
+  }
+  async function transcribe(audioId){
+    const item=await getAudio(audioId);
+    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
+    return await transcribeBlob(item.blob,item.type||"audio/webm");
+  }
+  async function transcribeRecord(r){
+    if(r.audioId){
+      const item=await getAudio(r.audioId);
+      if(item&&item.blob) return await transcribeBlob(item.blob,item.type||"audio/webm");
+    }
+    if(r.audioDataUrl){
+      const blob=await (await fetch(r.audioDataUrl)).blob();
+      return await transcribeBlob(blob,r.audioType||blob.type||"audio/webm");
+    }
+    if(r.audioUrl){
+      const blob=await (await fetch(r.audioUrl)).blob();
+      return await transcribeBlob(blob,r.audioType||blob.type||"audio/webm");
+    }
+    throw new Error("Audio file not found. Allow retake and ask student to submit again.");
   }
   function refText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
   function score(ref,spoken,seconds=60){
@@ -3320,11 +3426,11 @@ document.addEventListener("click", function(e){
   async function analyzeOne(id,silent=false){
     const r=records().find(x=>x.id===id);
     if(!r) return alert("Submission not found.");
-    if(!r.audioId) return alert("No audio attached. Allow retake and ask student to record again.");
+    if(!r.audioId && !r.audioDataUrl && !r.audioUrl) return alert("No audio attached. Allow retake and ask student to record again.");
     updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
     await renderCards();
     try{
-      const text=await transcribe(r.audioId);
+      const text=await transcribeRecord(r);
       const res=score(refText(),text,60);
       updateRecord(id,{...res,transcript:text});
       if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
@@ -3378,7 +3484,7 @@ document.addEventListener("click", function(e){
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=records(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
+    const arr=await syncCloudIntoLocal(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
     const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
     sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
     sel.value=classes.includes(current)?current:"all";
@@ -3390,8 +3496,10 @@ document.addEventListener("click", function(e){
     let out="";
     for(const r of shown){
       const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):"";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(item.size)+" · "+(item.type||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button></div></div></div>`;
+      const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||"");
+      const audioSize=item&&item.size?item.size:(r.audioSize||0);
+      const audioType=item&&item.type?item.type:(r.audioType||"audio/webm");
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button></div></div></div>`;
     }
     cards.innerHTML=out;
   }
@@ -3624,5 +3732,7 @@ document.addEventListener("click", function(e){
 
 
 <!-- BUILD_ALLOW_STUDENT_RECORDING_NO_RESTRICTIONS -->
+
+<!-- BUILD_TEACHER_RECEIVES_STUDENT_RECORDINGS -->
 </body>
 </html>
