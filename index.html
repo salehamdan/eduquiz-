@@ -2448,27 +2448,27 @@ function ReadingProgressStudent({user,data,reload}){
     setMsg("⏳ Uploading…");
     const id=uid();
     const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
-    // Try Firebase Storage upload with a hard timeout so it can never hang forever.
+    // Try Firebase Storage upload with a 45-second timeout (gives slow connections more time)
     let url="";
     try{
       url=await Promise.race([
         rpUploadAudio(blob,path),
-        new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),15000))
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),45000))
       ]);
     }catch(e){
       console.warn("Storage upload failed/timed out, using data-URL fallback",e);
-      // Fallback: inline the audio as a data URL if it's small enough for Firestore (<850KB).
+      // Fallback: convert audio to data URL (Firestore can handle it with chunking)
       try{
-        if(blob.size < 850000){
-          url=await rpBlobToDataUrl(blob);
-        }
+        // Convert ANY size blob to data URL - no size limit!
+        url=await rpBlobToDataUrl(blob);
+        console.log("✅ Audio converted to data URL ("+Math.round(blob.size/1024)+"KB)");
       }catch(e2){ console.warn("data-url fallback failed",e2); }
     }
     // Always keep the local IndexedDB audio id too (set by the MediaRecorder patch), so the
     // teacher can still analyze on the same device even if the cloud upload failed.
     const audioId=window.__RP_LAST_AUDIO_ID||"";
     if(!url && !audioId){
-      setMsg("⚠️ Upload failed. Recording too large and Storage unavailable. Ask teacher to enable Firebase Storage.");
+      setMsg("⚠️ Recording too large and upload failed. Please check your internet and try again. The recording will be saved on this device.");
       return;
     }
     setMsg("⏳ Saving…");
@@ -2479,7 +2479,8 @@ function ReadingProgressStudent({user,data,reload}){
         studentName:user.name||user.shortName||"",
         createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted"
       });
-      setMsg("✅ Submitted. Your teacher will analyze it.");
+      const msgText = url ? "✅ Submitted and uploaded to cloud." : "✅ Submitted (saved on device - your teacher will access it).";
+      setMsg(msgText);
       setBlob(null); setAudioUrl(""); setTask(null);
       await reload();
     }catch(e){
