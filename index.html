@@ -2480,8 +2480,8 @@ function ReadingProgressTeacherV1({user,data,reload}) {
         const t=tasks.find(x=>x.id===s.taskId)||{};
         return <div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
           <strong style={{fontSize:"13px",color:C.tx}}>{st.name||s.studentName||"Student"}</strong>
-          <div style={{fontSize:"10px",color:C.mu}}>{cls.name||""} · {t.title||s.taskTitle||"Reading Task"} · status: {s.status||"pending"} · {s.submittedAtText||s.submittedAt||s.createdAt||""}</div>
-          {s.audioUrl?<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"7px"}}/>:<div style={{fontSize:"12px",color:C.d,marginTop:"6px"}}>No audio URL saved.</div>}
+          <div style={{fontSize:"10px",color:C.mu}}>{cls.name||""} · {t.title||s.taskTitle||"Reading Task"} · status: {s.status||"pending"} · save: {s.storageStatus||"storage"} · {s.submittedAtText||s.submittedAt||s.createdAt||""}</div>
+          {(s.audioUrl||s.audioDataUrl)?<audio controls src={s.audioUrl||s.audioDataUrl} style={{width:"100%",marginTop:"7px"}}/>:<div style={{fontSize:"12px",color:C.d,marginTop:"6px"}}>No audio saved.</div>}
         </div>
       })}
     </Card>
@@ -2553,26 +2553,68 @@ function ReadingProgressStudentV1({user,data,reload}) {
     }
   }
 
+  
+  function rpV5BlobToDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      try{
+        const reader=new FileReader();
+        reader.onload=()=>resolve(reader.result);
+        reader.onerror=()=>reject(reader.error||new Error("FileReader failed"));
+        reader.readAsDataURL(file);
+      }catch(e){reject(e);}
+    });
+  }
+
+  function rpV5TimeoutPromise(promise, ms, label){
+    let timer;
+    const timeout = new Promise((_, reject)=>{
+      timer=setTimeout(()=>reject(new Error(label+" timed out after "+Math.round(ms/1000)+" seconds")), ms);
+    });
+    return Promise.race([promise, timeout]).finally(()=>clearTimeout(timer));
+  }
+
+  async function rpV5UploadStorageWithTimeout(file,path){
+    if (!(typeof firebase !== "undefined" && firebase.storage && typeof firebase.storage==="function")) {
+      throw new Error("Firebase Storage is not available.");
+    }
+    const storageRef = firebase.storage().ref();
+    const fileRef = storageRef.child(path);
+    const uploadTask = fileRef.put(file, {contentType: file.type || "audio/webm"});
+    await rpV5TimeoutPromise(uploadTask, 25000, "Storage upload");
+    return await rpV5TimeoutPromise(fileRef.getDownloadURL(), 10000, "Download URL");
+  }
+
   async function submit(){
     if(!blob || !task) return;
+    if(blob.size < 500){
+      setMsg("❌ التسجيل فارغ أو قصير جدًا. أعد التسجيل ثم أرسل.");
+      return;
+    }
     setBusy(true);
-    setMsg("⏳ جاري رفع الملف الصوتي المضغوط إلى السحابة...");
+    setMsg("⏳ جاري رفع الملف الصوتي إلى السحابة...");
     try {
       let cloudUrl = "";
       let cloudPath = "";
-      if (typeof firebase !== "undefined" && firebase.storage && typeof firebase.storage==="function") {
-        const storageRef = firebase.storage().ref();
-        cloudPath = `readingProgress/${user.classId||"no_class"}/${user.id}_${task.id}_${Date.now()}.webm`;
-        const fileRef = storageRef.child(cloudPath);
-        const snapshot = await fileRef.put(blob, {contentType: blob.type || "audio/webm"});
-        cloudUrl = await snapshot.ref.getDownloadURL();
-      } else {
-        throw new Error("نظام تخزين Firebase Storage غير متصل بالمنصة.");
-      }
+      let audioDataUrl = "";
+      let storageStatus = "not_started";
 
       const submissionId = user.id + "_" + task.id + "_" + Date.now().toString(36);
       const duration = Math.max(1, Math.round((Date.now()-(startTimeRef.current||Date.now()))/1000));
       const submittedAtIso = new Date().toISOString();
+
+      cloudPath = `readingProgress/${user.classId||"no_class"}/${user.id}_${task.id}_${Date.now()}.webm`;
+
+      try{
+        setMsg("⏳ جاري رفع الصوت إلى Firebase Storage...");
+        cloudUrl = await rpV5UploadStorageWithTimeout(blob, cloudPath);
+        storageStatus = "uploaded";
+      }catch(storageError){
+        console.warn("Storage upload failed/fallback used:", storageError);
+        storageStatus = "fallback_firestore_audio";
+        setMsg("⚠️ تعذر رفع Storage، سيتم حفظ التسجيل احتياطيًا...");
+        audioDataUrl = await rpV5BlobToDataUrl(blob);
+      }
+
       const submissionData = {
         id: submissionId,
         taskId: task.id,
@@ -2583,7 +2625,10 @@ function ReadingProgressStudentV1({user,data,reload}) {
         classId: user.classId || "",
         teacherId: task.teacherId || "",
         audioUrl: cloudUrl,
+        audioDataUrl: audioDataUrl,
         audioPath: cloudPath,
+        audioSize: blob.size,
+        storageStatus,
         duration,
         seconds: duration,
         status: "pending",
@@ -2600,7 +2645,7 @@ function ReadingProgressStudentV1({user,data,reload}) {
         localStorage.setItem("eq_readingSubmissions", JSON.stringify(local));
       }
 
-      setMsg("🚀 تم الرفع والإرسال بنجاح للمعلم!");
+      setMsg(storageStatus==="uploaded" ? "🚀 تم الرفع والإرسال بنجاح للمعلم!" : "✅ تم الإرسال للمعلم بنظام الحفظ الاحتياطي.");
       setBlob(null);
       setTimeout(async ()=>{
         setTask(null);
@@ -2661,7 +2706,7 @@ function ReadingProgressStudentV1({user,data,reload}) {
       {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>لم يتم إرسال أي تسجيل بعد.</p>:subs.slice().reverse().map(s=><div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"9px 0"}}>
         <strong style={{fontSize:"12px",color:C.tx}}>{s.taskTitle||"مهمة قرائية"}</strong>
         <div style={{fontSize:"10px",color:C.mu}}>الحالة: {s.status==="pending"?"⏳ في انتظار التقييم":"✅ تم التقييم"} · {s.submittedAtText||s.submittedAt||""}</div>
-        {s.audioUrl&&<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"6px"}}/>}
+        {(s.audioUrl||s.audioDataUrl)&&<audio controls src={s.audioUrl||s.audioDataUrl} style={{width:"100%",marginTop:"6px"}}/>}
       </div>)}
     </Card>
   </div>;
@@ -3251,6 +3296,6 @@ try {
 }
 </script>
 
-<!-- RP_BUILD_V4_AUDIO_STABLE_STUDENT_UPLOAD -->
+<!-- RP_BUILD_V5_AUDIO_UPLOAD_TIMEOUT_FALLBACK -->
 </body>
 </html>
