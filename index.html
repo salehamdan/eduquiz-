@@ -2429,9 +2429,20 @@ function ReadingProgressStudent({user,data,reload}){
   const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed"&&(!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId)));
   const subs=(data.readingSubmissions||[]).filter(x=>x.studentId===user.id);
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null);
-  function playModel(t){ const u=new SpeechSynthesisUtterance(t.text); u.lang="en-US"; u.rate=t.level==="beginner"?0.82:t.level==="advanced"?0.98:0.9; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [isPlayingModel,setIsPlayingModel]=useState(false);
+  const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null);
+  function playModel(t){
+    const u=new SpeechSynthesisUtterance(t.text);
+    u.lang="en-US";
+    u.rate=t.level==="beginner"?0.82:t.level==="advanced"?0.98:0.9;
+    u.onstart=()=>{setIsPlayingModel(true);};
+    u.onend=()=>{setIsPlayingModel(false);};
+    u.onerror=()=>{setIsPlayingModel(false);};
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  }
   async function startRec(){
+    if(isPlayingModel){setMsg("⛔ Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
     setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
@@ -2473,25 +2484,51 @@ function ReadingProgressStudent({user,data,reload}){
     }
     setMsg("⏳ Saving…");
     try{
+      console.log("Saving submission to database...");
       await fsSet("readingSubmissions",id,{
         id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,
         audioUrl:url||"",audioId:audioId,transcript:transcript||"",seconds:seconds||0,
         studentName:user.name||user.shortName||"",
         createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted"
       });
+      console.log("✅ Submission saved successfully");
       const msgText = url ? "✅ Submitted and uploaded to cloud." : "✅ Submitted (saved on device - your teacher will access it).";
       setMsg(msgText);
       setBlob(null); setAudioUrl(""); setTask(null);
       await reload();
     }catch(e){
       console.error("Save failed",e);
-      setMsg("⚠️ Save failed: "+((e&&e.message)?e.message:e));
+      const errorMsg = e && e.message ? e.message : String(e);
+      setMsg("⚠️ Save failed: "+errorMsg+" (Please check your internet and try again)");
+      console.error("Full error details:", e);
     }
   }
   if(task)return <div>
-    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
-    <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>setTask(null)}>Back</Btn></div>
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}>
+      <strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong>
+      <p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p>
+      <Btn color={recording?C.mu:C.p} disabled={recording} onClick={()=>playModel(task)}>
+        {recording?"🎙️ Recording...":"🔊 Listen to model audio"}
+      </Btn>
+    </Card>
+    <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong>
+      <p style={{fontSize:"11px",color:C.mu}}>📌 Steps: 1️⃣ Listen to model 2️⃣ Record your reading 3️⃣ Submit</p>
+      <p style={{fontSize:"11px",color:C.mu}}>Your phone microphone. The file is compressed automatically.</p>
+      {isPlayingModel && <div style={{padding:"8px",background:"#fef9c3",borderRadius:"6px",marginBottom:"8px",fontSize:"11px",fontWeight:700,color:"#854d0e"}}>
+        🔊 Model audio is playing... recording is locked. Wait for it to finish.
+      </div>}
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+        {!recording?
+          <Btn color={isPlayingModel?C.mu:C.s} disabled={isPlayingModel} onClick={startRec}>
+            {isPlayingModel?"🔊 Listening...":"🎙️ Start Recording"}
+          </Btn>:
+          <Btn color={C.d} onClick={stopRec}>⏹️ Stop</Btn>
+        }
+        <span style={{fontWeight:800,color:recording?C.d:C.mu}}>
+          {seconds}s {isPlayingModel?"(Audio playing)":""}
+        </span>
+        <Btn color={C.mu} onClick={()=>setTask(null)}>Back</Btn>
+      </div>
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
