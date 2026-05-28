@@ -202,7 +202,12 @@ async function loadAllData() {
   ]);
   const users = mergePreloadedRows(usersRaw, PRELOADED_USERS);
   const classes = mergePreloadedRows(classesRaw, PRELOADED_CLASSES);
-  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions};
+  const rpFromResponses = (responses||[]).filter(r=>r && (r.kind==="readingProgressSubmission" || r.type==="readingProgressSubmission"));
+  const rpMap = {};
+  (readingSubmissions||[]).forEach(x=>{ if(x && x.id) rpMap[x.id]=x; });
+  rpFromResponses.forEach(x=>{ if(x && x.id) rpMap[x.id]=x; });
+  const mergedReadingSubmissions = Object.values(rpMap).filter(x=>!x.deleted);
+  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions:mergedReadingSubmissions};
 }
 
 // Session (this device only)
@@ -2382,7 +2387,10 @@ function ReadingProgressTeacherV1({user,data,reload}) {
   const classes=(data.classes||[]);
   const students=(data.users||[]).filter(u=>u.role==="student");
   const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && (!t.teacherId || t.teacherId===user.id || t.teacherId==="GLOBAL"));
-  const submissions=(data.readingSubmissions||[]).filter(s=>!s.deleted && tasks.some(t=>t.id===s.taskId));
+  const rpFallback=(data.responses||[]).filter(r=>r && (r.kind==="readingProgressSubmission" || r.type==="readingProgressSubmission"));
+  const subMap={};
+  [...(data.readingSubmissions||[]),...rpFallback].forEach(s=>{if(s && s.id && !s.deleted && tasks.some(t=>t.id===s.taskId)) subMap[s.id]=s;});
+  const submissions=Object.values(subMap);
 
   async function createTask(){
     if(!text.trim()){alert("اكتب نص القراءة أولًا.");return;}
@@ -2472,7 +2480,7 @@ function ReadingProgressTeacherV1({user,data,reload}) {
         const t=tasks.find(x=>x.id===s.taskId)||{};
         return <div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
           <strong style={{fontSize:"13px",color:C.tx}}>{st.name||s.studentName||"Student"}</strong>
-          <div style={{fontSize:"10px",color:C.mu}}>{cls.name||""} · {t.title||s.taskTitle||"Reading Task"} · {s.submittedAt||s.createdAt||""}</div>
+          <div style={{fontSize:"10px",color:C.mu}}>{cls.name||""} · {t.title||s.taskTitle||"Reading Task"} · status: {s.status||"pending"} · {s.submittedAtText||s.submittedAt||s.createdAt||""}</div>
           {s.audioUrl?<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"7px"}}/>:<div style={{fontSize:"12px",color:C.d,marginTop:"6px"}}>No audio URL saved.</div>}
         </div>
       })}
@@ -2482,148 +2490,177 @@ function ReadingProgressTeacherV1({user,data,reload}) {
 
 function ReadingProgressStudentV1({user,data,reload}) {
   const [task,setTask]=useState(null);
-  const [rec,setRec]=useState(null);
+  const [rec,setRec]=useState(false);
   const [blob,setBlob]=useState(null);
   const [preview,setPreview]=useState("");
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState(false);
-  const startRef=useRef(0);
+  const mediaRecorderRef=useRef(null);
+  const chunksRef=useRef([]);
+  const startTimeRef=useRef(0);
 
   const tasks=(data.readingTasks||[]).filter(t=>{
     if(!t || t.deleted || t.status==="closed") return false;
-    if(t.classId && t.classId!=="all" && t.classId!==user.classId) return false;
     if(Array.isArray(t.classIds) && t.classIds.length>0 && !t.classIds.includes(user.classId)) return false;
+    if(t.classId && t.classId!=="all" && t.classId!==user.classId) return false;
     return true;
   });
   const subs=(data.readingSubmissions||[]).filter(s=>s.studentId===user.id && !s.deleted);
 
-  async function startRecording(){
-    try{
-      setMsg("Recording...");
-      setBlob(null); setPreview("");
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":"");
-      const recorder=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
-      const chunks=[];
-      startRef.current=Date.now();
-      recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
-      recorder.onstop=()=>{
-        const b=new Blob(chunks,{type:mime||"audio/webm"});
-        setBlob(b);
-        setPreview(URL.createObjectURL(b));
-        stream.getTracks().forEach(x=>x.stop());
-        setMsg("Recording saved. You can submit now.");
+  async function startRec(){
+    chunksRef.current = [];
+    setBlob(null);
+    setPreview("");
+    setMsg("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredType = 'audio/webm;codecs=opus';
+      const options = { mimeType: preferredType, audioBitsPerSecond: 16000 };
+      let recorder;
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(preferredType)) {
+        recorder = new MediaRecorder(stream, options);
+      } else {
+        recorder = new MediaRecorder(stream);
+      }
+
+      mediaRecorderRef.current = recorder;
+      startTimeRef.current = Date.now();
+
+      recorder.ondataavailable = e => {
+        if(e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setBlob(audioBlob);
+        setPreview(URL.createObjectURL(audioBlob));
+        stream.getTracks().forEach(t => t.stop());
+      };
+
       recorder.start();
-      setRec(recorder);
-    }catch(e){
-      console.error(e);
-      setMsg("Microphone error: "+((e&&e.message)||e));
+      setRec(true);
+      setMsg("🎙️ جاري التسجيل الآن... تحدث بوضوح.");
+    } catch(e) {
+      setMsg("❌ لم نتمكن من الوصول للميكروفون: " + ((e&&e.message)||e));
     }
   }
 
-  function stopRecording(){
-    try{if(rec && rec.state!=="inactive") rec.stop();}catch(e){}
-    setRec(null);
-  }
-
-  async function uploadAudioToFirebase(file,path){
-    if(!FIREBASE_OK){
-      throw new Error("Firebase is not connected.");
+  function stopRec(){
+    if(mediaRecorderRef.current && rec){
+      try{ mediaRecorderRef.current.stop(); }catch(e){}
+      setRec(false);
+      setMsg("✅ تم إيقاف التسجيل وجاهز للاستماع أو الإرسال.");
     }
-    if(!firebase || typeof firebase.storage!=="function"){
-      throw new Error("Firebase Storage SDK is not loaded. Refresh after uploading this version.");
-    }
-    const storage=firebase.storage();
-    const ref=storage.ref().child(path);
-    await ref.put(file,{contentType:file.type||"audio/webm"});
-    const url=await ref.getDownloadURL();
-    return url;
   }
 
   async function submit(){
-    if(!task){setMsg("No task selected.");return;}
-    if(!blob){setMsg("Please record your voice first.");return;}
-    setBusy(true); setMsg("Uploading audio...");
-    try{
-      const id=uid();
-      const duration=Math.max(1,Math.round((Date.now()-(startRef.current||Date.now()))/1000));
-      const safeClass=user.classId||"no_class";
-      const path=`reading-progress-audio/${safeClass}/${user.id}/${task.id}_${Date.now()}.webm`;
-      const audioUrl=await uploadAudioToFirebase(blob,path);
-      const sub={
-        id,
-        taskId:task.id,
-        taskTitle:task.title,
-        studentId:user.id,
-        studentName:user.name||"",
-        studentNumber:user.studentId||"",
-        classId:user.classId||"",
-        teacherId:task.teacherId||"",
-        audioUrl,
-        audioPath:path,
+    if(!blob || !task) return;
+    setBusy(true);
+    setMsg("⏳ جاري رفع الملف الصوتي المضغوط إلى السحابة...");
+    try {
+      let cloudUrl = "";
+      let cloudPath = "";
+      if (typeof firebase !== "undefined" && firebase.storage && typeof firebase.storage==="function") {
+        const storageRef = firebase.storage().ref();
+        cloudPath = `readingProgress/${user.classId||"no_class"}/${user.id}_${task.id}_${Date.now()}.webm`;
+        const fileRef = storageRef.child(cloudPath);
+        const snapshot = await fileRef.put(blob, {contentType: blob.type || "audio/webm"});
+        cloudUrl = await snapshot.ref.getDownloadURL();
+      } else {
+        throw new Error("نظام تخزين Firebase Storage غير متصل بالمنصة.");
+      }
+
+      const submissionId = user.id + "_" + task.id + "_" + Date.now().toString(36);
+      const duration = Math.max(1, Math.round((Date.now()-(startTimeRef.current||Date.now()))/1000));
+      const submittedAtIso = new Date().toISOString();
+      const submissionData = {
+        id: submissionId,
+        taskId: task.id,
+        taskTitle: task.title,
+        studentId: user.id,
+        studentName: user.name,
+        studentNumber: user.studentId || "",
+        classId: user.classId || "",
+        teacherId: task.teacherId || "",
+        audioUrl: cloudUrl,
+        audioPath: cloudPath,
         duration,
-        seconds:duration,
-        status:"submitted",
-        createdAt:today(),
-        submittedAt:new Date().toISOString()
+        seconds: duration,
+        status: "pending",
+        createdAt: today(),
+        submittedAt: submittedAtIso,
+        submittedAtText: new Date().toLocaleDateString("en-US", {day:"numeric", month:"short", year:"numeric"}) + " " + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
       };
-      await fsSet("readingSubmissions",id,sub);
-      setMsg("✅ Submitted to teacher.");
-      setTask(null); setRec(null); setBlob(null); setPreview("");
-      await reload();
-    }catch(e){
-      console.error(e);
-      setMsg("❌ Upload failed: "+((e&&e.message)||e));
-    }finally{
+
+      if (typeof db !== "undefined" && db) {
+        await db.collection("readingSubmissions").doc(submissionId).set(submissionData);
+      } else {
+        const local = JSON.parse(localStorage.getItem("eq_readingSubmissions") || "[]");
+        local.push(submissionData);
+        localStorage.setItem("eq_readingSubmissions", JSON.stringify(local));
+      }
+
+      setMsg("🚀 تم الرفع والإرسال بنجاح للمعلم!");
+      setBlob(null);
+      setTimeout(async ()=>{
+        setTask(null);
+        setPreview("");
+        setMsg("");
+        await reload();
+      }, 1200);
+    } catch(e) {
+      setMsg("❌ فشل إرسال الصوت: " + ((e&&e.message)||e));
+    } finally {
       setBusy(false);
     }
   }
 
-  if(task){
+  if(task) {
     return <div>
-      <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-        <strong style={{color:"#fff",fontSize:"15px"}}>📖 {task.title}</strong>
-        <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Read the text aloud, then submit your recording.</p>
-      </Card>
-      <Card>
-        <p style={{fontSize:"15px",lineHeight:1.8,whiteSpace:"pre-wrap",color:C.tx}}>{task.text}</p>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"10px"}}>
-          {!rec?<Btn color={C.p} onClick={startRecording}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRecording}>Stop Recording</Btn>}
-          <Btn color={C.s} onClick={submit} disabled={busy||!blob}>Submit to Teacher</Btn>
-          <Btn color={"#64748b"} onClick={()=>{setTask(null);setBlob(null);setPreview("");setMsg("");}}>Back</Btn>
+      <Card style={{marginBottom:"11px"}}>
+        <strong style={{fontSize:"15px",color:C.tx}}>{task.title}</strong>
+        <p style={{fontSize:"13px",background:"#f8fafc",padding:"10px",borderRadius:"6px",whiteSpace:"pre-wrap",lineHeight:1.6}}>{task.text}</p>
+
+        <div style={{display:"flex",gap:"8px",marginTop:"15px",flexWrap:"wrap"}}>
+          {!rec ? <Btn color={C.p} onClick={startRec} disabled={busy}>🎤 بدء التسجيل</Btn> : <Btn color={C.d} onClick={stopRec}>🛑 إيقاف وحفظ</Btn>}
+          <Btn color={C.s} onClick={submit} disabled={busy || !blob}>🚀 إرسال التسجيل إلى المعلم</Btn>
+          <Btn color={"#64748b"} onClick={()=>{setTask(null);setBlob(null);setPreview("");setMsg("");}} disabled={busy}>رجوع</Btn>
         </div>
-        {preview&&<audio controls src={preview} style={{width:"100%",marginTop:"10px"}}/>}
-        {msg&&<p style={{fontSize:"12px",fontWeight:800,color:msg.startsWith("❌")?C.d:(msg.startsWith("✅")?C.s:C.p)}}>{msg}</p>}
+
+        {preview && <div style={{marginTop:"15px", background:"#f1f5f9", padding:"10px", borderRadius:"8px"}}>
+          <span style={{fontSize:"12px", color:C.mu, display:"block", marginBottom:"5px"}}>🎧 استمع لتسجيلك قبل الإرسال:</span>
+          <audio controls src={preview} style={{width:"100%"}}/>
+        </div>}
+        {msg && <p style={{fontSize:"12px",fontWeight:800,marginTop:"10px",color:msg.startsWith("❌")?C.d:(msg.startsWith("✅")||msg.startsWith("🚀")?C.s:C.p)}}>{msg}</p>}
       </Card>
     </div>;
   }
 
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-      <strong style={{color:"#fff",fontSize:"15px"}}>📖 Reading Progress</strong>
-      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Record your reading and submit it to your teacher.</p>
+      <strong style={{color:"#fff",fontSize:"15px"}}>📖 Reading Progress (شاشة الطالب)</strong>
+      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>قم بتسجيل قراءتك الصوتية للنصوص المرسلة من المعلم واعرض تسجيلاتك.</p>
     </Card>
     <Card style={{marginBottom:"11px"}}>
-      <strong style={{fontSize:"14px",color:C.tx}}>Active Reading Tasks</strong>
-      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No active reading tasks.</p>:tasks.slice().reverse().map(t=>{
+      <strong style={{fontSize:"14px",color:C.tx}}>المهام القرائية النشطة</strong>
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>لا توجد مهام قرائية نشطة حالياً.</p>:tasks.slice().reverse().map(t=>{
         const done=subs.filter(s=>s.taskId===t.id).length;
         return <div key={t.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center"}}>
             <div style={{flex:1}}>
               <strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong>
-              <div style={{fontSize:"10px",color:C.mu}}>Level: {t.level||"intermediate"} · Attempts: {done}</div>
+              <div style={{fontSize:"10px",color:C.mu}}>المستوى: {t.level||"intermediate"} · المحاولات المرسلة: {done}</div>
             </div>
-            <Btn size="sm" color={C.p} onClick={()=>setTask(t)}>Start</Btn>
+            <Btn size="sm" color={C.p} onClick={()=>setTask(t)}>ابدأ القراءة</Btn>
           </div>
         </div>
       })}
     </Card>
     <Card>
-      <strong style={{fontSize:"14px",color:C.tx}}>My Submissions</strong>
-      {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=><div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"9px 0"}}>
-        <strong style={{fontSize:"12px",color:C.tx}}>{s.taskTitle||"Reading Task"}</strong>
-        <div style={{fontSize:"10px",color:C.mu}}>Status: {s.status||"submitted"} · {s.submittedAt||s.createdAt||""}</div>
+      <strong style={{fontSize:"14px",color:C.tx}}>تسجيلاتي السابقة</strong>
+      {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>لم يتم إرسال أي تسجيل بعد.</p>:subs.slice().reverse().map(s=><div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"9px 0"}}>
+        <strong style={{fontSize:"12px",color:C.tx}}>{s.taskTitle||"مهمة قرائية"}</strong>
+        <div style={{fontSize:"10px",color:C.mu}}>الحالة: {s.status==="pending"?"⏳ في انتظار التقييم":"✅ تم التقييم"} · {s.submittedAtText||s.submittedAt||""}</div>
         {s.audioUrl&&<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"6px"}}/>}
       </div>)}
     </Card>
@@ -3214,6 +3251,6 @@ try {
 }
 </script>
 
-<!-- RP_BUILD_V2_AUDIO_ONLY_STORAGE_SDK -->
+<!-- RP_BUILD_V4_AUDIO_STABLE_STUDENT_UPLOAD -->
 </body>
 </html>
