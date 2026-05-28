@@ -3190,7 +3190,10 @@ document.addEventListener("click", function(e){
   }
   function taskId(){return "reading-progress-task-1";}
   function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
-  function canSubmit(studentId){ const r=latest(studentId); return !r || r.status==="retake_allowed"; }
+  function canSubmit(studentId){
+    // التسجيل مفتوح دائمًا للطالب. لا نغلقه بسبب محاولة سابقة.
+    return true;
+  }
   function finalScore(r){
     const t=Number(r.teacherScore); if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
     const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
@@ -3399,9 +3402,9 @@ document.addEventListener("click", function(e){
     const u=user(), ok=canSubmit(u.id);
     let box=document.getElementById("rp-v11-student-status");
     if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
+    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. You can record and submit another attempt.";
     box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
+    // التسجيل والإرسال متاحان دائمًا للطالب.
   }
 
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
@@ -3619,5 +3622,7 @@ document.addEventListener("click", function(e){
  // ===== END RP V12 ADD-ON =====
 </script>
 
+
+<!-- BUILD_ALLOW_STUDENT_RECORDING_NO_RESTRICTIONS -->
 </body>
 </html>
