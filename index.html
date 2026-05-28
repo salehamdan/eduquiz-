@@ -3464,23 +3464,45 @@ document.addEventListener("click", function(e){
     return String(t||"").replace(/\s+/g," ").trim();
   }
   function getVisibleReferenceText(){
-    const bad=/reading progress|record your reading|start recording|submit to teacher|audio|status|transcript|teacher|home|progress|mastery|badge|logout|retry|back|microphone|recording/i;
-    const nodes=[...document.querySelectorAll("p, div, article, section")];
+    // اختر نص القراءة الحقيقي فقط، ولا تأخذ نص لوحة الأداء أو تعليمات المعلم.
+    const bad=/reading progress|performance|rejected|deleted|counted|average|best|attempts|accepted|retake|teacher note|teacher score|record your reading|start recording|submit to teacher|audio|status|transcript|reference text|teacher|home|progress|mastery|badge|logout|retry|back|microphone|recording|analyze|fluency|wcpm|mistakes|accuracy|score|submissions/i;
+
+    function visible(el){
+      try{
+        const st=getComputedStyle(el);
+        const r=el.getBoundingClientRect();
+        return st.display!=="none" && st.visibility!=="hidden" && r.width>20 && r.height>8;
+      }catch(e){ return true; }
+    }
+
+    const nodes=[...document.querySelectorAll("p, .reading-text, [data-reading-text], article, blockquote")];
     const cands=[];
+
     nodes.forEach(n=>{
-      const t=cleanRefCandidate(n.innerText||n.textContent||"");
-      if(!t || t.length<8 || t.length>900) return;
-      if(!/[a-zA-Z]/.test(t) || !/[.!?]/.test(t)) return;
-      if(bad.test(t)) return;
-      const words=t.split(/\s+/).filter(Boolean).length;
-      if(words<3) return;
-      cands.push({t, words, len:t.length});
+      if(!visible(n)) return;
+      const raw=cleanRefCandidate(n.innerText||n.textContent||"");
+      if(!raw || raw.length<8 || raw.length>600) return;
+      if(!/[a-zA-Z]/.test(raw) || !/[.!?]/.test(raw)) return;
+      if(bad.test(raw)) return;
+
+      const words=raw.split(/\s+/).filter(Boolean);
+      if(words.length<3 || words.length>120) return;
+
+      // استبعد النصوص التي تبدو كلوحة/واجهة وليست فقرة قراءة.
+      const uiWords=/button|click|status|score|attempt|teacher|student|average|accepted|rejected|deleted|counted|performance/i;
+      if(uiWords.test(raw)) return;
+
+      // الأفضلية للنصوص القصيرة والواضحة داخل بطاقة القراءة.
+      let score=100;
+      if(n.matches("[data-reading-text], .reading-text, p")) score+=40;
+      if(words.length<=12) score+=25;
+      if(words.length>=3 && words.length<=80) score+=20;
+      score-=Math.abs(words.length-20);
+
+      cands.push({t:raw, words:words.length, score});
     });
-    cands.sort((a,b)=>{
-      const aScore=(a.words>=3&&a.words<=120?100:0)-Math.abs(a.words-35);
-      const bScore=(b.words>=3&&b.words<=120?100:0)-Math.abs(b.words-35);
-      return bScore-aScore;
-    });
+
+    cands.sort((a,b)=>b.score-a.score);
     return cands[0]?.t || "";
   }
   function refText(r){
@@ -3921,5 +3943,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_DELETE_ATTEMPT_STUDENT_PERFORMANCE_SAFE -->
 
 <!-- BUILD_COUNT_RETAKE_SCORE_SHOW_STUDENT_DASHBOARD -->
+
+<!-- BUILD_FIX_REFERENCE_TEXT_NOT_DASHBOARD_TEXT -->
 </body>
 </html>
