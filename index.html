@@ -227,13 +227,12 @@ function rpAnalyze(reference, transcript, seconds){
   }
   while(i<ref.length){missing.push(ref[i++]);}
   while(j<got.length){extra.push(got[j++]);}
-  const rawAccuracy=ref.length?Math.max(0,Math.round(correct/ref.length*100)):0;
-  const accuracy=Math.min(100,Math.round(rawAccuracy*0.85+15)); // V13: more student-friendly scoring
+  const accuracy=ref.length?Math.max(0,Math.round(correct/ref.length*100)):0;
   const minutes=Math.max(1/60,(seconds||0)/60);
   const wcpm=Math.round(correct/minutes);
   const mistakeCount=missing.length+extra.length+substitutions.length;
-  const fluency=Math.max(0,Math.min(100,Math.round((accuracy*0.75)+Math.min(35,wcpm/3.5)-Math.min(10,repeated.length))));
-  return {accuracy,wcpm,fluency,rawAccuracy,correctWords:correct,totalWords:ref.length,mistakeCount,missing,extra,substitutions,repeated,seconds:Math.round(seconds||0)};
+  const fluency=Math.max(0,Math.min(100,Math.round((accuracy*0.7)+Math.min(30,wcpm/4)-Math.min(20,repeated.length*2))));
+  return {accuracy,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,missing,extra,substitutions,repeated,seconds:Math.round(seconds||0)};
 }
 function rpGenerateText(level, lines){
   const bank={
@@ -2459,9 +2458,7 @@ function ReadingProgressStudent({user,data,reload}){
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
-    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&<div style={{fontSize:"11px",fontWeight:800,color:last.status==="rejected"?C.d:last.status==="retake_allowed"?C.w:last.analysis?gc(last.analysis.accuracy):C.mu}}>
-                {last.analysis?("Last result: "+(last.teacherScore||last.analysis.accuracy)+"% · "+last.analysis.wcpm+" WCPM · "+(last.status||"analyzed")):("Status: "+(last.status||"submitted"))}
-              </div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
+    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
@@ -3197,21 +3194,13 @@ document.addEventListener("click", function(e){
   function finalScore(r){
     const t=Number(r.teacherScore); if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
     const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/110*100)):NaN;
-    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)) return Math.round(acc*0.70+flu*0.20+ws*0.10);
+    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/140*100)):NaN;
     const vals=[acc,flu,ws].filter(Number.isFinite);
     return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
   }
   function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){
-      const m={...a[i],...updates};
-      m.finalScore=finalScore(m);
-      m.reviewedAt=new Date().toISOString();
-      m.updatedAt=m.reviewedAt;
-      a[i]=m;
-      saveRecords(a);
-    }
+    if(i>=0){ const m={...a[i],...updates}; m.finalScore=finalScore(m); m.updatedAt=new Date().toISOString(); a[i]=m; saveRecords(a); }
   }
   function setClass(cls, status){
     const a=records();
@@ -3320,11 +3309,10 @@ document.addEventListener("click", function(e){
     let correct=0, used=Array(b.length).fill(false);
     a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
     const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const rawAccuracy=a.length?Math.round(correct/a.length*100):0;
-    const accuracy=Math.min(100,Math.round(rawAccuracy*0.85+15)); // V13: less strict for students
+    const accuracy=a.length?Math.round(correct/a.length*100):0;
     const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.75+Math.min(wcpm,120)/120*100*.25-repeated)));
-    return {accuracy,wcpm,fluency,mistakes:missing+Math.round(extra*0.5)+repeated,missing,extra,repeated,rawAccuracy,aiScore:accuracy,analysisStatus:"Completed"};
+    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
+    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
   }
   async function analyzeOne(id,silent=false){
     const r=records().find(x=>x.id===id);
@@ -3408,22 +3396,63 @@ document.addEventListener("click", function(e){
   function studentStatus(){
     if(isTeacher())return;
     if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user(), r=latest(u.id), ok=canSubmit(u.id);
+    const u=user();
+    const r=latest(u.id);
+    const ok=canSubmit(u.id);
     let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800;line-height:1.6";(document.getElementById("root")||document.body).appendChild(box);}
+    if(!box){
+      box=document.createElement("div");
+      box.id="rp-v11-student-status";
+      box.style.cssText="margin:10px 24px;padding:12px;border-radius:12px;font-family:system-ui;font-weight:800;line-height:1.6";
+      (document.getElementById("root")||document.body).appendChild(box);
+    }
+
     if(!r){
       box.textContent="Reading Progress: You can submit one recording.";
-      box.style.background="#eff6ff"; box.style.color="#1d4ed8";
+      box.style.background="#eff6ff";
+      box.style.color="#1d4ed8";
     }else{
       const score=finalScore(r);
-      const status=r.status==="accepted"?"✅ Accepted":r.status==="rejected"?"❌ Rejected":r.status==="retake_allowed"?"🔁 Retake allowed":"⏳ Submitted / waiting";
-      const extra=score!==""?` · Score: ${score}% · Acc: ${r.accuracy||"-"} · WCPM: ${r.wcpm||"-"} · Fluency: ${r.fluency||"-"}`:"";
-      const note=r.teacherNotes?` · Teacher note: ${r.teacherNotes}`:"";
-      box.textContent=`Reading Progress: ${status}${extra}${note}`;
-      box.style.background=r.status==="rejected"?"#fef2f2":r.status==="retake_allowed"?"#fffbeb":r.status==="accepted"?"#ecfdf5":"#f8fafc";
-      box.style.color=r.status==="rejected"?"#991b1b":r.status==="retake_allowed"?"#92400e":r.status==="accepted"?"#166534":"#334155";
+      const statusText =
+        r.status==="accepted" ? "✅ Accepted by teacher" :
+        r.status==="rejected" ? "❌ Rejected by teacher" :
+        r.status==="retake_allowed" ? "🔁 Retake allowed by teacher" :
+        r.analysisStatus==="Completed" ? "📊 Analyzed by teacher" :
+        "⏳ Submitted / waiting for teacher";
+
+      const parts=[statusText];
+      if(score!=="" && score!==undefined && score!==null) parts.push("Score: "+score+"%");
+      if(r.accuracy!=="" && r.accuracy!==undefined) parts.push("Accuracy: "+r.accuracy+"%");
+      if(r.wcpm!=="" && r.wcpm!==undefined) parts.push("WCPM: "+r.wcpm);
+      if(r.fluency!=="" && r.fluency!==undefined) parts.push("Fluency: "+r.fluency+"%");
+      if(r.teacherScore) parts.push("Teacher score: "+r.teacherScore+"%");
+      if(r.teacherNotes) parts.push("Teacher note: "+r.teacherNotes);
+
+      box.textContent="Reading Progress: "+parts.join(" · ");
+      box.style.background=
+        r.status==="rejected" ? "#fef2f2" :
+        r.status==="retake_allowed" ? "#fffbeb" :
+        r.status==="accepted" ? "#ecfdf5" :
+        r.analysisStatus==="Completed" ? "#eff6ff" :
+        "#f8fafc";
+      box.style.color=
+        r.status==="rejected" ? "#991b1b" :
+        r.status==="retake_allowed" ? "#92400e" :
+        r.status==="accepted" ? "#166534" :
+        r.analysisStatus==="Completed" ? "#1d4ed8" :
+        "#334155";
     }
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
+
+    if(!ok){
+      document.querySelectorAll("button").forEach(b=>{
+        const t=String(b.textContent||"").toLowerCase();
+        if(t.includes("start recording")||t.includes("submit to teacher")){
+          b.disabled=true;
+          b.style.opacity=".5";
+          b.style.pointerEvents="none";
+        }
+      });
+    }
   }
 
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
@@ -3471,8 +3500,8 @@ document.addEventListener("click", function(e){
     const t=Number(r.teacherScore);
     if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
     const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/110*100)):NaN;
-    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)) return Math.round(acc*0.70+flu*0.20+ws*0.10);
+    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):NaN;
+    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)) return Math.round(acc*0.60+flu*0.25+ws*0.15);
     const vals=[acc,flu,ws].filter(Number.isFinite);
     return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
   }
@@ -3642,6 +3671,6 @@ document.addEventListener("click", function(e){
 </script>
 
 
-<!-- RP_BUILD_V13_STUDENT_RESULTS_SOFT_SCORE -->
+<!-- RP_BUILD_V13A_STUDENT_RESULT_ONLY_SAFE -->
 </body>
 </html>
