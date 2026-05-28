@@ -3612,8 +3612,8 @@ document.addEventListener("click", function(e){
       <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
       <div id="rp-v11-summary" style="margin:12px 0"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        <input id="rp-v11-class" type="text" list="rp-v11-class-list" placeholder="All Classes / اكتب الصف أو الفصل" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:210px"><datalist id="rp-v11-class-list"></datalist>
-        <input id="rp-v11-student" type="text" list="rp-v11-student-list" placeholder="All Students / اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:240px"><datalist id="rp-v11-student-list"></datalist>
+        <input id="rp-v11-class" type="text" placeholder="All Classes / اكتب الصف أو الفصل" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:210px">
+        <input id="rp-v11-student" type="text" placeholder="All Students / اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:240px">
         <button id="rp-v11-clear-filters" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#64748b;color:white">All Classes / All Students</button>
         <button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button>
         <button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Visible</button>
@@ -3690,29 +3690,11 @@ document.addEventListener("click", function(e){
     const stuQ=searchText(document.getElementById("rp-v11-student")?.value||"");
     return arr.filter(r=>!isDeleted(r)
       && includesText(r.className,clsQ)
-      && (!stuQ || includesText(r.studentName,stuQ) || includesText(r.studentId,stuQ) || includesText(r.className,stuQ) || includesText(studentLabel(r),stuQ)));
-  }
-
-  function updateFilterSuggestions(allRecords){
-    const classList=document.getElementById("rp-v11-class-list");
-    const studentList=document.getElementById("rp-v11-student-list");
-    const clsQ=searchText(document.getElementById("rp-v11-class")?.value||"");
-    if(classList){
-      const classes=[...new Set((allRecords||[]).filter(r=>!isDeleted(r)).map(r=>r.className).filter(Boolean))].sort();
-      classList.innerHTML=`<option value="">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    }
-    if(studentList){
-      const filtered=(allRecords||[]).filter(r=>!isDeleted(r)&&includesText(r.className,clsQ));
-      const seen=new Map();
-      filtered.forEach(r=>{ if(r.studentId&&!seen.has(r.studentId)) seen.set(r.studentId, studentLabel(r)); });
-      studentList.innerHTML=`<option value="">All Students</option>`+[...seen.entries()].map(([id,label])=>`<option value="${label}"></option>`).join("");
-    }
+      && (!stuQ || includesText(r.studentName,stuQ) || includesText(r.studentId,stuQ) || includesText(studentLabel(r),stuQ)));
   }
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const allRecords=await syncCloudIntoLocal();
-    updateFilterSuggestions(allRecords);
     const shown=await currentVisibleRecords();
     const completed=shown.filter(r=>finalScore(r)!=="");
     const counted=shown.filter(isCountableAttempt);
@@ -4020,45 +4002,5 @@ document.addEventListener("click", function(e){
 <!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
 
 <!-- BUILD_TEXT_FILTERS_ACCEPT_VISIBLE_NO_ORANGE_SELECT -->
-
-<style id="rp-hide-old-word-analysis">
-/* Hide old duplicate RP V12 word-analysis panel; keep main V11 teacher cards intact */
-#rp-v11-panel + div,
-div:has(> button):has(button[id*="delete-all"]),
-div:has(.old-word-analysis),
-div:has(> h3):has(+ div) {
-  /* guarded by script cleanup below */
-}
-</style>
-<script>
-(function(){
-  function hideOldWordAnalysis(){
-    try{
-      document.querySelectorAll("div").forEach(el=>{
-        const t=(el.innerText||"").trim();
-        if(!t) return;
-        const isOldWordPanel =
-          t.includes("Accuracy Level:") ||
-          t.includes("Progress: Clear Progress") ||
-          t.includes("Word Analysis:") ||
-          t.includes("Correct Words/Min:") ||
-          t.includes("Delete All Student Attempts") ||
-          t.includes("Orange = missing, Red = extra/wrong, Purple = repeated.");
-        if(isOldWordPanel){
-          // Do not hide the main Reading Progress panel itself
-          if(!el.id || el.id !== "rp-v11-panel"){
-            el.style.display="none";
-          }
-        }
-      });
-    }catch(e){}
-  }
-  setTimeout(hideOldWordAnalysis, 800);
-  setInterval(hideOldWordAnalysis, 1500);
-})();
-</script>
-
-
-<!-- BUILD_CLEAN_ANALYSIS_FILTERS_SAFE -->
 </body>
 </html>
