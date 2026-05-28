@@ -2464,11 +2464,25 @@ function ReadingProgressStudent({user,data,reload}){
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [lines,setLines]=useState(3); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]);
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
-  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id); const subs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
+  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id);
+  function rpLocalKey(){for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){try{const v=JSON.parse(localStorage.getItem(k)||"null");if(Array.isArray(v))return k;}catch(e){}} return "rp_attempt_records_v11";}
+  function rpLocalRecords(){try{return JSON.parse(localStorage.getItem(rpLocalKey())||"[]")||[];}catch(e){return[];}}
+  function rpNorm(x){return String(x||"").replace(/\s+/g," ").trim().toLowerCase();}
+  function rpFindStudent(r){return myStudents.find(st=>st.id===r.studentId||st.studentId===r.studentId||rpNorm(st.name)===rpNorm(r.studentName));}
+  function rpFindClassId(r,st){if(st&&st.classId)return st.classId; const c=myClasses.find(c=>c.id===r.className||c.name===r.className||c.id===r.classId||c.name===r.classId); return c?c.id:(r.classId||r.className||"");}
+  function rpLocalToSub(r){const st=rpFindStudent(r)||{}; const hasAnalysis=(r.accuracy!==""&&r.accuracy!==undefined&&r.accuracy!==null); const analysis=hasAnalysis?{accuracy:Number(r.accuracy)||0,wcpm:Number(r.wcpm)||0,fluency:Number(r.fluency)||0,mistakeCount:Number(r.mistakes)||0,repeated:Array(Number(r.repeated)||0).fill("x")}:null; return {...r,__local:true,teacherId:user.id,studentId:st.id||r.studentId,studentName:r.studentName||st.name||"Student",classId:rpFindClassId(r,st),createdAt:(r.submittedAt||r.createdAt||today()).slice(0,10),seconds:r.seconds||60,analysis,status:r.status||"submitted"};}
+  const fsSubs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
+  const localSubs=rpLocalRecords().map(rpLocalToSub);
+  const subs=[...fsSubs,...localSubs];
   function gen(){setText(rpGenerateText(level,lines));}
   function play(){if(!text.trim())return; const u=new SpeechSynthesisUtterance(text); u.lang="en-US"; u.rate=level==="beginner"?0.82:level==="advanced"?0.98:0.9; speechSynthesis.cancel(); speechSynthesis.speak(u);}
   async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=uid(); await fsSet("readingTasks",id,{id,teacherId:user.id,title:title.trim(),level,lines:Number(lines),text:text.trim(),classIds,status:"open",createdAt:today()}); setMsg("✅ Reading task created."); setText(""); await reload();}
-  async function analyze(sub){const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId); if(!task){alert("Task not found");return;} const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0); await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"}); await reload();}
+  async function rpDeleteAudio(audioId){if(!audioId)return;try{const db=await new Promise((res,rej)=>{const q=indexedDB.open("EduQuizRP_AudioDB",1);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains("audios"))d.createObjectStore("audios",{keyPath:"id"});};});await new Promise((res,rej)=>{const tx=db.transaction("audios","readwrite");tx.objectStore("audios").delete(audioId);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(e){}}
+  async function rpSaveLocalRecord(rec){const k=rpLocalKey(); const arr=rpLocalRecords(); const i=arr.findIndex(x=>x.id===rec.id); if(i>=0)arr[i]=rec; localStorage.setItem(k,JSON.stringify(arr)); setMsg("✅ Reading Progress updated "+Date.now());}
+  async function rpDeleteLocalRecord(id){const k=rpLocalKey(); const arr=rpLocalRecords(); const r=arr.find(x=>x.id===id); if(r&&r.audioId)await rpDeleteAudio(r.audioId); localStorage.setItem(k,JSON.stringify(arr.filter(x=>x.id!==id))); setMsg("✅ Attempt deleted "+Date.now());}
+  async function analyze(sub){if(sub.__local){alert("This attempt was analyzed by Whisper already. Use Analyze Saved Recording in the card if you need to re-analyze.");return;} const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId); if(!task){alert("Task not found");return;} const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0); await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"}); await reload();}
+  async function setSubStatus(sub,status){if(sub.__local){await rpSaveLocalRecord({...sub,status});}else{await fsSet("readingSubmissions",sub.id,{...sub,status}); await reload();}}
+  async function deleteSub(sub){if(!confirm("Delete this attempt and its audio?"))return; if(sub.__local){await rpDeleteLocalRecord(sub.id);}else{await fsDel("readingSubmissions",sub.id); await reload();}}
   async function delTask(t){if(!confirm("Delete this Reading Progress task?"))return; await fsDel("readingTasks",t.id); await reload();}
   const filteredStudents=myStudents.filter(s=>(filter==="all"||s.classId===filter)&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search)));
   const studentStats=filteredStudents.map(st=>{const ss=subs.filter(x=>x.studentId===st.id&&x.analysis); const avg=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.accuracy,0)/ss.length):null; const w=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.wcpm,0)/ss.length):null; const f=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.fluency,0)/ss.length):null; return {st,ss,avg,w,f};});
@@ -2482,7 +2496,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div></div><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div>)}</Card>
     <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
     <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
-    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
+    <Card style={{marginTop:"11px",background:"#f8fafc"}}><strong style={{fontSize:"13px"}}>📊 Linked Reading Progress Summary</strong><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><Stat icon="👥" label="Students" value={studentStats.length} color={C.p}/><Stat icon="🎙️" label="Submissions" value={subs.length} color={C.s}/><Stat icon="✅" label="Analyzed" value={subs.filter(x=>x.analysis).length} color={C.s}/><Stat icon="📈" label="Avg Accuracy" value={studentStats.filter(x=>x.avg!==null).length?Math.round(studentStats.filter(x=>x.avg!==null).reduce((a,x)=>a+x.avg,0)/studentStats.filter(x=>x.avg!==null).length)+"%":"—"} color={C.p}/></div></Card>
+    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Reading Progress"} · {s.createdAt} · {s.seconds||0}s · {s.status}{s.__local?" · Whisper":""}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn><Btn size="sm" color={C.s} onClick={()=>setSubStatus(s,"accepted")}>Accept</Btn><Btn size="sm" color={C.w} onClick={()=>setSubStatus(s,"retake_allowed")}>Retake</Btn><Btn size="sm" color={C.d} onClick={()=>setSubStatus(s,"rejected")}>Reject</Btn><Btn size="sm" color={"#475569"} onClick={()=>deleteSub(s)}>Delete</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
   </div>;
 }
 
@@ -3396,63 +3411,12 @@ document.addEventListener("click", function(e){
   function studentStatus(){
     if(isTeacher())return;
     if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user();
-    const r=latest(u.id);
-    const ok=canSubmit(u.id);
+    const u=user(), ok=canSubmit(u.id);
     let box=document.getElementById("rp-v11-student-status");
-    if(!box){
-      box=document.createElement("div");
-      box.id="rp-v11-student-status";
-      box.style.cssText="margin:10px 24px;padding:12px;border-radius:12px;font-family:system-ui;font-weight:800;line-height:1.6";
-      (document.getElementById("root")||document.body).appendChild(box);
-    }
-
-    if(!r){
-      box.textContent="Reading Progress: You can submit one recording.";
-      box.style.background="#eff6ff";
-      box.style.color="#1d4ed8";
-    }else{
-      const score=finalScore(r);
-      const statusText =
-        r.status==="accepted" ? "✅ Accepted by teacher" :
-        r.status==="rejected" ? "❌ Rejected by teacher" :
-        r.status==="retake_allowed" ? "🔁 Retake allowed by teacher" :
-        r.analysisStatus==="Completed" ? "📊 Analyzed by teacher" :
-        "⏳ Submitted / waiting for teacher";
-
-      const parts=[statusText];
-      if(score!=="" && score!==undefined && score!==null) parts.push("Score: "+score+"%");
-      if(r.accuracy!=="" && r.accuracy!==undefined) parts.push("Accuracy: "+r.accuracy+"%");
-      if(r.wcpm!=="" && r.wcpm!==undefined) parts.push("WCPM: "+r.wcpm);
-      if(r.fluency!=="" && r.fluency!==undefined) parts.push("Fluency: "+r.fluency+"%");
-      if(r.teacherScore) parts.push("Teacher score: "+r.teacherScore+"%");
-      if(r.teacherNotes) parts.push("Teacher note: "+r.teacherNotes);
-
-      box.textContent="Reading Progress: "+parts.join(" · ");
-      box.style.background=
-        r.status==="rejected" ? "#fef2f2" :
-        r.status==="retake_allowed" ? "#fffbeb" :
-        r.status==="accepted" ? "#ecfdf5" :
-        r.analysisStatus==="Completed" ? "#eff6ff" :
-        "#f8fafc";
-      box.style.color=
-        r.status==="rejected" ? "#991b1b" :
-        r.status==="retake_allowed" ? "#92400e" :
-        r.status==="accepted" ? "#166534" :
-        r.analysisStatus==="Completed" ? "#1d4ed8" :
-        "#334155";
-    }
-
-    if(!ok){
-      document.querySelectorAll("button").forEach(b=>{
-        const t=String(b.textContent||"").toLowerCase();
-        if(t.includes("start recording")||t.includes("submit to teacher")){
-          b.disabled=true;
-          b.style.opacity=".5";
-          b.style.pointerEvents="none";
-        }
-      });
-    }
+    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
+    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
+    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
+    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
   }
 
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
@@ -3461,216 +3425,5 @@ document.addEventListener("click", function(e){
  // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
 </script>
 
-
-<script>
-// ===== RP V12 ADD-ON: LEVELS + WORD HIGHLIGHT + DELETE + SHOW + AUDIO SPEED =====
-(function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const DB_NAME = "EduQuizRP_AudioDB";
-  const STORE = "audios";
-
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function writeJSON(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
-  function records(){return readJSON(RP_KEY,[]);}
-  function saveRecords(a){writeJSON(RP_KEY,a);}
-
-  function openDB(){
-    return new Promise((resolve,reject)=>{
-      const req=indexedDB.open(DB_NAME,1);
-      req.onupgradeneeded=e=>{
-        const db=e.target.result;
-        if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:"id"});
-      };
-      req.onsuccess=()=>resolve(req.result);
-      req.onerror=()=>reject(req.error);
-    });
-  }
-  async function deleteAudio(id){
-    if(!id) return;
-    const db=await openDB();
-    await new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,"readwrite");
-      tx.objectStore(STORE).delete(id);
-      tx.oncomplete=resolve;
-      tx.onerror=()=>reject(tx.error);
-    });
-  }
-
-  function finalScore(r){
-    const t=Number(r.teacherScore);
-    if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
-    const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):NaN;
-    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)) return Math.round(acc*0.60+flu*0.25+ws*0.15);
-    const vals=[acc,flu,ws].filter(Number.isFinite);
-    return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
-  }
-  function accLevel(acc){
-    acc=Number(acc);
-    if(!Number.isFinite(acc)) return ["Not analyzed","#64748b","#f8fafc"];
-    if(acc>=90) return ["Advanced","#166534","#ecfdf5"];
-    if(acc>=70) return ["Developing","#92400e","#fffbeb"];
-    return ["Needs Support","#991b1b","#fef2f2"];
-  }
-  function prevScore(studentId,id){
-    const arr=records().filter(r=>r.studentId===studentId&&r.id!==id&&finalScore(r)!=="");
-    return arr.length?Number(finalScore(arr[arr.length-1])):NaN;
-  }
-  function progressLevel(cur,prev){
-    cur=Number(cur);prev=Number(prev);
-    if(!Number.isFinite(cur)||!Number.isFinite(prev)) return ["First attempt","#1d4ed8","#eff6ff"];
-    const d=cur-prev;
-    if(d>=10) return ["Clear Progress","#166534","#ecfdf5"];
-    if(d>=3) return ["Moderate Progress","#92400e","#fffbeb"];
-    return ["Limited Progress","#991b1b","#fef2f2"];
-  }
-  function cleanWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function referenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function wordAnalysisHtml(transcript){
-    if(!transcript) return "";
-    const ref=cleanWords(referenceText()), hyp=cleanWords(transcript), used=Array(hyp.length).fill(false);
-    const rendered=[]; const extra=[]; const repeated=[];
-    ref.forEach(w=>{
-      const i=hyp.findIndex((x,j)=>!used[j]&&x===w);
-      if(i>=0){
-        used[i]=true;
-        const rep=i>0&&hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        rendered.push(`<span style="padding:2px 5px;border-radius:6px;background:${rep?"#ede9fe":"transparent"};color:${rep?"#6d28d9":"inherit"}">${w}</span>`);
-      }else{
-        rendered.push(`<span style="padding:2px 5px;border-radius:6px;background:#ffedd5;color:#c2410c;text-decoration:line-through">${w}</span>`);
-      }
-    });
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0&&hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-    if(extra.length){
-      rendered.push(`<br><b style="color:#991b1b">Extra / wrong:</b> `+extra.map(w=>`<span style="padding:2px 5px;border-radius:6px;background:#fee2e2;color:#991b1b">${w}</span>`).join(" "));
-    }
-    if(repeated.length){
-      rendered.push(`<br><b style="color:#6d28d9">Repeated:</b> `+[...new Set(repeated)].map(w=>`<span style="padding:2px 5px;border-radius:6px;background:#ede9fe;color:#6d28d9">${w}</span>`).join(" "));
-    }
-    return rendered.join(" ");
-  }
-
-  function syncDashboard(){
-    const by={};
-    records().forEach(r=>{
-      const fs=finalScore(r);
-      if(fs==="") return;
-      if(!by[r.studentId]) by[r.studentId]={studentId:r.studentId,studentName:r.studentName,className:r.className,scores:[],accuracy:[],wcpm:[],fluency:[],submissions:0};
-      by[r.studentId].scores.push(Number(fs));
-      by[r.studentId].accuracy.push(Number(r.accuracy||0));
-      by[r.studentId].wcpm.push(Number(r.wcpm||0));
-      by[r.studentId].fluency.push(Number(r.fluency||0));
-      by[r.studentId].submissions++;
-    });
-    const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
-    const summary=Object.values(by).map(s=>({...s,averageFinal:avg(s.scores),averageAccuracy:avg(s.accuracy),averageWCPM:avg(s.wcpm),averageFluency:avg(s.fluency),latestFinal:s.scores[s.scores.length-1]||0}));
-    writeJSON("rp_dashboard_summary",summary);
-  }
-
-  function enhanceAudio(){
-    document.querySelectorAll("audio").forEach(audio=>{
-      if(audio.dataset.rpV12Controls) return;
-      audio.dataset.rpV12Controls="1";
-      audio.controls=true;
-      const bar=document.createElement("div");
-      bar.style.cssText="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px";
-      bar.innerHTML=`<button type="button" data-rp-a="-5" style="padding:7px 9px;border:0;border-radius:8px;background:#334155;color:white">⏪ 5s</button><button type="button" data-rp-a="play" style="padding:7px 9px;border:0;border-radius:8px;background:#2563eb;color:white">▶️/⏸</button><button type="button" data-rp-a="+5" style="padding:7px 9px;border:0;border-radius:8px;background:#334155;color:white">5s ⏩</button><select data-rp-speed style="padding:7px;border:1px solid #bfdbfe;border-radius:8px"><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option></select>`;
-      audio.insertAdjacentElement("afterend",bar);
-      bar.onclick=e=>{
-        const a=e.target.getAttribute("data-rp-a");
-        if(a==="-5") audio.currentTime=Math.max(0,audio.currentTime-5);
-        if(a==="+5") audio.currentTime=Math.min(audio.duration||audio.currentTime+5,audio.currentTime+5);
-        if(a==="play") audio.paused?audio.play():audio.pause();
-      };
-      bar.querySelector("[data-rp-speed]").onchange=e=>audio.playbackRate=Number(e.target.value||1);
-    });
-  }
-
-  function addShowButton(){
-    if(document.getElementById("rp-v12-show")) return;
-    const b=document.createElement("button");
-    b.id="rp-v12-show"; b.textContent="📖 Show Reading Progress"; b.type="button";
-    b.style.cssText="position:fixed;right:12px;bottom:72px;z-index:99999;padding:10px 12px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.2)";
-    b.onclick=()=>{const p=document.getElementById("rp-v11-panel"); if(p)p.style.display="block"; b.remove();};
-    document.body.appendChild(b);
-  }
-
-  function enhanceCards(){
-    const panel=document.getElementById("rp-v11-panel");
-    if(!panel) return;
-    const recs=records();
-
-    // Make Hide show a re-open button
-    const hide=[...panel.querySelectorAll("button")].find(b=>b.textContent.trim()==="Hide");
-    if(hide && !hide.dataset.rpV12Hide){
-      hide.dataset.rpV12Hide="1";
-      hide.addEventListener("click",()=>setTimeout(addShowButton,100));
-    }
-
-    recs.forEach(r=>{
-      const card=[...panel.querySelectorAll("div")].find(d=>d.innerText&&d.innerText.includes(r.studentName||"__none__")&&d.innerText.includes(r.studentId||"__none__"));
-      if(!card || card.dataset.rpV12Enhanced) return;
-      card.dataset.rpV12Enhanced="1";
-
-      const acc=accLevel(r.accuracy);
-      const prog=progressLevel(finalScore(r),prevScore(r.studentId,r.id));
-      const badges=document.createElement("div");
-      badges.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0";
-      badges.innerHTML=`<div style="padding:8px 10px;border-radius:12px;background:${acc[2]};color:${acc[1]};font-weight:900">Accuracy Level: ${acc[0]}</div><div style="padding:8px 10px;border-radius:12px;background:${prog[2]};color:${prog[1]};font-weight:900">Progress: ${prog[0]}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:900">Correct Words/Min: ${r.wcpm||"-"}</div>`;
-      card.appendChild(badges);
-
-      if(r.transcript){
-        const wa=document.createElement("div");
-        wa.style.cssText="padding:10px;border-radius:12px;border:1px solid #e2e8f0;background:#fff;line-height:2;margin-top:8px";
-        wa.innerHTML=`<b>Word Analysis:</b><br>${wordAnalysisHtml(r.transcript)}<div style="font-size:12px;color:#64748b;margin-top:6px">Orange = missing, Red = extra/wrong, Purple = repeated.</div>`;
-        card.appendChild(wa);
-      }
-
-      const controls=document.createElement("div");
-      controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px";
-      controls.innerHTML=`<button type="button" data-rp-del="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button><button type="button" data-rp-delall="${r.studentId}" style="padding:10px 12px;border:0;border-radius:10px;background:#111827;color:white;font-weight:800">Delete All Student Attempts</button>`;
-      card.appendChild(controls);
-    });
-    enhanceAudio();
-    syncDashboard();
-  }
-
-  document.addEventListener("click",async e=>{
-    const del=e.target.getAttribute("data-rp-del");
-    const delall=e.target.getAttribute("data-rp-delall");
-    if(del){
-      if(!confirm("Delete this attempt and its audio?")) return;
-      const a=records(); const r=a.find(x=>x.id===del);
-      if(r&&r.audioId) await deleteAudio(r.audioId);
-      saveRecords(a.filter(x=>x.id!==del));
-      location.reload();
-    }
-    if(delall){
-      if(!confirm("Delete all attempts for this student?")) return;
-      const a=records(); const target=a.filter(x=>x.studentId===delall);
-      for(const r of target){ if(r.audioId) await deleteAudio(r.audioId); }
-      saveRecords(a.filter(x=>x.studentId!==delall));
-      location.reload();
-    }
-  });
-
-  setInterval(enhanceCards,1500);
-  setTimeout(enhanceCards,1000);
-})();
- // ===== END RP V12 ADD-ON =====
-</script>
-
-
-<!-- RP_BUILD_V13A_STUDENT_RESULT_ONLY_SAFE -->
 </body>
 </html>
