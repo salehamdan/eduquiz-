@@ -2462,7 +2462,8 @@ function ReadingProgressStudent({user,data,reload}){
   function studentDiffAdjust(r){
     const acc = Number(r.analysis&&r.analysis.accuracy);
     const wcpm = Number(r.analysis&&r.analysis.wcpm);
-    const diff = String(r.difficulty || (data.readingTasks||[]).find(t=>t.id===r.taskId)?.level || "intermediate").toLowerCase();
+    const taskObj = (data.readingTasks||[]).find(t=>t.id===r.taskId);
+    const diff = String(r.difficulty || (taskObj&&taskObj.level) || "intermediate").toLowerCase();
     if(diff === "intermediate") return 0;
     const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm/130*100)) : null;
     const parts = [acc, speed].filter(Number.isFinite);
@@ -2603,27 +2604,36 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return c?c.id:(r.classId||r.className||"");
   }
   function localToSub(r){
-    const st=matchStudent(r)||{};
-    const hasAnalysis = r.accuracy!=="" && r.accuracy!==undefined && r.accuracy!==null;
-    const analysis = hasAnalysis ? {
-      accuracy:Number(r.accuracy)||0,
-      wcpm:Number(r.wcpm)||0,
-      fluency:Number(r.fluency)||0,
-      mistakeCount:Number(r.mistakes)||0,
-      repeated:Array(Number(r.repeated)||0).fill("x")
-    } : null;
-    return {
-      ...r,
-      __local:true,
-      teacherId:user.id,
-      studentId:st.id||r.studentId,
-      studentName:r.studentName||st.name||"Student",
-      classId:classIdFor(r,st),
-      createdAt:(r.submittedAt||r.createdAt||today()).slice(0,10),
-      seconds:r.seconds||60,
-      analysis,
-      status:r.status||"submitted"
-    };
+    try{
+      r = r || {};
+      const st=matchStudent(r)||{};
+      const hasAnalysis = r.accuracy!=="" && r.accuracy!==undefined && r.accuracy!==null;
+      const repCount = Math.max(0, Math.min(500, Number(r.repeated)||0));
+      const analysis = hasAnalysis ? {
+        accuracy:Number(r.accuracy)||0,
+        wcpm:Number(r.wcpm)||0,
+        fluency:Number(r.fluency)||0,
+        mistakeCount:Number(r.mistakes)||0,
+        repeated:Array(repCount).fill("x")
+      } : null;
+      const rawDate = r.submittedAt||r.createdAt||today();
+      const createdAt = String(rawDate||"").slice(0,10) || today();
+      return {
+        ...r,
+        __local:true,
+        teacherId:user.id,
+        studentId:st.id||r.studentId,
+        studentName:r.studentName||st.name||"Student",
+        classId:classIdFor(r,st),
+        createdAt:createdAt,
+        seconds:r.seconds||60,
+        analysis,
+        status:r.status||"submitted"
+      };
+    }catch(e){
+      console.warn("localToSub skipped a bad record",e);
+      return {__local:true,teacherId:user.id,studentId:"",studentName:"Student",classId:"",createdAt:today(),seconds:60,analysis:null,status:"submitted",id:(r&&r.id)||("bad_"+Math.random().toString(36).slice(2))};
+    }
   }
 
   const firebaseSubs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
@@ -3080,8 +3090,13 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }
   }
 
+  const msgIsOk = msg.indexOf("✅")===0;
+  const msgIsErr = msg.indexOf("⚠")===0;
+  const msgBg = msgIsOk ? "#dcfce7" : (msgIsErr ? "#fee2e2" : "#fef9c3");
+  const msgBorder = msgIsOk ? "#22c55e" : (msgIsErr ? "#ef4444" : "#eab308");
+  const msgColor = msgIsOk ? "#166534" : (msgIsErr ? "#991b1b" : "#713f12");
   return <div>
-    {msg && <div style={{position:"sticky",top:0,zIndex:200,background:msg.startsWith("✅")?"#dcfce7":msg.startsWith("⚠️")?"#fee2e2":"#fef9c3",border:"2px solid "+(msg.startsWith("✅")?"#22c55e":msg.startsWith("⚠️")?"#ef4444":"#eab308"),borderRadius:"9px",padding:"10px 14px",color:msg.startsWith("✅")?"#166534":msg.startsWith("⚠️")?"#991b1b":"#713f12",fontSize:"13px",fontWeight:700,marginBottom:"10px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}><span>{msg}</span><button onClick={()=>setMsg("")} style={{background:"transparent",border:"none",fontSize:"18px",cursor:"pointer",color:"inherit"}}>✕</button></div>}
+    {msg && <div style={{position:"sticky",top:0,zIndex:200,background:msgBg,border:"2px solid "+msgBorder,borderRadius:"9px",padding:"10px 14px",color:msgColor,fontSize:"13px",fontWeight:700,marginBottom:"10px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}><span>{msg}</span><button onClick={()=>setMsg("")} style={{background:"transparent",border:"none",fontSize:"18px",cursor:"pointer",color:"inherit"}}>✕</button></div>}
     <Card style={{marginBottom:"11px",background:"#f8fafc",border:"1px solid "+C.br}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔑 OpenAI API Key (for analyzing recordings)</strong>
       <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Saved on this device only. Needed so "Analyze" can transcribe the student's audio.</p>
