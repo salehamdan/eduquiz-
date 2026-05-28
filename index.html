@@ -3821,5 +3821,236 @@ document.addEventListener("click", function(e){
 
 
 <!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
+
+<script id="rp-filter-suggestions-ai-generator-safe">
+(function(){
+  const API_KEY_NAME = "rp_openai_api_key";
+  const RP_RECORDS_KEY = "rp_attempt_records_v11";
+
+  function safeJSON(v, fallback){
+    try{return JSON.parse(v || JSON.stringify(fallback));}catch(e){return fallback;}
+  }
+  function getSession(){
+    return safeJSON(localStorage.getItem("eq_session"), null) || {};
+  }
+  function getRecords(){
+    return safeJSON(localStorage.getItem(RP_RECORDS_KEY), []);
+  }
+  function uniq(arr){
+    return [...new Set(arr.filter(Boolean).map(x=>String(x).trim()).filter(Boolean))];
+  }
+  function studentLabel(r){
+    const name=String(r.studentName||"Student").trim();
+    const sid=String(r.studentId||"").trim();
+    const cls=String(r.className||r.classId||"").trim();
+    return `${name}${sid?` · ${sid}`:""}${cls?` · ${cls}`:""}`;
+  }
+
+  function attachFilterSuggestions(){
+    const classInput=document.getElementById("rp-v11-class");
+    const studentInput=document.getElementById("rp-v11-student");
+    if(!classInput || !studentInput) return;
+
+    let classList=document.getElementById("rp-v11-class-suggestions");
+    if(!classList){
+      classList=document.createElement("datalist");
+      classList.id="rp-v11-class-suggestions";
+      document.body.appendChild(classList);
+    }
+    let studentList=document.getElementById("rp-v11-student-suggestions");
+    if(!studentList){
+      studentList=document.createElement("datalist");
+      studentList.id="rp-v11-student-suggestions";
+      document.body.appendChild(studentList);
+    }
+
+    classInput.setAttribute("list","rp-v11-class-suggestions");
+    studentInput.setAttribute("list","rp-v11-student-suggestions");
+
+    const records=getRecords().filter(r=>!(r.deleted===true || r.status==="deleted"));
+    const classes=uniq(records.map(r=>r.className||r.classId)).sort();
+    classList.innerHTML = `<option value="">All Classes</option>` + classes.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join("");
+
+    const classQ=String(classInput.value||"").toLowerCase().trim();
+    const students=new Map();
+    records.forEach(r=>{
+      const cls=String(r.className||r.classId||"").toLowerCase();
+      if(classQ && !cls.includes(classQ)) return;
+      if(r.studentId && !students.has(r.studentId)) students.set(r.studentId, studentLabel(r));
+    });
+    studentList.innerHTML = `<option value="">All Students</option>` + [...students.values()].map(label=>`<option value="${String(label).replace(/"/g,'&quot;')}"></option>`).join("");
+  }
+
+  function fallbackText(topic, level, words){
+    const cleanTopic=(topic||"reading").trim() || "reading";
+    const n=Math.max(5, Math.min(160, Number(words)||30));
+    const banks={
+      beginner:[
+        `I like ${cleanTopic}. It is good for me.`,
+        `I learn about ${cleanTopic} every day.`,
+        `My teacher helps me read simple words.`
+      ],
+      intermediate:[
+        `${cleanTopic} can help students learn new ideas and useful words.`,
+        `Good readers slow down, think carefully, and read the sentence again when needed.`,
+        `Practice helps students improve their confidence and fluency.`
+      ],
+      advanced:[
+        `${cleanTopic} encourages learners to connect information, monitor understanding, and explain ideas with confidence.`,
+        `Fluent readers balance accuracy, expression, and speed while paying attention to meaning.`,
+        `Regular practice allows students to notice details, correct mistakes, and build stronger comprehension.`
+      ]
+    };
+    const arr=banks[level]||banks.beginner;
+    let out=[];
+    while(out.join(" ").split(/\s+/).filter(Boolean).length<n){ out.push(arr[out.length%arr.length]); }
+    return out.join(" ").split(/\s+/).slice(0,n).join(" ").replace(/\s+([.,!?])/g,"$1") + ".";
+  }
+
+  async function generateWithAI(topic, level, words){
+    const key=localStorage.getItem(API_KEY_NAME)||"";
+    if(!key) return fallbackText(topic,level,words);
+
+    const prompt = `Create ONE short English reading passage for Saudi secondary EFL students.
+Topic/title: ${topic || "general school life"}
+Level: ${level}
+Target word count: about ${words} words.
+Rules:
+- Return only the passage text.
+- Use clear school-appropriate English.
+- No title, no bullet points, no numbering.
+- Avoid difficult names.
+- Make it suitable for oral reading assessment.`;
+
+    const resp=await fetch("https://api.openai.com/v1/chat/completions",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({
+        model:"gpt-4o-mini",
+        messages:[
+          {role:"system",content:"You write short leveled English reading passages for EFL oral reading assessment."},
+          {role:"user",content:prompt}
+        ],
+        temperature:0.7,
+        max_tokens:260
+      })
+    });
+    if(!resp.ok){
+      const t=await resp.text();
+      throw new Error("AI generation failed: "+resp.status+" "+t.slice(0,120));
+    }
+    const data=await resp.json();
+    return String(data.choices?.[0]?.message?.content||"").trim();
+  }
+
+  async function saveReadingTask(task){
+    if(typeof fsSet==="function"){
+      await fsSet("readingTasks", task.id, task);
+      return true;
+    }
+    const arr=safeJSON(localStorage.getItem("eq_readingTasks"), []);
+    arr.push(task);
+    localStorage.setItem("eq_readingTasks", JSON.stringify(arr));
+    return true;
+  }
+
+  function makeId(){
+    if(typeof uid==="function") return uid();
+    return "rp_task_"+Date.now()+"_"+Math.random().toString(36).slice(2);
+  }
+
+  function todaySafe(){
+    if(typeof today==="function") return today();
+    return new Date().toISOString();
+  }
+
+  function addAIGenerator(){
+    const panel=document.getElementById("rp-v11-panel");
+    if(!panel || document.getElementById("rp-ai-text-generator-safe")) return;
+
+    const aiSettings=[...panel.querySelectorAll("div")].find(d=>(d.innerText||"").includes("AI Settings"));
+    const box=document.createElement("div");
+    box.id="rp-ai-text-generator-safe";
+    box.style.cssText="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #dbeafe";
+    box.innerHTML=`
+      <b style="color:#1e293b">🤖 AI Reading Text Generator</b>
+      <div style="display:grid;grid-template-columns:1fr 120px 130px;gap:8px;margin-top:8px">
+        <input id="rp-ai-topic" type="text" placeholder="Topic / Title مثل: Travel, School" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
+        <input id="rp-ai-words" type="number" min="5" max="160" value="30" placeholder="Words" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
+        <select id="rp-ai-level" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+      <textarea id="rp-ai-output" placeholder="Generated reading text will appear here..." style="width:100%;min-height:90px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-family:system-ui;line-height:1.6"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button id="rp-ai-generate" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Generate Text</button>
+        <button id="rp-ai-use-task" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Use as Reading Task</button>
+        <span id="rp-ai-msg" style="font-size:12px;color:#64748b;align-self:center"></span>
+      </div>
+    `;
+    if(aiSettings && aiSettings.parentNode) aiSettings.parentNode.insertBefore(box, aiSettings.nextSibling);
+    else panel.insertBefore(box, panel.children[1]||null);
+
+    box.querySelector("#rp-ai-generate").addEventListener("click", async ()=>{
+      const msg=box.querySelector("#rp-ai-msg");
+      const output=box.querySelector("#rp-ai-output");
+      const topic=box.querySelector("#rp-ai-topic").value.trim();
+      const words=Number(box.querySelector("#rp-ai-words").value||30);
+      const level=box.querySelector("#rp-ai-level").value;
+      msg.textContent="Generating...";
+      try{
+        const text=await generateWithAI(topic,level,words);
+        output.value=text;
+        msg.textContent="✅ Text generated.";
+      }catch(e){
+        output.value=fallbackText(topic,level,words);
+        msg.textContent="⚠️ AI failed; fallback text generated.";
+        console.warn(e);
+      }
+    });
+
+    box.querySelector("#rp-ai-use-task").addEventListener("click", async ()=>{
+      const msg=box.querySelector("#rp-ai-msg");
+      const topic=box.querySelector("#rp-ai-topic").value.trim() || "AI Reading Task";
+      const words=Number(box.querySelector("#rp-ai-words").value||30);
+      const level=box.querySelector("#rp-ai-level").value;
+      const text=box.querySelector("#rp-ai-output").value.trim();
+      if(!text){ msg.textContent="Write or generate text first."; return; }
+
+      const u=getSession();
+      const id=makeId();
+      const task={
+        id,
+        teacherId:u.id || u.uid || u.email || "teacher",
+        title:topic,
+        level,
+        lines:Math.max(1, Math.ceil(text.split(/\s+/).filter(Boolean).length/8)),
+        wordCount:words,
+        text,
+        classIds:[],
+        status:"open",
+        createdAt:todaySafe(),
+        source:"ai_text_generator_safe"
+      };
+      msg.textContent="Saving...";
+      try{
+        await saveReadingTask(task);
+        msg.textContent="✅ Saved as Reading Task. Refreshing...";
+        setTimeout(()=>location.reload(),700);
+      }catch(e){
+        msg.textContent="❌ Save failed: "+e.message;
+      }
+    });
+  }
+
+  setInterval(()=>{attachFilterSuggestions();addAIGenerator();},1200);
+  setTimeout(()=>{attachFilterSuggestions();addAIGenerator();},700);
+})();
+</script>
+
+
+<!-- BUILD_FILTER_NAMES_AI_TEXT_GENERATOR_SAFE -->
 </body>
 </html>
