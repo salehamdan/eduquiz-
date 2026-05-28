@@ -53,6 +53,7 @@ window.addEventListener("unhandledrejection", function(e){
   }
 });
 </script>
+<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
 </head>
 <body>
 <div id="root">
@@ -2527,10 +2528,14 @@ function ReadingProgressStudentV1({user,data,reload}) {
   }
 
   async function uploadAudioToFirebase(file,path){
-    if(!FIREBASE_OK || !firebase || !firebase.storage){
-      throw new Error("Firebase Storage is not available.");
+    if(!FIREBASE_OK){
+      throw new Error("Firebase is not connected.");
     }
-    const ref=firebase.storage().ref().child(path);
+    if(!firebase || typeof firebase.storage!=="function"){
+      throw new Error("Firebase Storage SDK is not loaded. Refresh after uploading this version.");
+    }
+    const storage=firebase.storage();
+    const ref=storage.ref().child(path);
     await ref.put(file,{contentType:file.type||"audio/webm"});
     const url=await ref.getDownloadURL();
     return url;
@@ -3209,6 +3214,6 @@ try {
 }
 </script>
 
-<!-- RP_BUILD_V1_AUDIO_ONLY -->
+<!-- RP_BUILD_V2_AUDIO_ONLY_STORAGE_SDK -->
 </body>
 </html>
