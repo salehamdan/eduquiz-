@@ -54,34 +54,6 @@ window.addEventListener("unhandledrejection", function(e){
   }
 });
 </script>
-
-<style id="rp-remove-v50-style">
-  #rp-v11-panel, #rp-v11-show, #rp-v11-hide { display:none !important; visibility:hidden !important; pointer-events:none !important; }
-</style>
-<script id="rp-remove-v50-script">
-(function(){
-  function hideReadingProgressUi(){
-    try{
-      ["rp-v11-panel","rp-v11-show","rp-v11-hide"].forEach(function(id){
-        var el=document.getElementById(id);
-        if(el){ el.style.display="none"; el.style.visibility="hidden"; el.style.pointerEvents="none"; }
-      });
-      var nodes=document.querySelectorAll("button,[role='button'],a,div,span");
-      nodes.forEach(function(el){
-        var t=(el.textContent||"").trim();
-        if(t==="Reading Progress" || t==="📖 Reading Progress"){
-          el.style.display="none";
-          el.style.visibility="hidden";
-          el.style.pointerEvents="none";
-        }
-      });
-    }catch(e){}
-  }
-  window.addEventListener("load", hideReadingProgressUi);
-  setInterval(hideReadingProgressUi, 800);
-})();
-</script>
-
 </head>
 <body>
 <div id="root">
@@ -2451,254 +2423,910 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 
 // ── TEACHER APP ───────────────────────────────────────────────
 
-function ReadingProgressStudent(props){
-  return null;
-}){
-  const [task,setTask]=useState(null);
-  const [rec,setRec]=useState(null);
-  const [blob,setBlob]=useState(null);
-  const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0);
-  const [msg,setMsg]=useState("");
-  const [busy,setBusy]=useState(false);
-  const [transcript,setTranscript]=useState("");
-
-  const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && t.status!=="closed" && (!t.classId || t.classId==="all" || t.classId===user.classId));
-  const subs=(data.readingSubmissions||[]).filter(s=>s.studentId===user.id && !s.deleted);
-
-  function speakBrowser(txt){try{if(!window.speechSynthesis){setMsg("Browser voice is not supported here.");return;}window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(txt||"");u.lang="en-US";u.rate=0.86;u.pitch=1;window.speechSynthesis.speak(u);}catch(e){setMsg("Voice error: "+(e.message||e));}}
-
-  async function startRecording(){
-    if(!task)return;
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const r=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":""});
-      const chunks=[]; const startTime=Date.now();
-      r.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
-      r.onstop=()=>{const b=new Blob(chunks,{type:"audio/webm"});setBlob(b);setAudioUrl(URL.createObjectURL(b));setSeconds(Math.max(1,Math.round((Date.now()-startTime)/1000)));stream.getTracks().forEach(x=>x.stop());setMsg("Recording saved. Submit to teacher.");};
-      r.start(); setRec(r); setMsg("Recording...");
-    }catch(e){setMsg("Microphone error: "+(e.message||e));}
+function ReadingProgressStudent({user,data,reload}){
+  const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed"&&(!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId)));
+  const subs=(data.readingSubmissions||[]).filter(x=>x.studentId===user.id);
+  const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null);
+  function playModel(t){ const u=new SpeechSynthesisUtterance(t.text); u.lang="en-US"; u.rate=t.level==="beginner"?0.82:t.level==="advanced"?0.98:0.9; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
+  async function startRec(){
+    if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
+    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+    const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"");
+    const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:undefined); mediaRef.current=mr;
+    mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
+    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b));};
+    recRef.current=rpStartRecognition(setTranscript);
+    mr.start(1000); setRecording(true); tRef.current=setInterval(()=>setSeconds(x=>x+1),1000);
   }
-  function stopRecording(){try{if(rec&&rec.state!=="inactive")rec.stop();}catch(e){} setRec(null);}
-
+  function stopRec(){try{mediaRef.current&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
   async function submit(){
-    if(!task||!blob){setMsg("Record first.");return;}
-    setBusy(true);setMsg("Uploading audio...");
-    try{
-      const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.id}/${task.id}-${Date.now()}.webm`;
-      let audioUrlFinal="";
-      if(typeof rpUploadAudio==="function"){const up=await rpUploadAudio(blob,path);audioUrlFinal=(typeof up==="string")?up:(up&&up.url)||"";}
-      else if(firebase&&firebase.storage){const ref=firebase.storage().ref().child(path);await ref.put(blob,{contentType:blob.type||"audio/webm"});audioUrlFinal=await ref.getDownloadURL();}
-      await fsSet("readingSubmissions",id,{id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentName:user.name||"",studentNumber:user.studentId||"",classId:user.classId,teacherId:task.teacherId,transcript:transcript||"",seconds,audioUrl:audioUrlFinal,audioStoragePath:path,audioUploadStatus:"uploaded",status:"submitted",createdAt:today(),submittedAt:new Date().toISOString()});
-      setMsg("✅ Submitted to teacher."); setTask(null); setBlob(null); setAudioUrl(""); setTranscript(""); setSeconds(0); await reload();
-    }catch(e){console.error(e);setMsg("Submit failed: "+(e.message||e));}
-    finally{setBusy(false);}
+    if(!task||!blob){setMsg("Record your reading first.");return;}
+    setMsg("Uploading…");
+    const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
+    let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setMsg("Upload failed. Check Firebase Storage permissions.");return;}
+    await fsSet("readingSubmissions",id,{id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"});
+    setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
   }
-
   if(task)return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff"}}>📖 {task.title}</strong><p style={{color:C.mu,fontSize:"11px"}}>Listen first, then record your reading.</p></Card>
-    <Card><p style={{whiteSpace:"pre-wrap",fontSize:"15px",lineHeight:1.7}}>{task.text}</p>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"10px"}}>{task.modelAudioUrl&&<audio controls src={task.modelAudioUrl} style={{height:"34px"}}/>}<Btn color={C.s} onClick={()=>task.modelAudioUrl?setMsg("Use the audio player above."):speakBrowser(task.text)}>🔊 Listen First</Btn></div>
-      <textarea value={transcript} onChange={e=>setTranscript(e.target.value)} rows={3} placeholder="Optional: speech transcript if available..." style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",marginBottom:"8px"}}/>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{!rec?<Btn color={C.p} onClick={startRecording}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRecording}>Stop Recording</Btn>}<Btn color={C.s} onClick={submit} disabled={busy||!blob}>Submit to Teacher</Btn><Btn color={"#64748b"} onClick={()=>setTask(null)}>Back</Btn></div>
-      {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}{msg&&<p style={{fontSize:"12px",color:C.p,fontWeight:800}}>{msg}</p>}
-    </Card>
-  </div>;
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><Btn color={C.p} onClick={()=>playModel(task)}>🔊 Listen to model audio</Btn></Card>
+    <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>setTask(null)}>Back</Btn></div>
+      {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
+      {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
+      <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
+    </Card></div>;
+  // Build student progress dashboard from Firebase data (data.readingSubmissions).
+  // This shows the teacher's analysis directly inside the student's Reading tab.
+  function studentDiffAdjust(r){
+    const acc = Number(r.analysis&&r.analysis.accuracy);
+    const wcpm = Number(r.analysis&&r.analysis.wcpm);
+    const diff = String(r.difficulty || (data.readingTasks||[]).find(t=>t.id===r.taskId)?.level || "intermediate").toLowerCase();
+    if(diff === "intermediate") return 0;
+    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm/130*100)) : null;
+    const parts = [acc, speed].filter(Number.isFinite);
+    if(!parts.length) return 0;
+    const avg = parts.reduce((a,b)=>a+b,0) / parts.length;
+    let strength;
+    if(avg <= 30) strength = 10;
+    else if(avg >= 70) strength = 0;
+    else strength = Math.round(10 * (70 - avg) / 40);
+    if(diff === "beginner") return +strength;
+    if(diff === "advanced") return -strength;
+    return 0;
+  }
+  function studentFinalScore(r){
+    if(!r||!r.analysis) return null;
+    const a = r.analysis;
+    const acc = Number(a.accuracy);
+    const flu = Number(a.fluency);
+    const wcpm = Number(a.wcpm);
+    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm)) return null;
+    const speed = Number.isFinite(wcpm) ? Math.min(100, Math.round(wcpm/130*100)) : 0;
+    let score = Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
+    score += studentDiffAdjust(r);
+    return Math.max(0, Math.min(100, score));
+  }
+  const analyzed = subs.filter(s => s.analysis && (s.status==="analyzed" || s.status==="accepted" || s.analysis.accuracy!==undefined))
+                      .sort((a,b) => String(a.createdAt||a.submittedAt||"").localeCompare(String(b.createdAt||b.submittedAt||"")));
+  const scoresArr = analyzed.map(studentFinalScore).filter(s=>s!==null);
+  const latestScore = scoresArr.length ? scoresArr[scoresArr.length-1] : null;
+  const bestScore = scoresArr.length ? Math.max(...scoresArr) : null;
+  const avgScore = scoresArr.length ? Math.round(scoresArr.reduce((a,b)=>a+b,0)/scoresArr.length) : null;
+  let growthPct = null;
+  if(scoresArr.length >= 2){
+    const first = scoresArr[0], last = scoresArr[scoresArr.length-1];
+    growthPct = first===0 ? (last>0?100:0) : Math.round(((last-first)/Math.max(1,first))*100);
+  }
+  function growthLabel(p){
+    if(p===null) return "First attempt";
+    if(p>=25) return "🚀 Strong growth";
+    if(p>=10) return "📈 Good growth";
+    if(p>=1) return "➕ Slight growth";
+    if(p===0) return "➖ Stable";
+    return "📉 Needs work";
+  }
+  const rejectedCount = subs.filter(s=>s.status==="rejected").length;
+  const pendingCount = subs.filter(s=>s.status==="submitted" && !s.analysis).length;
 
-  return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"16px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen first, record, and submit your reading.</p></Card>
-    <Card style={{marginBottom:"10px"}}><strong>Active Reading Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No active reading tasks.</p>:tasks.slice().reverse().map(t=><div key={t.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}><strong>{t.title}</strong><div style={{fontSize:"11px",color:C.mu}}>Level: {t.level||"intermediate"} · Voice: {t.modelAudioUrl?"AI audio":"Browser fallback"}</div><p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{t.text}</p><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>Start</Btn></div>)}</Card>
-    <Card><strong>My Reading Submissions</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const score=s.analysis&&(s.analysis.finalScore||s.analysis.officialScore||s.analysis.accuracy);return <div key={s.id} style={{borderBottom:"1px solid "+C.br,padding:"9px 0"}}><strong>{s.taskTitle||"Reading Task"}</strong><div style={{fontSize:"11px",color:C.mu}}>Status: {s.status||"submitted"} · Score: {score?score+"%":"—"}</div>{s.status==="rejected"&&<div style={{fontSize:"12px",fontWeight:900,color:C.d}}>❌ تم رفض المحاولة من المعلم.</div>}{s.status==="retake_allowed"&&<div style={{fontSize:"12px",fontWeight:900,color:C.w}}>🔁 تمت إتاحة إعادة المحاولة.</div>}</div>})}</Card>
-  </div>;
+  return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
+    {scoresArr.length>0 && <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}>
+      <strong style={{fontSize:"14px",color:C.tx,display:"block",marginBottom:"8px"}}>📈 My Reading Progress</strong>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:"7px"}}>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#eff6ff",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#1d4ed8",fontWeight:600}}>LATEST</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(latestScore)}}>{latestScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#f0fdf4",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#166534",fontWeight:600}}>BEST</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(bestScore)}}>{bestScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#f8fafc",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#334155",fontWeight:600}}>AVERAGE</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:gc(avgScore)}}>{avgScore}%</div>
+        </div>
+        <div style={{padding:"9px 11px",borderRadius:"10px",background:"#fff7ed",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:"#9a3412",fontWeight:600}}>ATTEMPTS</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:"#9a3412"}}>{scoresArr.length}</div>
+        </div>
+        {growthPct!==null && <div style={{padding:"9px 11px",borderRadius:"10px",background:"#faf5ff",textAlign:"center"}}>
+          <div style={{fontSize:"10px",color:C.pu,fontWeight:600}}>GROWTH</div>
+          <div style={{fontSize:"19px",fontWeight:900,color:growthPct>=0?C.s:C.d}}>{growthPct>=0?"+":""}{growthPct}%</div>
+        </div>}
+      </div>
+      <div style={{fontSize:"12px",color:C.mu,marginTop:"8px",textAlign:"center",fontWeight:700}}>{growthLabel(growthPct)}</div>
+      <div style={{display:"flex",gap:"5px",alignItems:"end",height:"56px",marginTop:"10px",justifyContent:"center",paddingBottom:"4px",borderBottom:"1px solid "+C.br}}>
+        {scoresArr.map((s,i)=><div key={i} title={"Attempt "+(i+1)+": "+s+"%"} style={{width:"22px",height:Math.max(5,Math.round(s/100*52))+"px",background:gc(s),borderRadius:"7px 7px 0 0",position:"relative"}}><span style={{position:"absolute",top:"-15px",left:"50%",transform:"translateX(-50%)",fontSize:"9px",fontWeight:800,color:gc(s)}}>{s}</span></div>)}
+      </div>
+      {(rejectedCount>0||pendingCount>0) && <div style={{display:"flex",gap:"6px",marginTop:"10px",flexWrap:"wrap",fontSize:"11px"}}>
+        {pendingCount>0 && <span style={{padding:"4px 10px",borderRadius:"999px",background:"#fef9c3",color:"#854d0e",fontWeight:700}}>⏳ {pendingCount} awaiting teacher</span>}
+        {rejectedCount>0 && <span style={{padding:"4px 10px",borderRadius:"999px",background:"#fee2e2",color:"#991b1b",fontWeight:700}}>❌ {rejectedCount} rejected</span>}
+      </div>}
+    </Card>}
+    {scoresArr.length===0 && subs.length>0 && <Card style={{marginBottom:"10px",background:"#fef9c3",border:"1px solid #fde047"}}>
+      <strong style={{fontSize:"13px",color:"#854d0e"}}>⏳ Waiting for teacher</strong>
+      <p style={{fontSize:"12px",color:"#854d0e",margin:"4px 0 0"}}>You submitted {subs.length} recording(s). Your teacher will analyze them and your results will appear here.</p>
+    </Card>}
+    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=subs.filter(s=>s.taskId===t.id);const last=done[done.length-1];return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {done.length} submission(s)</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}</div><Btn size="sm" color={C.p} onClick={()=>setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
 
 
-function ReadingProgressTeacher(props){
-  return null;
-}){
-  const [msg,setMsg]=useState("");
-  const [aiKey,setAiKey]=useState(localStorage.getItem("OPENAI_API_KEY")||"");
-  const [voiceMode,setVoiceMode]=useState(localStorage.getItem("RP_VOICE_MODE")||"browser");
-  const [voiceModel,setVoiceModel]=useState(localStorage.getItem("RP_VOICE_MODEL")||"gpt-4o-mini-tts");
-  const [level,setLevel]=useState("intermediate");
-  const [topic,setTopic]=useState("healthy habits");
-  const [lines,setLines]=useState(4);
-  const classList=(myClasses&&myClasses.length?myClasses:(data.classes||[]));
-  const studentList=(myStudents&&myStudents.length?myStudents:(data.users||[]).filter(u=>u.role==="student"));
-  const [classId,setClassId]=useState((classList&&classList[0]&&classList[0].id)||"all");
+function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task");
+  const [level,setLevel]=useState("beginner");
+  const [lines,setLines]=useState(3);
+  const [wordCount,setWordCount]=useState(80);
+  const [topic,setTopic]=useState("");
   const [text,setText]=useState("");
-  const [busy,setBusy]=useState(false);
+  const [classIds,setClassIds]=useState([]);
+  const [filter,setFilter]=useState("all");
+  const [search,setSearch]=useState("");
+  const [selectedGroup,setSelectedGroup]=useState([]);
+  const [msg,setMsg]=useState("");
+  const [aiKeyLocal,setAiKeyLocal]=useState(getAIKey());
+  const [viewMode,setViewMode]=useState("official");
+  const [sensitivity,setSensitivity]=useState("normal");
+  const [speedWeight,setSpeedWeight]=useState("reduced");
+  const [refreshTick,setRefreshTick]=useState(0);
+  const [showPanel,setShowPanel]=useState(true);
 
-  const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && (!t.teacherId || t.teacherId===user.id || t.teacherId==="GLOBAL"));
-  const submissions=(data.readingSubmissions||[]).filter(s=>!s.deleted);
+  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id);
 
-  function saveAISettings(){
-    localStorage.setItem("OPENAI_API_KEY",aiKey.trim());
-    localStorage.setItem("RP_VOICE_MODE",voiceMode);
-    localStorage.setItem("RP_VOICE_MODEL",voiceModel);
-    setMsg("✅ AI settings saved.");
+  function rpKey(){
+    for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
+      try{const v=JSON.parse(localStorage.getItem(k)||"null"); if(Array.isArray(v)) return k;}catch(e){}
+    }
+    localStorage.setItem("rp_attempt_records_v11","[]");
+    return "rp_attempt_records_v11";
+  }
+  function localRecords(){
+    try{return JSON.parse(localStorage.getItem(rpKey())||"[]")||[];}catch(e){return[];}
+  }
+  function saveLocalRecords(arr){
+    localStorage.setItem(rpKey(),JSON.stringify(arr));
+    setRefreshTick(x=>x+1);
+  }
+  function norm(x){return String(x||"").replace(/\s+/g," ").trim().toLowerCase();}
+  function matchStudent(r){
+    return myStudents.find(st =>
+      st.id===r.studentId ||
+      st.studentId===r.studentId ||
+      String(st.studentId||"")===String(r.studentId||"") ||
+      norm(st.name)===norm(r.studentName)
+    );
+  }
+  function classIdFor(r,st){
+    if(st&&st.classId) return st.classId;
+    const c=myClasses.find(c=>c.id===r.className||c.name===r.className||c.id===r.classId||c.name===r.classId);
+    return c?c.id:(r.classId||r.className||"");
+  }
+  function localToSub(r){
+    const st=matchStudent(r)||{};
+    const hasAnalysis = r.accuracy!=="" && r.accuracy!==undefined && r.accuracy!==null;
+    const analysis = hasAnalysis ? {
+      accuracy:Number(r.accuracy)||0,
+      wcpm:Number(r.wcpm)||0,
+      fluency:Number(r.fluency)||0,
+      mistakeCount:Number(r.mistakes)||0,
+      repeated:Array(Number(r.repeated)||0).fill("x")
+    } : null;
+    return {
+      ...r,
+      __local:true,
+      teacherId:user.id,
+      studentId:st.id||r.studentId,
+      studentName:r.studentName||st.name||"Student",
+      classId:classIdFor(r,st),
+      createdAt:(r.submittedAt||r.createdAt||today()).slice(0,10),
+      seconds:r.seconds||60,
+      analysis,
+      status:r.status||"submitted"
+    };
   }
 
-  function speakBrowser(t){
-    try{
-      if(!window.speechSynthesis){setMsg("Browser voice is not supported here.");return;}
-      window.speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance(t||text||"");
-      u.lang="en-US"; u.rate=0.86; u.pitch=1;
-      window.speechSynthesis.speak(u);
-    }catch(e){setMsg("Browser voice error: "+(e.message||e));}
+  const firebaseSubs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
+  const localSubs=localRecords().map(localToSub);
+  const subs=[...firebaseSubs,...localSubs];
+
+  function officialScore(sub){
+    if(!sub.analysis) return null;
+    const acc=Number(sub.analysis.accuracy);
+    const flu=Number(sub.analysis.fluency);
+    const wcpm=Number(sub.analysis.wcpm);
+    const speedScore=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):NaN;
+    let score;
+    if(speedWeight==="excluded"){
+      const vals=[acc,flu].filter(Number.isFinite);
+      score=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):acc;
+    }else if(speedWeight==="reduced"){
+      score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speedScore)?speedScore*.05:0));
+    }else{
+      score=Math.round((Number.isFinite(acc)?acc*.60:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speedScore)?speedScore*.15:0));
+    }
+    const bonus=sensitivity==="supportive"?12:sensitivity==="normal"?5:0;
+    return Math.max(0,Math.min(100,score+bonus));
   }
 
-  async function generateText(){
-    setBusy(true); setMsg("Generating reading text...");
+  function officialAccuracy(sub){
+    if(!sub.analysis) return null;
+    const acc=Number(sub.analysis.accuracy);
+    if(!Number.isFinite(acc)) return null;
+
+    let bonus=sensitivity==="supportive"?6:sensitivity==="normal"?2:0;
+    if(acc<35) bonus=sensitivity==="supportive"?2:0;
+
+    let out=Math.round(acc+bonus);
+    if(acc<15) out=Math.min(out,12);
+    else if(acc<25) out=Math.min(out,20);
+    else if(acc<35) out=Math.min(out,28);
+    else if(acc<45) out=Math.min(out,36);
+    else if(acc<55) out=Math.min(out,45);
+    else if(acc<65) out=Math.min(out,58);
+
+    return Math.max(0,Math.min(100,out));
+  }
+  function officialFluency(sub){
+    if(!sub.analysis) return null;
+    const flu=Number(sub.analysis.fluency);
+    const wcpm=Number(sub.analysis.wcpm);
+    const acc=Number(sub.analysis.accuracy);
+    if(!Number.isFinite(flu)&&!Number.isFinite(wcpm)) return null;
+
+    const speedScore=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):flu;
+    let base;
+    if(speedWeight==="excluded") base=Number.isFinite(flu)?flu:speedScore;
+    else if(speedWeight==="normal") base=Math.round((Number.isFinite(flu)?flu*.85:0)+(Number.isFinite(speedScore)?speedScore*.15:0));
+    else base=Math.round((Number.isFinite(flu)?flu*.95:0)+(Number.isFinite(speedScore)?speedScore*.05:0));
+
+    let bonus=sensitivity==="supportive"?4:sensitivity==="normal"?1:0;
+    let out=Math.round(base+bonus);
+
+    if(Number.isFinite(acc)){
+      if(acc<15) out=Math.min(out,18);
+      else if(acc<25) out=Math.min(out,25);
+      else if(acc<35) out=Math.min(out,33);
+      else if(acc<45) out=Math.min(out,42);
+      else if(acc<55) out=Math.min(out,52);
+    }
+
+    return Math.max(0,Math.min(100,out));
+  }
+  function displayAccuracy(sub){
+    if(!sub.analysis) return null;
+    return viewMode==="official" ? officialScore(sub) : Number(sub.analysis.accuracy);
+  }
+  function levelLabel(score){
+    if(score===null||score===undefined) return "Not Analyzed";
+    let adv=80, pro=70, dev=55;
+    if(sensitivity==="strict"){adv=90;pro=80;dev=65;}
+    if(sensitivity==="supportive"){adv=70;pro=60;dev=45;}
+    if(score>=adv) return "Advanced";
+    if(score>=pro) return "Proficient";
+    if(score>=dev) return "Developing";
+    return "Needs Support";
+  }
+  function growthText(scores){
+    if(scores.length<2) return "First attempt";
+    const diff=scores[scores.length-1]-scores[0];
+    if(diff>=15) return "Strong Growth +" + diff;
+    if(diff>=5) return "Moderate Growth +" + diff;
+    if(diff>=-3) return "Stable " + (diff>=0?"+":"") + diff;
+    return "Regression " + diff;
+  }
+
+  const topicBank={
+    beginner:["A Trip to the Beach","My Favorite Meal","A Rainy Day","A Visit to the Park","My New Bicycle","A Helpful Neighbor","A Small Garden","A Day at the Market"],
+    intermediate:["Traveling to a New City","Healthy Food Choices","Managing Exam Stress","Protecting the Environment","A Memorable School Event","Using Technology Wisely","Learning a New Skill","Volunteering in the Community"],
+    advanced:["The Future of Travel","Food Culture Around the World","Balancing Stress and Success","Artificial Intelligence and Daily Life","The Impact of Tourism","Environmental Responsibility","Digital Citizenship","Leadership in Difficult Situations"]
+  }
+  function suggestTopics(){
+    const arr=topicBank[level]||topicBank.beginner;
+    const pick=arr[Math.floor(Math.random()*arr.length)];
+    setTopic(pick);
+    setTitle(pick);
+    setMsg("Suggested topics: "+arr.join(" • ")+" — Selected: "+pick);
+  }
+  function generateFromTopic(){
+    const chosen=(topic||topicBank[level]?.[Math.floor(Math.random()*(topicBank[level]||[]).length)]||"A New Experience").trim();
+    const targetWords=Math.max(30,Math.min(260,Number(wordCount)||80));
+    const seed=chosen.toLowerCase();
+    const shortTopic=chosen.split(/\s+/).filter(Boolean).slice(0,6).join(" ");
+    function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+    const openers={
+      beginner:[`${shortTopic} can be a simple and enjoyable experience.`,`Many people like learning about ${shortTopic}.`,`${shortTopic} is a topic that is easy to understand.`],
+      intermediate:[`${shortTopic} is an interesting subject because it can affect daily life in different ways.`,`People often have different opinions about ${shortTopic}, depending on their experiences.`,`${shortTopic} can teach us useful lessons about choices, habits, and responsibility.`],
+      advanced:[`${shortTopic} can be examined from social, cultural, and practical perspectives.`,`Although ${shortTopic} may seem simple at first, it can reveal deeper ideas about modern life.`,`A thoughtful discussion of ${shortTopic} requires examples, reasons, and careful reflection.`]
+    };
+    const travel={beginner:[`A person may travel by car, bus, train, or plane.`,`During a trip, people can see new places and try new food.`,`Good travelers prepare their bags and arrive on time.`,`They also respect the people and places they visit.`],intermediate:[`Travel allows people to discover new places, meet different communities, and understand other ways of life.`,`A successful trip usually needs planning, a clear budget, and respect for local customs.`,`Sometimes travel can be tiring, but it often gives people memories that last for years.`,`It can also make people more independent and open-minded.`],advanced:[`Travel is not only a movement from one place to another; it is also a way to encounter new cultures and perspectives.`,`Responsible tourism requires awareness of the environment, local traditions, and the economic needs of communities.`,`While travel can create meaningful experiences, it can also cause problems if visitors ignore local values or natural resources.`,`For this reason, thoughtful travelers balance enjoyment with respect and responsibility.`]};
+    const food={beginner:[`Food gives the body energy and helps people stay active.`,`Some foods are sweet, some are salty, and some are fresh and healthy.`,`People should drink water and eat different kinds of food.`,`A good meal can make the day better.`],intermediate:[`Healthy food choices can improve energy, concentration, and mood.`,`People do not need to stop eating their favorite meals, but they should try to keep a good balance.`,`Fresh fruit, vegetables, water, and enough sleep can support a healthier lifestyle.`,`Small daily choices can make a big difference over time.`],advanced:[`Food is connected to health, culture, family traditions, and personal identity.`,`A balanced diet can support physical wellbeing, while shared meals can strengthen social relationships.`,`Modern lifestyles sometimes make people choose fast food, but awareness can help them make better decisions.`,`Understanding food habits allows people to respect different cultures and improve their own routines.`]};
+    const stress={beginner:[`People may feel worried before an important test or event.`,`They can feel better by breathing slowly and asking for help.`,`A short rest can help the mind become calm again.`,`It is important to try again and not give up.`],intermediate:[`Stress can appear when people have many tasks and little time.`,`Planning, sleeping well, and taking short breaks can reduce pressure.`,`Talking to a trusted person can also help someone feel supported.`,`Managing stress does not remove every problem, but it makes problems easier to face.`],advanced:[`Stress is a natural response to pressure, but it becomes harmful when it controls a person's thoughts and behavior.`,`Effective stress management depends on preparation, realistic goals, healthy routines, and emotional awareness.`,`Instead of ignoring stress, people can learn to recognize its causes and respond in a balanced way.`,`This approach builds resilience and improves performance over time.`]};
+    const technology={beginner:[`Technology helps people learn, work, and communicate.`,`A phone or computer can be useful when people use it wisely.`,`People should also take breaks and protect their eyes.`,`Good habits make technology safer.`],intermediate:[`Technology can make life easier by helping people find information and communicate quickly.`,`However, people should use it carefully and avoid wasting too much time.`,`Responsible users check information, protect privacy, and balance screen time with real activities.`,`When used well, technology can support learning and creativity.`],advanced:[`Technology has changed the way people study, work, communicate, and solve problems.`,`Its benefits are clear, but responsible use requires critical thinking, privacy awareness, and self-control.`,`Artificial intelligence can support creativity and productivity, yet people must still make ethical decisions.`,`The best use of technology combines innovation with responsibility.`]};
+    const generic={beginner:[`It can happen at home, outside, or in the community.`,`People can learn something new from this experience.`,`They should listen carefully and make good choices.`,`This can help them become more confident.`],intermediate:[`This topic can be connected to real situations and personal decisions.`,`People may face challenges, but they can learn by thinking carefully and taking action.`,`Good choices usually need patience, respect, and clear goals.`,`For this reason, the topic is useful for discussion and reflection.`],advanced:[`This topic can be understood through examples, consequences, and different points of view.`,`It encourages people to think critically about values, responsibilities, and long-term results.`,`A balanced view considers both advantages and possible challenges.`,`Such reflection can lead to better decisions and deeper understanding.`]};
+    let bank=generic;
+    if(seed.includes("travel")||seed.includes("trip")||seed.includes("tourism")||seed.includes("city")||seed.includes("beach")) bank=travel;
+    if(seed.includes("food")||seed.includes("meal")||seed.includes("healthy")) bank=food;
+    if(seed.includes("stress")||seed.includes("exam")||seed.includes("worry")) bank=stress;
+    if(seed.includes("technology")||seed.includes("ai")||seed.includes("digital")||seed.includes("computer")) bank=technology;
+    const sentences=[pick(openers[level]||openers.beginner),...(bank[level]||bank.beginner)];
+    const closers={beginner:[`In the end, ${shortTopic} can be useful and enjoyable.`],intermediate:[`Overall, ${shortTopic} can help people learn, grow, and make better choices.`],advanced:[`Ultimately, ${shortTopic} offers an opportunity to connect knowledge with thoughtful action.`]};
+    sentences.push(...(closers[level]||closers.beginner));
+    let result=[],count=0,idx=0;
+    while(count<targetWords&&idx<20){const sentence=sentences[idx%sentences.length];result.push(sentence);count+=sentence.split(/\s+/).filter(Boolean).length;idx++;}
+    let textOut=result.join(" ");const words=textOut.split(/\s+/);
+    if(words.length>targetWords+15) textOut=words.slice(0,targetWords).join(" ")+".";
+    setText(textOut);setTitle(chosen);
+  }
+
+  function gen(){generateFromTopic();}
+  function play(){
+    if(!text.trim())return;
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang="en-US";
+    u.rate=level==="beginner"?0.82:level==="advanced"?0.98:0.9;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+  async function saveTask(){
+    if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;}
+    const id=uid();
+    await fsSet("readingTasks",id,{id,teacherId:user.id,title:title.trim(),topic:topic.trim(),level,lines:Number(lines),text:text.trim(),classIds,status:"open",createdAt:today()});
+    setMsg("✅ Reading task created.");
+    setText("");
+    await reload();
+  }
+  const [analyzeBusy,setAnalyzeBusy]=useState("");
+  // Fetch an audio blob from a Firebase Storage URL OR a data: URL.
+  async function fetchAudioBlob(sub){
+    // Prefer the uploaded URL (works across devices). Fall back to IndexedDB on the same device.
+    if(sub.audioUrl){
+      try{
+        const resp=await fetch(sub.audioUrl);
+        if(resp.ok) return await resp.blob();
+      }catch(e){ console.warn("Fetch audioUrl failed",e); }
+    }
+    if(sub.audioId){
+      try{
+        const db=await new Promise((res,rej)=>{
+          const r=indexedDB.open("EduQuizRP_AudioDB",1);
+          r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains("audios"))d.createObjectStore("audios",{keyPath:"id"});};
+          r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+        });
+        const item=await new Promise((res,rej)=>{
+          const tx=db.transaction("audios","readonly");
+          const rq=tx.objectStore("audios").get(sub.audioId);
+          rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error);
+        });
+        if(item&&item.blob) return item.blob;
+      }catch(e){ console.warn("IndexedDB fetch failed",e); }
+    }
+    return null;
+  }
+  async function transcribeWithWhisper(blob){
+    const key=getAIKey();
+    if(!key) throw new Error("Add your OpenAI API Key first (in the API Key box above).");
+    const file=new File([blob],"reading.webm",{type:blob.type||"audio/webm"});
+    const form=new FormData();
+    form.append("file",file);
+    form.append("model","whisper-1");
+    form.append("language","en");
+    form.append("response_format","json");
+    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{
+      method:"POST",headers:{"Authorization":"Bearer "+key},body:form
+    });
+    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,160)); }
+    const data=await resp.json();
+    return (data.text||"").trim();
+  }
+  async function analyze(sub){
     try{
-      const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
-      const prompt=`Create a ${level} English reading passage for Saudi secondary students. Topic: ${topic}. Length: ${lines} short lines. Use clear natural English. Return only the passage.`;
-      if(!key){
-        setText(`${topic} is important in our daily life.\nStudents can learn new ideas by reading about it.\nThey can also talk about it with their classmates.\nGood reading helps students improve their English.`);
-        setMsg("No API key. A simple fallback text was created.");
-        return;
+      if(!sub||!sub.id){alert("No submission selected.");return;}
+      const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
+      if(!task){alert("Task not found for this submission.");return;}
+      setMsg("⏳ Analyzing… fetching audio");
+      setAnalyzeBusy(sub.id);
+      // Use existing transcript if present; otherwise transcribe the audio with Whisper.
+      let transcript=sub.transcript||"";
+      if(!transcript || transcript.length<2){
+        setMsg("⏳ Transcribing with Whisper… (10-20s)");
+        const blob=await fetchAudioBlob(sub);
+        if(!blob){
+          setMsg("⚠️ No audio found. Ask the student to record again.");
+          alert("لم يتم العثور على ملف الصوت. اطلب من الطالب إعادة التسجيل.");
+          setAnalyzeBusy("");
+          return;
+        }
+        transcript=await transcribeWithWhisper(blob);
       }
-      const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"system",content:"You write short classroom reading passages for English learners."},{role:"user",content:prompt}],temperature:0.7})});
-      if(!r.ok) throw new Error(await r.text());
-      const j=await r.json();
-      setText((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content||"").trim());
-      setMsg("✅ Text generated.");
-    }catch(e){console.error(e);setMsg("AI text generation failed: "+(e.message||e));}
-    finally{setBusy(false);}
-  }
-
-  async function generateModelAudioForTask(taskId,taskText){
-    if(voiceMode!=="api") return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"browser_fallback"};
-    const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
-    if(!key) return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"missing_api_key"};
-    if(!firebase || !firebase.storage) return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"storage_unavailable"};
-    try{
-      setMsg("Generating AI model reading audio...");
-      const r=await fetch("https://api.openai.com/v1/audio/speech",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:voiceModel||"gpt-4o-mini-tts",voice:"alloy",input:taskText})});
-      if(!r.ok) throw new Error(await r.text());
-      const blob=await r.blob();
-      const path=`reading-progress-model-audio/${user.id}/${taskId}.mp3`;
-      const ref=firebase.storage().ref().child(path);
-      await ref.put(blob,{contentType:"audio/mpeg"});
-      const url=await ref.getDownloadURL();
-      return {modelAudioUrl:url,modelAudioPath:path,modelAudioStatus:"uploaded"};
-    }catch(e){console.error(e);return {modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"api_failed:"+((e&&e.message)||e)};}
-  }
-
-  async function createTask(){
-    if(!text.trim()){alert("Generate or paste reading text first.");return;}
-    setBusy(true); setMsg("Creating task...");
-    try{
-      const id=uid();
-      const task={id,teacherId:user.id,title:title||"Reading Progress Task",text:text.trim(),level,topic,lines:Number(lines)||4,classId,status:"open",createdAt:today(),createdAtMs:Date.now(),voiceMode,voiceModel,modelAudioUrl:"",modelAudioPath:"",modelAudioStatus:"pending"};
-      await fsSet("readingTasks",id,task);
-      const audio=await generateModelAudioForTask(id,task.text);
-      await fsSet("readingTasks",id,{...task,...audio});
-      setMsg("✅ Reading task created.");
-      setText("");
-      await reload();
-    }catch(e){console.error(e);setMsg("Create task failed: "+(e.message||e));}
-    finally{setBusy(false);}
-  }
-
-  function words(s){return String(s||"").toLowerCase().match(/[a-z']+/g)||[];}
-  function simpleAnalyze(expected,spoken,seconds,levelValue){
-    const exp=words(expected), sp=words(spoken);
-    const setSp=new Set(sp);
-    const correct=exp.filter(w=>setSp.has(w)).length;
-    const missing=exp.filter(w=>!setSp.has(w));
-    const extra=sp.filter(w=>exp.indexOf(w)<0);
-    let acc=exp.length?Math.round(correct/exp.length*100):0;
-    const tolerance=levelValue==="beginner"?12:levelValue==="intermediate"?7:2;
-    acc=Math.min(100,acc+tolerance);
-    const minutes=Math.max(0.05,(Number(seconds)||1)/60);
-    const wcpm=Math.round(sp.length/minutes);
-    const fluency=Math.max(0,Math.min(100,Math.round((acc*0.65)+Math.min(100,wcpm/130*100)*0.35)));
-    const finalScore=Math.round((acc*0.7)+(fluency*0.3));
-    return {accuracy:acc,fluency,wcpm,finalScore,missingWords:missing.slice(0,20),extraWords:extra.slice(0,20),teacherNotes:"Local fair analysis. Add API key for AI analysis.",method:"local_level_adjusted",level:levelValue};
-  }
-
-  async function analyzeSubmission(sub){
-    const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
-    if(!task){alert("Task not found.");return;}
-    setBusy(true); setMsg("Analyzing...");
-    try{
-      const key=(aiKey||localStorage.getItem("OPENAI_API_KEY")||"").trim();
-      let analysis=null;
-      if(key){
-        const prompt=`Evaluate oral reading fairly, not too strict. Level: ${task.level||"intermediate"}.\nExpected text:\n${task.text}\n\nStudent transcript:\n${sub.transcript||""}\n\nReturn JSON only with: accuracy, fluency, wcpm, finalScore, missingWords, extraWords, teacherNotes.`;
-        const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"user",content:prompt}],temperature:0.2,response_format:{type:"json_object"}})});
-        if(r.ok){const j=await r.json();analysis=JSON.parse((j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"{}");}
+      setMsg("⏳ Scoring…");
+      const analysis=rpAnalyze(task.text,transcript,sub.seconds||0);
+      // Attach difficulty/level so the difficulty rule applies for both teacher and student.
+      const enriched={...analysis,finalScore:undefined};
+      const extra={
+        id:sub.id,
+        transcript:transcript,
+        analysis:enriched,
+        difficulty:sub.difficulty||task.level||"intermediate",
+        status:"analyzed",
+        analysisStatus:"Completed",
+        analyzedAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
+      // Save ONLY changed fields with merge so we never resend the giant audio data.
+      if(sub.__local){
+        try{
+          const arrLoc=localRecords();
+          const i=arrLoc.findIndex(x=>x.id===sub.id);
+          if(i>=0){arrLoc[i]={...arrLoc[i],...extra,accuracy:analysis.accuracy,wcpm:analysis.wcpm,fluency:analysis.fluency,mistakes:analysis.mistakeCount};saveLocalRecords(arrLoc);}
+        }catch(e){}
       }
-      if(!analysis) analysis=simpleAnalyze(task.text,sub.transcript||"",sub.seconds||0,task.level||"intermediate");
-      await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()});
-      setMsg("✅ Analyzed.");
+      if(FIREBASE_OK && db){
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined?stripUndefined(extra):extra,{merge:true});
+      }else{
+        await fsSet("readingSubmissions",sub.id,extra);
+      }
+      setMsg("✅ تم التحليل: الدقة "+analysis.accuracy+"% · WCPM "+analysis.wcpm);
+      setAnalyzeBusy("");
       await reload();
-    }catch(e){console.error(e);setMsg("Analyze failed: "+(e.message||e));}
-    finally{setBusy(false);}
+    }catch(e){
+      console.error("Analyze failed",e);
+      setMsg("⚠️ Analyze failed: "+((e&&e.message)?e.message:e));
+      alert("فشل التحليل: "+((e&&e.message)?e.message:e));
+      setAnalyzeBusy("");
+    }
+  }
+  async function delTask(t){
+    if(!confirm("Delete this Reading Progress task?"))return;
+    await fsDel("readingTasks",t.id);
+    await reload();
+  }
+  async function deleteAudio(audioId){
+    if(!audioId)return;
+    try{
+      const db=await new Promise((resolve,reject)=>{
+        const req=indexedDB.open("EduQuizRP_AudioDB",1);
+        req.onupgradeneeded=e=>{
+          const db=e.target.result;
+          if(!db.objectStoreNames.contains("audios")) db.createObjectStore("audios",{keyPath:"id"});
+        };
+        req.onsuccess=()=>resolve(req.result);
+        req.onerror=()=>reject(req.error);
+      });
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction("audios","readwrite");
+        tx.objectStore("audios").delete(audioId);
+        tx.oncomplete=resolve;
+        tx.onerror=()=>reject(tx.error);
+      });
+    }catch(e){}
+  }
+  async function updateSubStatus(sub,status){
+    if(sub.__local){
+      const arr=localRecords();
+      const i=arr.findIndex(x=>x.id===sub.id);
+      if(i>=0){arr[i].status=status; arr[i].updatedAt=new Date().toISOString(); saveLocalRecords(arr);}
+    }else{
+      await fsSet("readingSubmissions",sub.id,{...sub,status});
+      await reload();
+    }
+  }
+  async function deleteSub(sub){
+    if(!confirm("Delete this attempt and its audio?")) return;
+    if(sub.__local){
+      const arr=localRecords();
+      const raw=arr.find(x=>x.id===sub.id);
+      if(raw&&raw.audioId) await deleteAudio(raw.audioId);
+      saveLocalRecords(arr.filter(x=>x.id!==sub.id));
+    }else{
+      await fsDel("readingSubmissions",sub.id);
+      await reload();
+    }
+  }
+  async function setClassStatus(status){
+    if(filter==="all"){alert("Choose a class first."); return;}
+    const arr=localRecords();
+    let changed=false;
+    arr.forEach(r=>{
+      const st=matchStudent(r)||{};
+      const cid=classIdFor(r,st);
+      if(cid===filter){r.status=status; r.updatedAt=new Date().toISOString(); changed=true;}
+    });
+    if(changed) saveLocalRecords(arr);
+    const fsubs=firebaseSubs.filter(s=>s.classId===filter);
+    for(const s of fsubs){await fsSet("readingSubmissions",s.id,{...s,status});}
+    if(fsubs.length) await reload();
   }
 
-  async function updateSub(sub,status){
-    try{await fsSet("readingSubmissions",sub.id,{...sub,status,updatedAt:new Date().toISOString()});setMsg("✅ Status updated: "+status);await reload();}
-    catch(e){setMsg("Status update failed: "+(e.message||e));}
+  function progressPercent(scores){
+    if(!scores || scores.length<2) return null;
+    const first=Number(scores[0]);
+    const last=Number(scores[scores.length-1]);
+    if(!Number.isFinite(first)||!Number.isFinite(last)) return null;
+    if(first===0) return last>0?100:0;
+    return Math.round(((last-first)/Math.max(1,first))*100);
   }
-  async function retake(sub){await updateSub(sub,"retake_allowed");}
-  async function deleteTask(t){if(!confirm("Delete this task?"))return;await fsSet("readingTasks",t.id,{...t,deleted:true,updatedAt:new Date().toISOString()});await reload();}
+  function progressLabel(p){
+    if(p===null) return "First attempt";
+    if(p>=25) return "Strong growth";
+    if(p>=10) return "Good growth";
+    if(p>=1) return "Slight growth";
+    if(p===0) return "Stable";
+    return "Regression";
+  }
+  function progressColor(p){
+    if(p===null) return C.p;
+    if(p>=10) return C.s;
+    if(p>=1) return C.w;
+    if(p===0) return C.mu;
+    return C.d;
+  }
+  function miniBars(scores){
+    if(!scores || !scores.length) return <span style={{fontSize:"10px",color:C.mu}}>No chart</span>;
+    return <div style={{display:"flex",gap:"4px",alignItems:"end",height:"44px",minWidth:"110px"}}>
+      {scores.map((v,i)=><div key={i} title={"Attempt "+(i+1)+": "+v+"%"} style={{width:"16px",height:Math.max(4,Math.round(Number(v||0)/100*40))+"px",background:gc(v),borderRadius:"6px 6px 0 0"}} />)}
+    </div>;
+  }
+  function lineChart(scores,width=220,height=90){
+    if(!scores || scores.length===0) return <div style={{fontSize:"11px",color:C.mu}}>No progress data yet.</div>;
+    const pts=scores.map((v,i)=>{
+      const x=scores.length===1?width/2:(i/(scores.length-1))*width;
+      const y=height-(Number(v||0)/100)*height;
+      return {x,y,v};
+    });
+    const d=pts.map((p,i)=>(i===0?"M":"L")+p.x+" "+p.y).join(" ");
+    return <svg width="100%" viewBox={"0 0 "+width+" "+(height+22)} style={{maxWidth:width+"px"}}>
+      <line x1="0" y1={height} x2={width} y2={height} stroke="#e2e8f0" strokeWidth="2"/>
+      <line x1="0" y1="0" x2="0" y2={height} stroke="#e2e8f0" strokeWidth="2"/>
+      <path d={d} fill="none" stroke={C.p} strokeWidth="3"/>
+      {pts.map((p,i)=><g key={i}>
+        <circle cx={p.x} cy={p.y} r="5" fill={gc(p.v)} />
+        <text x={p.x} y={height+16} textAnchor="middle" fontSize="10" fill="#64748b">{i+1}</text>
+      </g>)}
+    </svg>;
+  }
+  function classProgressStats(stats){
+    const rows=stats.filter(x=>x.scores && x.scores.length);
+    if(!rows.length) return {scores:[],progress:null,avg:null};
+    const maxAttempts=Math.max(...rows.map(x=>x.scores.length));
+    const byAttempt=[];
+    for(let i=0;i<maxAttempts;i++){
+      const vals=rows.map(x=>x.scores[i]).filter(v=>v!==undefined && v!==null);
+      byAttempt.push(vals.length?Math.round(vals.reduce((a,b)=>a+Number(b),0)/vals.length):null);
+    }
+    const scores=byAttempt.filter(v=>v!==null);
+    const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):null;
+    return {scores,progress:progressPercent(scores),avg};
+  }
+
+  function statsForStudents(ids){
+    const rows=studentStats.filter(x=>ids.includes(x.st.id));
+    return classProgressStats(rows);
+  }
+  function statsForClass(classId){
+    const rows=studentStats.filter(x=>x.st.classId===classId);
+    return classProgressStats(rows);
+  }
+  function classComparisonRows(){
+    return myClasses.map(c=>{
+      const s=statsForClass(c.id);
+      const count=studentStats.filter(x=>x.st.classId===c.id).length;
+      return {classObj:c,...s,count};
+    }).filter(x=>x.count>0);
+  }
+
+  const filteredStudents=myStudents.filter(s=>
+    (filter==="all"||s.classId===filter)&&
+    (!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search))
+  );
+
+  const studentStats=filteredStudents.map(st=>{
+    const ss=subs.filter(x=>x.studentId===st.id);
+    const analyzed=ss.filter(x=>x.analysis);
+    const officialScores=analyzed.map(officialScore).filter(x=>x!==null);
+    const avg=officialScores.length?Math.round(officialScores.reduce((a,x)=>a+x,0)/officialScores.length):null;
+    const accScores=analyzed.map(officialAccuracy).filter(x=>x!==null);
+    const fluScores=analyzed.map(officialFluency).filter(x=>x!==null);
+    const w=analyzed.length?Math.round(analyzed.reduce((a,x)=>a+(Number(x.analysis.wcpm)||0),0)/analyzed.length):null;
+    const f=fluScores.length?Math.round(fluScores.reduce((a,x)=>a+x,0)/fluScores.length):null;
+    const rawAcc=analyzed.length?Math.round(analyzed.reduce((a,x)=>a+(Number(x.analysis.accuracy)||0),0)/analyzed.length):null;
+    const officialAcc=accScores.length?Math.round(accScores.reduce((a,x)=>a+x,0)/accScores.length):null;
+    const scores=analyzed.map(officialScore).filter(x=>x!==null);
+    const progress=progressPercent(scores);
+    return {st,ss,analyzed,avg,w,f,rawAcc,officialAcc,level:levelLabel(avg),growth:growthText(scores),scores,progress,progressLabel:progressLabel(progress)};
+  });
+
+  const analyzedCount=subs.filter(x=>x.analysis).length;
+  const avgAll=studentStats.filter(x=>x.avg!==null).length?Math.round(studentStats.filter(x=>x.avg!==null).reduce((a,x)=>a+x.avg,0)/studentStats.filter(x=>x.avg!==null).length):null;
+  const classProgress=classProgressStats(studentStats);
+  const groupStats=statsForStudents(selectedGroup);
+  const classRows=classComparisonRows();
+
+  
+  
+  async function rpRejectOnlyV43(sub){
+    try{
+      if(!sub||!sub.id){alert("No submission selected.");return;}
+      if(!confirm("Reject this Reading Progress attempt?")) return;
+      setMsg("⏳ Rejecting…");
+      // Send ONLY the changed fields (merge), not the entire submission with its big audio data URL.
+      const extra={
+        id:sub.id,
+        status:"rejected",
+        analysisStatus:sub.analysisStatus||"Completed",
+        rejectedAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      };
+      if(sub.__local){
+        try{
+          const arr=localRecords();
+          const i=arr.findIndex(function(x){return x.id===sub.id;});
+          if(i>=0){arr[i]={...arr[i],...extra};saveLocalRecords(arr);}
+        }catch(e){}
+      }
+      // Use merge:true so we only update these fields — does NOT re-send the audio.
+      if(FIREBASE_OK && db){
+        await db.collection("readingSubmissions").doc(sub.id).set(stripUndefined?stripUndefined(extra):extra, {merge:true});
+      } else {
+        await fsSet("readingSubmissions",sub.id,extra);
+      }
+      setMsg("✅ تم رفض المحاولة.");
+      alert("✅ تم رفض المحاولة.");
+      await reload();
+    }catch(e){
+      console.error("Reject failed",e);
+      setMsg("⚠️ Reject failed: "+((e&&e.message)?e.message:e));
+      alert("Reject failed: "+((e&&e.message)?e.message:e));
+    }
+  }
 
   return <div>
-    <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-      <strong style={{color:"#fff",fontSize:"16px"}}>📖 Reading Progress AI — Clean Phase 1</strong>
-      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Clean rebuild: AI text, model reading audio, student recording, AI analysis.</p>
+    {msg && <div style={{position:"sticky",top:0,zIndex:200,background:msg.startsWith("✅")?"#dcfce7":msg.startsWith("⚠️")?"#fee2e2":"#fef9c3",border:"2px solid "+(msg.startsWith("✅")?"#22c55e":msg.startsWith("⚠️")?"#ef4444":"#eab308"),borderRadius:"9px",padding:"10px 14px",color:msg.startsWith("✅")?"#166534":msg.startsWith("⚠️")?"#991b1b":"#713f12",fontSize:"13px",fontWeight:700,marginBottom:"10px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}><span>{msg}</span><button onClick={()=>setMsg("")} style={{background:"transparent",border:"none",fontSize:"18px",cursor:"pointer",color:"inherit"}}>✕</button></div>}
+    <Card style={{marginBottom:"11px",background:"#f8fafc",border:"1px solid "+C.br}}>
+      <strong style={{fontSize:"13px",color:C.tx}}>🔑 OpenAI API Key (for analyzing recordings)</strong>
+      <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Saved on this device only. Needed so "Analyze" can transcribe the student's audio.</p>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+        <input type="password" value={aiKeyLocal} onChange={e=>setAiKeyLocal(e.target.value)} placeholder="sk-..." style={{flex:1,minWidth:"200px",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"12px"}}/>
+        <Btn size="sm" color={C.s} onClick={()=>{setAIKey(aiKeyLocal.trim());setMsg("✅ API Key saved on this device.");}}>Save Key</Btn>
+      </div>
     </Card>
-
-    <Card style={{marginBottom:"10px"}}><strong>🔑 AI Settings</strong>
-      <div style={{display:"grid",gap:"8px",marginTop:"8px"}}>
-        <input type="password" value={aiKey} onChange={e=>setAiKey(e.target.value)} placeholder="OpenAI API Key" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <select value={voiceMode} onChange={e=>setVoiceMode(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
-          <option value="api">AI Voice API first</option><option value="browser">Browser voice fallback</option>
-        </select>
-        <input value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} placeholder="Voice model e.g. gpt-4o-mini-tts" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={saveAISettings}>Save Settings</Btn><Btn color={C.s} onClick={()=>speakBrowser(text||"This is a model reading preview.")}>Test Browser Voice</Btn></div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}>
+        <div><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p></div>
+        
       </div>
     </Card>
 
-    <Card style={{marginBottom:"10px"}}><strong>✨ Generate / Create Reading Task</strong>
-      <div style={{display:"grid",gap:"8px",marginTop:"8px"}}>
-        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Task title" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <select value={classId} onChange={e=>setClassId(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
-          <option value="all">All classes</option>{classList.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px",color:C.tx}}>Create Reading Task</strong>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 120px 100px",gap:"8px",marginTop:"9px"}}>
+        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Task title" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+        <select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option>
         </select>
-        <select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
-          <option value="beginner">Beginner — supportive accuracy</option><option value="intermediate">Intermediate — moderate accuracy</option><option value="advanced">Advanced — stricter but fair</option>
+        <select value={lines} onChange={e=>setLines(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="3">3 lines</option><option value="5">5 lines</option><option value="7">7 lines</option>
         </select>
-        <input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <input type="number" value={lines} onChange={e=>setLines(e.target.value)} placeholder="Lines" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <Btn color={C.pu} onClick={generateText} disabled={busy}>Generate Text with AI</Btn>
-        <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder="Generated or pasted reading text..." style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.s} onClick={()=>speakBrowser(text)}>Preview Browser Reading</Btn><Btn color={C.p} onClick={createTask} disabled={busy}>Create Task</Btn></div>
+      </div>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+        <input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic e.g. Travel, healthy food, exam stress" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+        <input value={wordCount} onChange={e=>setWordCount(e.target.value)} type="number" min="30" max="260" placeholder="Words" style={{width:"95px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+        <Btn size="sm" color={C.p} onClick={suggestTopics}>Suggest Topics</Btn>
+      </div>
+      <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Generate or paste reading text…" style={{width:"100%",minHeight:"90px",marginTop:"8px",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontFamily:F}}/>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
+        {myClasses.map(c=>{const on=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(on?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.p:C.br),background:on?C.p:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"11px"}}>{c.name}</button>})}
+      </div>
+      <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}>
+        <Btn color={C.pu} onClick={gen}>✨ Generate Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>Save Task</Btn>
+      </div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.p}}>{msg}</p>}
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px"}}>Tasks</strong>
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div></div><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div>)}
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px"}}>Assessment / Report Settings</strong>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+        <select value={viewMode} onChange={e=>setViewMode(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="official">Official Report</option><option value="teacher">Teacher View</option>
+        </select>
+        <select value={sensitivity} onChange={e=>setSensitivity(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="strict">Strict</option><option value="normal">Normal</option><option value="supportive">Supportive</option>
+        </select>
+        <select value={speedWeight} onChange={e=>setSpeedWeight(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="normal">Speed Normal</option><option value="reduced">Speed Reduced</option><option value="excluded">Exclude Speed</option>
+        </select>
+      </div>
+      <p style={{fontSize:"10px",color:C.mu,margin:"6px 0 0"}}>Official Report hides raw accuracy. Teacher View shows raw accuracy for your private review. Very poor reading is capped at a low score even in supportive mode.</p>
+    </Card>
+
+    
+    <Card style={{marginTop:"10px",border:"2px solid "+C.p,background:"#fff"}}>
+      <strong style={{fontSize:"16px",color:C.tx}}>📊 Internal Performance Dashboard</strong>
+      <p style={{fontSize:"11px",color:C.mu,margin:"4px 0 10px"}}>لوحة أداء داخلية عادية داخل الصفحة، وليست طبقة عائمة حتى لا تعطل أزرار النتائج.</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:"8px",marginBottom:"10px"}}>
+        <div style={{background:"#eff6ff",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.p,fontWeight:900}}>Submissions</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.p}}>{subs.length}</div>
+        </div>
+        <div style={{background:"#ecfdf5",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.s,fontWeight:900}}>Analyzed</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.s}}>{analyzed.length}</div>
+        </div>
+        <div style={{background:"#fff7ed",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:"#9a3412",fontWeight:900}}>Pending</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:"#9a3412"}}>{subs.filter(x=>!x.analysis&&x.status!=="rejected").length}</div>
+        </div>
+        <div style={{background:"#f8fafc",borderRadius:"14px",padding:"10px",textAlign:"center"}}>
+          <div style={{fontSize:"11px",color:C.tx,fontWeight:900}}>Average Final</div>
+          <div style={{fontSize:"24px",fontWeight:900,color:C.tx}}>{avg!==null?avg+"%":"—"}</div>
+        </div>
+      </div>
+      {classRows&&classRows.length>0&&<div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
+          <thead><tr style={{background:"#f1f5f9"}}>
+            <th style={{padding:"7px",textAlign:"left"}}>Class</th>
+            <th style={{padding:"7px"}}>Attempts</th>
+            <th style={{padding:"7px"}}>Average</th>
+            <th style={{padding:"7px"}}>Growth</th>
+          </tr></thead>
+          <tbody>{classRows.map(r=><tr key={r.name} style={{borderTop:"1px solid "+C.br}}>
+            <td style={{padding:"7px",fontWeight:800}}>{r.name}</td>
+            <td style={{padding:"7px",textAlign:"center"}}>{r.attempts}</td>
+            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:gc(r.avg)}}>{r.avg!==null?r.avg+"%":"—"}</td>
+            <td style={{padding:"7px",textAlign:"center",fontWeight:900,color:(r.growth||0)>=0?C.s:C.d}}>{r.growth!==null?(r.growth>0?"+":"")+r.growth+"%":"—"}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+        <select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+          <option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+      </div>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+        <Btn size="sm" color={C.s} onClick={()=>setClassStatus("accepted")}>Accept Class</Btn>
+        <Btn size="sm" color={C.w} onClick={()=>{if(confirm("Allow retake for this class?"))setClassStatus("retake_allowed")}}>Retake Class</Btn>
+        <Btn size="sm" color={C.d} onClick={()=>setClassStatus("rejected")}>Reject Class</Btn>
+      </div>
+      <div style={{marginTop:"10px",padding:"10px",border:"1px solid "+C.br,borderRadius:"12px",background:"#f8fafc"}}>
+        <strong style={{fontSize:"12px"}}>Class Assessment</strong>
+        <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Choose a class, then apply the current Sensitivity and Speed Weight settings to the class report.</p>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+          <Btn size="sm" color={"#0f766e"} onClick={()=>setMsg("✅ Class assessment mode is active. The table is now calculated using the selected Official/Teacher settings for the selected class.")}>Apply Class Assessment View</Btn>
+          <span style={{fontSize:"11px",color:C.mu,alignSelf:"center"}}>Current: {viewMode} · {sensitivity} · {speedWeight}</span>
+        </div>
       </div>
     </Card>
 
-    <Card style={{marginBottom:"10px"}}><strong>📚 Tasks</strong>
-      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No reading tasks yet.</p>:tasks.slice().reverse().map(t=><div key={t.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}>
-        <strong>{t.title}</strong><div style={{fontSize:"11px",color:C.mu}}>Level: {t.level} · Class: {(classList.find(c=>c.id===t.classId)||{}).name||"All"} · Voice: {t.modelAudioStatus||t.voiceMode}</div>
-        <p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{t.text}</p>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{t.modelAudioUrl&&<audio controls src={t.modelAudioUrl} style={{height:"34px"}}/>}<Btn size="sm" color={C.s} onClick={()=>speakBrowser(t.text)}>Browser Listen</Btn><Btn size="sm" color={C.d} onClick={()=>deleteTask(t)}>Delete</Btn></div>
-      </div>)}
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px"}}>📊 Linked Reading Progress Summary</strong>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+        <Stat icon="👥" label="Students" value={studentStats.length} color={C.p}/>
+        <Stat icon="🎙️" label="Submissions" value={subs.length} color={C.s}/>
+        <Stat icon="✅" label="Analyzed" value={analyzedCount} color={C.s}/>
+        <Stat icon="📈" label="Average" value={avgAll!==null?avgAll+"%":"—"} color={C.p}/>
+      </div>
     </Card>
 
-    <Card><strong>📥 Student Submissions</strong>
-      {submissions.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:submissions.slice().reverse().map(s=>{const st=studentList.find(x=>x.id===s.studentId)||{};const t=tasks.find(x=>x.id===s.taskId)||{};const score=s.analysis&&(s.analysis.finalScore||s.analysis.officialScore||s.analysis.accuracy);return <div key={s.id} style={{borderBottom:"1px solid "+C.br,padding:"10px 0"}}>
-        <strong>{st.name||s.studentName||"Student"}</strong><div style={{fontSize:"11px",color:C.mu}}>{t.title||s.taskTitle||"Reading Task"} · Status: {s.status||"submitted"} · Score: {score?score+"%":"—"}</div>
-        {s.audioUrl&&<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"6px"}}/>}
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><Btn size="sm" color={C.p} onClick={()=>analyzeSubmission(s)} disabled={busy}>{s.analysis?"Re-analyze with AI":"Analyze with AI"}</Btn><Btn size="sm" color={C.s} onClick={()=>updateSub(s,"accepted")}>Accept</Btn><Btn size="sm" color={C.d} onClick={()=>updateSub(s,"rejected")}>Reject</Btn><Btn size="sm" color={C.w} onClick={()=>retake(s)}>Retake</Btn></div>
-        {s.analysis&&<pre style={{whiteSpace:"pre-wrap",fontSize:"10px",background:"#f8fafc",padding:"8px",borderRadius:"10px",overflowX:"auto"}}>{JSON.stringify(s.analysis,null,2)}</pre>}
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px"}}>📈 Progress Chart</strong>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:"12px",marginTop:"10px"}}>
+        <div style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"12px",background:"#f8fafc"}}>
+          <strong style={{fontSize:"12px"}}>{filter==="all"?"All Classes Progress":"Class Progress"}</strong>
+          <div style={{fontSize:"11px",color:C.mu,margin:"4px 0"}}>Average progress from Attempt 1 to latest attempt</div>
+          {lineChart(classProgress.scores,240,90)}
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+            <Stat icon="📊" label="Avg" value={classProgress.avg!==null?classProgress.avg+"%":"—"} color={C.p}/>
+            <Stat icon="📈" label="Growth" value={classProgress.progress!==null?classProgress.progress+"%":"—"} color={progressColor(classProgress.progress)}/>
+            <Stat icon="🏷️" label="Level" value={progressLabel(classProgress.progress)} color={progressColor(classProgress.progress)}/>
+          </div>
+        </div>
+        <div style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff"}}>
+          <strong style={{fontSize:"12px"}}>Student Progress Overview</strong>
+          <div style={{display:"grid",gap:"6px",marginTop:"8px"}}>
+            {studentStats.filter(x=>x.scores.length).slice(0,6).map(x=><div key={x.st.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"8px",borderBottom:"1px solid "+C.br,paddingBottom:"5px"}}>
+              <div style={{minWidth:"90px"}}><strong style={{fontSize:"11px"}}>{x.st.name}</strong><div style={{fontSize:"10px",color:C.mu}}>{x.progress!==null?x.progress+"%":"First attempt"} · {x.progressLabel}</div></div>
+              {miniBars(x.scores)}
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"13px"}}>👥 Group & Class Progress</strong>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"12px",marginTop:"10px"}}>
+        <div style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"12px",background:"#f8fafc"}}>
+          <strong style={{fontSize:"12px"}}>Selected Student Group</strong>
+          <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Choose specific students to compare their progress as one group.</p>
+          <div style={{maxHeight:"160px",overflowY:"auto",display:"grid",gap:"5px"}}>
+            {filteredStudents.map(st=><label key={st.id} style={{display:"flex",gap:"6px",alignItems:"center",fontSize:"11px"}}>
+              <input type="checkbox" checked={selectedGroup.includes(st.id)} onChange={e=>setSelectedGroup(e.target.checked?[...selectedGroup,st.id]:selectedGroup.filter(id=>id!==st.id))}/>
+              {st.name} <span style={{color:C.mu}}>({myClasses.find(c=>c.id===st.classId)?.name||"—"})</span>
+            </label>)}
+          </div>
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>
+            <Btn size="sm" color={C.p} onClick={()=>setSelectedGroup(filteredStudents.map(s=>s.id))}>Select Visible</Btn>
+            <Btn size="sm" color={C.d} onClick={()=>setSelectedGroup([])}>Clear</Btn>
+          </div>
+          <div style={{marginTop:"8px"}}>
+            {lineChart(groupStats.scores,240,90)}
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
+              <Stat icon="👥" label="Selected" value={selectedGroup.length} color={C.p}/>
+              <Stat icon="📈" label="Growth" value={groupStats.progress!==null?groupStats.progress+"%":"—"} color={progressColor(groupStats.progress)}/>
+              <Stat icon="🏷️" label="Level" value={progressLabel(groupStats.progress)} color={progressColor(groupStats.progress)}/>
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff"}}>
+          <strong style={{fontSize:"12px"}}>Class Comparison</strong>
+          <p style={{fontSize:"10px",color:C.mu,margin:"4px 0 8px"}}>Compare progress by class.</p>
+          <div style={{display:"grid",gap:"8px"}}>
+            {classRows.map(row=><div key={row.classObj.id} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"8px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center"}}>
+                <strong style={{fontSize:"11px"}}>{row.classObj.name}</strong>
+                <span style={{fontSize:"11px",fontWeight:800,color:progressColor(row.progress)}}>{row.progress!==null?row.progress+"%":"—"} · {progressLabel(row.progress)}</span>
+              </div>
+              {miniBars(row.scores)}
+              <div style={{fontSize:"10px",color:C.mu,marginTop:"4px"}}>Students: {row.count} · Avg: {row.avg!==null?row.avg+"%":"—"}</div>
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </Card>
+
+    <Card style={{padding:0,overflow:"hidden"}}>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}>
+          <thead><tr>
+            <th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th>
+            <th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th>
+            <th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th>
+            <th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th>
+            <th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th>
+            <th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Progress</th>
+          </tr></thead>
+          <tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div>{viewMode==="teacher"&&x.rawAcc!==null&&<div style={{fontSize:"9px",color:C.d}}>Raw Acc: {x.rawAcc}%</div>}<div style={{fontSize:"9px",color:C.p}}>{x.growth}</div></td>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.officialAcc!==null?gc(x.officialAcc):C.mu,fontWeight:800}}>{x.officialAcc!==null?x.officialAcc+"%":"—"}{x.avg!==null&&<div style={{fontSize:"9px",color:C.mu}}>{x.level}</div>}</td>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td>
+            <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:progressColor(x.progress),fontWeight:800}}>{x.progress!==null?x.progress+"%":"—"}<div style={{fontSize:"9px",color:C.mu}}>{x.progressLabel}</div>{miniBars(x.scores)}</td>
+          </tr>})}</tbody>
+        </table>
+      </div>
+    </Card>
+
+    <Card style={{marginTop:"11px"}}>
+      <strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong>
+      {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId)||{name:s.studentName};const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);const shownAcc=viewMode==="official"?officialAccuracy(s):displayAccuracy(s);const shownFlu=viewMode==="official"?officialFluency(s):(s.analysis?Number(s.analysis.fluency):null);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
+          <div><strong style={{fontSize:"12px"}}>{st?.name||s.studentName||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Reading Progress"} · {s.createdAt} · {s.seconds||0}s · {s.status}{s.__local?" · Whisper":""}</div></div>
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+            {s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}
+            <Btn size="sm" color={C.p} disabled={analyzeBusy===s.id} onClick={()=>analyze(s)}>{analyzeBusy===s.id?"⏳ Analyzing…":(s.analysis?"🔄 Re-analyze":"🔍 Analyze")}</Btn>
+            <Btn size="sm" color={C.s} onClick={()=>updateSubStatus(s,"accepted")}>Accept</Btn>
+            <Btn size="sm" color={C.w} onClick={()=>updateSubStatus(s,"retake_allowed")}>Retake</Btn>
+            <Btn size="sm" color={C.d} onClick={()=>rpRejectOnlyV43(s)}>Reject</Btn>
+            <Btn size="sm" color={"#475569"} onClick={()=>deleteSub(s)}>Delete</Btn>
+          </div>
+        </div>
+        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}>
+          <Stat icon="🎯" label={viewMode==="official"?"Official Acc":"Raw Accuracy"} value={shownAcc!==null?shownAcc+"%":"—"} color={gc(shownAcc||0)}/>
+          <Stat icon="🗣️" label={viewMode==="official"?"Official Fluency":"Raw Fluency"} value={shownFlu!==null?shownFlu+"%":"—"} color={gc(shownFlu||0)}/>
+          <Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/>
+          <Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/>
+        </div>}
       </div>})}
     </Card>
-    {msg&&<p style={{fontSize:"12px",color:C.p,fontWeight:800}}>{msg}</p>}
   </div>;
 }
 
@@ -3334,48 +3962,10 @@ document.addEventListener("click", function(e){
 
 
 <script>
-// ===== READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
+// ===== MINIMAL: Audio recording IndexedDB storage (kept for student recording) =====
 (function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const OLD_KEYS = ["rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
-  const API_KEY = "rp_openai_api_key";
   const DB_NAME = "EduQuizRP_AudioDB";
   const STORE = "audios";
-  let panelMade = false;
-
-  function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
-  function writeJSON(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
-  function records(){
-    let cur = readJSON(RP_KEY, null);
-    if(Array.isArray(cur)) return cur;
-    for(const k of OLD_KEYS){
-      let old = readJSON(k, null);
-      if(Array.isArray(old)){ writeJSON(RP_KEY, old); return old; }
-    }
-    writeJSON(RP_KEY, []);
-    return [];
-  }
-  function saveRecords(a){ writeJSON(RP_KEY,a); }
-
-  function migrateReadingScoresV13(){
-    try{
-      const a = records();
-      let changed = false;
-      a.forEach(r=>{
-        if(r && (r.transcript || Number.isFinite(Number(r.accuracy)))){
-          r.finalScoreOfficial = finalScore(r);
-          r.strictScore = finalScore(r);
-          r.adjustedAccuracy = adjustedAccuracy(r);
-          r.adjustedFluency = adjustedFluency(r);
-          changed = true;
-        }
-      });
-      if(changed) saveRecords(a);
-    }catch(e){ console.warn("score migration skipped", e); }
-  }
-
-
-
   function openDB(){
     return new Promise((resolve,reject)=>{
       const req = indexedDB.open(DB_NAME, 1);
@@ -3399,236 +3989,7 @@ document.addEventListener("click", function(e){
     });
     return item;
   }
-  async function getAudio(id){
-    if(!id) return null;
-    const db = await openDB();
-    return await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readonly");
-      const req = tx.objectStore(STORE).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
-  function user(){
-    const u=session();
-    return {
-      id:String(u.id||u.studentId||u.ID||u.number||u.studentNumber||u.name||"unknown").trim(),
-      name:String(u.name||u.fullName||u.studentName||u.id||"Student").trim(),
-      className:String(u.className||u.classId||u.class||u.grade||"Unassigned").trim(),
-      role:String(u.role||u.type||"").toLowerCase()
-    };
-  }
-  function isTeacher(){
-    const u=user(), b=document.body.innerText||"";
-    return u.role.includes("teacher") || b.includes("TEACHER DASHBOARD") || b.includes("Teacher Dashboard") || b.includes("+ Quiz");
-  }
-  function taskId(){return "reading-progress-task-1";}
-  function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
-  function canSubmit(studentId){ const r=latest(studentId); return !r || r.status==="retake_allowed"; }
-  
-  function rpScoreWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function rpReferenceText(r){
-    return r.referenceText || r.taskText || r.text || r.readingText ||
-      "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function rpErrorStats(r){
-    const ref = rpScoreWords(rpReferenceText(r));
-    const hyp = rpScoreWords(r.transcript || "");
-    const used = Array(hyp.length).fill(false);
-    let correct = 0, missing = 0, repeated = 0, extra = 0;
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i>=0){ used[i]=true; correct++; if(i>0 && hyp[i-1]===w) repeated++; }
-      else missing++;
-    });
-    hyp.forEach((w,i)=>{ if(!used[i]){ if(i>0 && hyp[i-1]===w) repeated++; else extra++; } });
-    const totalRef = Math.max(1, ref.length);
-    const severeErrors = missing + extra;
-    const errorRatio = severeErrors / totalRef;
-    return {correct, missing, extra, repeated, totalRef, severeErrors, errorRatio};
-  }
-
-function rpBalancedScore(r){
-    const acc = Number(r.accuracy);
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-
-    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-
-    const speedSetting = r.speedSetting || "reduced";
-    const difficulty = r.difficulty || "intermediate";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-
-    let base;
-    if(speedSetting === "excluded"){
-      const vals = [acc, flu].filter(Number.isFinite);
-      base = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0) / vals.length) : (Number.isFinite(acc)?acc:0);
-    }else if(speedSetting === "normal"){
-      base = Math.round((Number.isFinite(acc)?acc*.65:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speedScore)?speedScore*.10:0));
-    }else{
-      base = Math.round((Number.isFinite(acc)?acc*.75:0)+(Number.isFinite(flu)?flu*.22:0)+(Number.isFinite(speedScore)?speedScore*.03:0));
-    }
-
-    const support = difficulty === "beginner" ? 4 : difficulty === "intermediate" ? 2 : 0;
-    let score = Math.round(base + support - es.missing*.75 - es.extra*.60 - es.repeated*.35);
-
-    if(es.errorRatio >= .80) score = Math.min(score, 35);
-    else if(es.errorRatio >= .70) score = Math.min(score, 38);
-    else if(es.errorRatio >= .60) score = Math.min(score, 42);
-    else if(es.errorRatio >= .50) score = Math.min(score, 48);
-    else if(es.errorRatio >= .40) score = Math.min(score, 55);
-    else if(es.errorRatio >= .30) score = Math.min(score, 65);
-
-    if(Number.isFinite(acc)){
-      if(acc < 15) score = Math.min(score, 15);
-      else if(acc < 25) score = Math.min(score, 22);
-      else if(acc < 35) score = Math.min(score, 30);
-      else if(acc < 45) score = Math.min(score, 38);
-      else if(acc < 55) score = Math.min(score, 46);
-      else if(acc < 65 && es.errorRatio >= .35) score = Math.min(score, 35);
-    }
-
-    return Math.max(0, Math.min(100, score));
-  }
-
-  function finalScore(r){
-    const manual = Number(r.teacherScore);
-    if(Number.isFinite(manual) && manual > 0) return Math.max(0, Math.min(100, Math.round(manual)));
-    return rpBalancedScore(r);
-  }
-
-  function difficultyBonus(r){
-    const difficulty = r.difficulty || "intermediate";
-    const acc = Number(r.accuracy);
-    if(difficulty === "beginner"){
-      if(Number.isFinite(acc) && acc < 35) return 2;
-      if(Number.isFinite(acc) && acc < 50) return 4;
-      return 6;
-    }
-    if(difficulty === "intermediate"){
-      if(Number.isFinite(acc) && acc < 35) return 0;
-      return 2;
-    }
-    return 0;
-  }
-
-  function adjustedAccuracy(r){
-    const acc = Number(r.accuracy);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(acc) && !r.transcript) return "";
-    let out = Number.isFinite(acc) ? acc : Math.round((es.correct / es.totalRef) * 100);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    out = Math.round(out + support - es.missing*.65 - es.extra*.50 - es.repeated*.25);
-    if(es.errorRatio >= .80) out = Math.min(out, 35);
-    else if(es.errorRatio >= .70) out = Math.min(out, 38);
-    else if(es.errorRatio >= .60) out = Math.min(out, 42);
-    else if(es.errorRatio >= .50) out = Math.min(out, 48);
-    else if(es.errorRatio >= .40) out = Math.min(out, 55);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function adjustedFluency(r){
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const es = rpErrorStats(r);
-    if(!Number.isFinite(flu) && !Number.isFinite(wcpm) && !r.transcript) return "";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-    let base = Number.isFinite(flu) ? flu : speedScore;
-    if((r.speedSetting || "reduced") === "normal") base = Math.round((Number.isFinite(flu)?flu*.85:0)+speedScore*.15);
-    else if((r.speedSetting || "reduced") === "reduced") base = Math.round((Number.isFinite(flu)?flu*.95:0)+speedScore*.05);
-    const support = (r.difficulty || "intermediate") === "beginner" ? 3 : (r.difficulty || "intermediate") === "intermediate" ? 1 : 0;
-    let out = Math.round(base + support - es.missing*.55 - es.extra*.40 - es.repeated*.20);
-    if(es.errorRatio >= .80) out = Math.min(out, 38);
-    else if(es.errorRatio >= .70) out = Math.min(out, 42);
-    else if(es.errorRatio >= .60) out = Math.min(out, 46);
-    else if(es.errorRatio >= .50) out = Math.min(out, 52);
-    else if(es.errorRatio >= .40) out = Math.min(out, 58);
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function escapeHtmlRP(s){
-    return String(s||"").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-
-  function referenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-
-  function cleanRP(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-
-  function coloredWordAnalysis(transcript){
-    if(!transcript) return "";
-    const ref = cleanRP(referenceText());
-    const hyp = cleanRP(transcript);
-    const used = Array(hyp.length).fill(false);
-    const out = [];
-    const extra = [];
-    const repeated = [];
-    let correct = 0, missing = 0;
-
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i >= 0){
-        used[i] = true;
-        correct++;
-        const rep = i>0 && hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        out.push(`<span title="correct" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:${rep?"#ede9fe":"#dcfce7"};color:${rep?"#6d28d9":"#166534"};font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }else{
-        missing++;
-        out.push(`<span title="missing" style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ffedd5;color:#c2410c;text-decoration:line-through;font-weight:700">${escapeHtmlRP(w)}</span>`);
-      }
-    });
-
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0 && hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-
-    let html = `<div style="line-height:2">${out.join(" ")}</div>`;
-    if(extra.length){
-      html += `<div style="margin-top:8px"><b style="color:#991b1b">Extra / wrong words:</b> ` + extra.map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#fee2e2;color:#991b1b;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    if(repeated.length){
-      html += `<div style="margin-top:6px"><b style="color:#6d28d9">Repeated words:</b> ` + [...new Set(repeated)].map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ede9fe;color:#6d28d9;font-weight:700">${escapeHtmlRP(w)}</span>`).join(" ") + `</div>`;
-    }
-    html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px">
-      <span style="padding:5px 8px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800">Correct: ${correct}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ffedd5;color:#c2410c;font-weight:800">Missing: ${missing}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800">Extra/Wrong: ${extra.length}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ede9fe;color:#6d28d9;font-weight:800">Repeated: ${repeated.length}</span>
-    </div>`;
-    return html;
-  }
-
-  function updateRecord(id,updates){
-    const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){
-      const m={...a[i],...updates};
-      m.finalScoreOfficial = finalScore(m);
-      m.adjustedAccuracy = adjustedAccuracy(m);
-      m.adjustedFluency = adjustedFluency(m);
-      m.updatedAt=new Date().toISOString();
-      a[i]=m;
-      saveRecords(a);
-    }
-  }
-  function setClass(cls, status){
-    const a=records();
-    a.forEach(r=>{ if(r.className===cls){ r.status=status; r.updatedAt=new Date().toISOString(); }});
-    saveRecords(a);
-  }
-
-  // Patch MediaRecorder and save the finished audio in IndexedDB.
+  // Patch MediaRecorder so recordings are saved to IndexedDB automatically.
   if(window.MediaRecorder && !window.__rpV11Patched){
     window.__rpV11Patched = true;
     const Original = window.MediaRecorder;
@@ -3644,332 +4005,17 @@ function rpBalancedScore(r){
           window.__RP_LAST_AUDIO_ID = item.id;
           window.__RP_LAST_AUDIO_URL = URL.createObjectURL(blob);
           window.__RP_LAST_AUDIO_SIZE = item.size;
-          alert("Audio saved successfully ✅");
-        }catch(err){
-          alert("Audio save failed: " + (err.message||err));
-        }
+        }catch(err){ console.warn("Audio save failed:", err); }
       });
       return mr;
     };
     window.MediaRecorder.isTypeSupported = Original.isTypeSupported.bind(Original);
   }
-
-  document.addEventListener("click", async function(e){
-    const btn=e.target.closest("button"); if(!btn) return;
-    const label=String(btn.textContent||"").trim().toLowerCase();
-    if(!(label.includes("submit to teacher") || label==="submit")) return;
-    if(isTeacher()) return;
-
-    const u=user();
-    if(!canSubmit(u.id)){
-      e.preventDefault(); e.stopPropagation();
-      alert("تم تسليم التسجيل مسبقًا. لا يمكنك إعادة التسجيل إلا إذا سمح المعلم بذلك.");
-      return false;
-    }
-    if(!window.__RP_LAST_AUDIO_ID){
-      e.preventDefault(); e.stopPropagation();
-      alert("لا يوجد تسجيل محفوظ. سجل الصوت أولًا ثم أوقف التسجيل وانتظر رسالة Audio saved successfully.");
-      return false;
-    }
-    if(!confirm("تأكيد الإرسال: سيتم إرسال هذا التسجيل مرة واحدة فقط. هل تريد الإرسال؟")){
-      e.preventDefault(); e.stopPropagation(); return false;
-    }
-    const item = await getAudio(window.__RP_LAST_AUDIO_ID);
-    if(!item || !item.blob){
-      e.preventDefault(); e.stopPropagation();
-      alert("لم يتم العثور على ملف الصوت. أعد التسجيل.");
-      return false;
-    }
-
-    const a=records();
-    a.push({
-      id:"rp_"+Date.now()+"_"+Math.random().toString(36).slice(2),
-      taskId:taskId(),
-      studentId:u.id,
-      studentName:u.name,
-      className:u.className,
-      submittedAt:new Date().toISOString(),
-      status:"submitted",
-      analysisStatus:"Pending",
-      audioId:item.id,
-      audioStatus:"audio attached",
-      audioSize:item.size,
-      audioType:item.type,
-      accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"",
-      teacherScore:"", teacherNotes:"", transcript:""
-    });
-    saveRecords(a);
-    alert("Audio submitted to teacher ✅");
-    studentStatus();
-  }, true);
-
-  function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
-  function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
-
-  async function transcribe(audioId){
-    const key=getKey();
-    if(!key) throw new Error("Add OpenAI API Key first.");
-    const item=await getAudio(audioId);
-    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
-    const file = new File([item.blob], "student-reading.webm", {type:item.type||"audio/webm"});
-    const form=new FormData();
-    form.append("file",file);
-    form.append("model","whisper-1");
-    form.append("language","en");
-    form.append("response_format","json");
-    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
-    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
-    const data=await resp.json();
-    return (data.text||"").trim();
-  }
-  function refText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
-  function score(ref,spoken,seconds=60){
-    const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
-    const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
-    let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
-    const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const accuracy=a.length?Math.round(correct/a.length*100):0;
-    const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
-    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
-  }
-  async function analyzeOne(id,silent=false){
-    const r=records().find(x=>x.id===id);
-    if(!r) return alert("Submission not found.");
-    if(!r.audioId) return alert("No audio attached. Allow retake and ask student to record again.");
-    updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
-    await migrateReadingScoresV13();
-    renderCards();
-    try{
-      const text=await transcribe(r.audioId);
-      const res=score(refText(),text,60);
-      updateRecord(id,{...res,transcript:text});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
-    }catch(err){
-      updateRecord(id,{analysisStatus:"Failed: "+err.message});
-      if(!silent) alert("فشل التحليل: "+err.message);
-    }
-    await renderCards();
-  }
-  async function testKey(){
-    const key=getKey(); if(!key) return alert("ضع مفتاح OpenAI أولًا.");
-    try{
-      const resp=await fetch("https://api.openai.com/v1/models",{headers:{"Authorization":"Bearer "+key}});
-      if(!resp.ok) throw new Error("Status "+resp.status);
-      alert("API Key works ✅");
-    }catch(e){ alert("API Key test failed: "+e.message); }
-  }
-  function fmt(n){ n=Number(n||0); if(!n)return"-"; if(n<1024)return n+" B"; if(n<1048576)return Math.round(n/1024)+" KB"; return (n/1048576).toFixed(1)+" MB"; }
-
-  function teacherPanel(){
-    if(!isTeacher()||panelMade) return;
-    panelMade=true;
-    const panel=document.createElement("div");
-    panel.id="rp-v11-panel";
-    panel.style.cssText="margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
-    panel.innerHTML=`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2></div>
-      <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
-      <div id="rp-v11-summary" style="margin:12px 0"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><select id="rp-v11-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;max-width:220px"><option value="all">All Classes</option></select><button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button><button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Class</button><button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button><button id="rp-v11-accept-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white">Accept Class</button><button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Class</button><button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Class</button></div>
-      <div style="margin:10px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0">
-        <b>Class Assessment</b>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 8px">Apply difficulty and speed settings to all Reading Progress attempts in the selected class.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="rp-v11-class-difficulty" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="beginner">Beginner / Supportive</option>
-            <option value="intermediate" selected>Intermediate / Normal</option>
-            <option value="advanced">Advanced / Strict</option>
-          </select>
-          <select id="rp-v11-class-speed" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="normal">Speed Normal</option>
-            <option value="reduced" selected>Speed Reduced</option>
-            <option value="excluded">Exclude Speed</option>
-          </select>
-          <button id="rp-v11-apply-class-assessment" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:800">Apply to Class</button>
-        </div>
-        <div id="rp-v11-class-assessment-summary" style="margin-top:8px;font-size:12px;color:#334155"></div>
-      </div>
-      <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
-    (document.getElementById("root")||document.body).prepend(panel);
-
-    panel.addEventListener("click",async e=>{
-      const id=e.target.id;
-      if(id==="rp-v11-refresh"){await renderCards();return;}
-      if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
-      if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
-      if(id==="rp-v11-test-key"){await testKey();return;}
-      if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
-      if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; setClass(cls,st); await renderCards(); return;}
-      if(id==="rp-v11-apply-class-assessment"){
-        const cls=document.getElementById("rp-v11-class").value;
-        if(cls==="all")return alert("اختر فصلًا محددًا أولًا.");
-        const difficulty=document.getElementById("rp-v11-class-difficulty").value;
-        const speedSetting=document.getElementById("rp-v11-class-speed").value;
-        const a=records();
-        let count=0;
-        const selectedText=document.getElementById("rp-v11-class").selectedOptions[0]?.textContent||cls;
-        a.forEach(r=>{
-          if(r.className===cls || r.classId===cls || r.className===selectedText || r.classId===selectedText){
-            r.difficulty=difficulty;
-            r.speedSetting=speedSetting;
-            r.finalScoreOfficial=finalScore(r);
-            r.adjustedAccuracy=adjustedAccuracy(r);
-            r.adjustedFluency=adjustedFluency(r);
-            r.updatedAt=new Date().toISOString();
-            count++;
-          }
-        });
-        saveRecords(a);
-        await renderCards();
-        alert("تم تطبيق تقييم الفصل على "+count+" محاولة.");
-        return;
-      }
-      const delAttempt=e.target.getAttribute("data-delete-attempt"); if(delAttempt){if(confirm("Delete this attempt and its audio?")){const a=records();const rec=a.find(x=>x.id===delAttempt);if(rec&&rec.audioId){try{const db=await openDB();await new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(rec.audioId);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(err){}}saveRecords(a.filter(x=>x.id!==delAttempt));await renderCards();}return;}
-      const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; updateRecord(rid,{status:st}); await renderCards(); }
-    });
-    panel.addEventListener("input",e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)updateRecord(s,{teacherScore:e.target.value}); if(n)updateRecord(n,{teacherNotes:e.target.value});});
-    panel.addEventListener("change",async e=>{const did=e.target.getAttribute("data-difficulty");const sid=e.target.getAttribute("data-speed-setting");if(did){updateRecord(did,{difficulty:e.target.value});await renderCards();return;}if(sid){updateRecord(sid,{speedSetting:e.target.value});await renderCards();return;}if(e.target.id==="rp-v11-class")await renderCards();});
-    renderCards();
-  }
-
-  async function renderCards(){
-    const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=records(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
-    const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
-    sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    sel.value=classes.includes(current)?current:"all";
-    const shown=arr.filter(r=>sel.value==="all"||r.className===sel.value), completed=shown.filter(r=>finalScore(r)!=="");
-    const avg=completed.length?Math.round(completed.reduce((s,r)=>s+Number(finalScore(r)),0)/completed.length):"-";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Average Final: ${avg}${avg==="-"?"":"%"}</div></div>`;
-    const ca=document.getElementById("rp-v11-class-assessment-summary");
-    if(ca){
-      const clsName=sel.value==="all"?"All Classes":sel.value;
-      const levels={beginner:"Supportive",intermediate:"Normal",advanced:"Strict"};
-      const classDiff=document.getElementById("rp-v11-class-difficulty")?.value||"intermediate";
-      const classSpeed=document.getElementById("rp-v11-class-speed")?.value||"reduced";
-      ca.innerHTML=`Current view: <b>${clsName}</b> · Attempts: <b>${shown.length}</b> · Analyzed: <b>${completed.length}</b> · Average: <b>${avg}${avg==="-"?"":"%"}</b> · Selected class assessment: <b>${levels[classDiff]||classDiff}</b> / <b>${classSpeed}</b>`;
-    }
-    const cards=document.getElementById("rp-v11-cards");
-    if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
-    let out="";
-    for(const r of shown){
-      const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):"";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(item.size)+" · "+(item.type||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Official: ${finalScore(r)===""?"-":finalScore(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#dbeafe;color:#1d4ed8;font-weight:800">Official Acc: ${adjustedAccuracy(r)===""?"-":adjustedAccuracy(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Official Fluency: ${adjustedFluency(r)===""?"-":adjustedFluency(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}
-            ${r.transcript?`<div style="padding:10px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155"><b>Colored Word Feedback</b><div style="font-size:12px;color:#64748b;margin:4px 0">Green = correct · Orange = missing · Red = extra/wrong · Purple = repeated</div><div style="font-size:12px;color:#166534;font-weight:800;margin:4px 0">Balanced scoring: Missing + Extra words reduce the score, but correct reading is counted.</div>${coloredWordAnalysis(r.transcript)}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select data-difficulty="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Difficulty</option><option value="beginner" ${r.difficulty==="beginner"?"selected":""}>Beginner</option><option value="intermediate" ${r.difficulty==="intermediate"?"selected":""}>Intermediate</option><option value="advanced" ${r.difficulty==="advanced"?"selected":""}>Advanced</option></select><select data-speed-setting="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Speed Weight</option><option value="normal" ${r.speedSetting==="normal"?"selected":""}>Speed Normal</option><option value="reduced" ${r.speedSetting==="reduced"?"selected":""}>Speed Reduced</option><option value="excluded" ${r.speedSetting==="excluded"?"selected":""}>Exclude Speed</option></select></div><div style="font-size:12px;color:#64748b;margin-top:-2px">Beginner changes the official score immediately. Intermediate is normal. Advanced is strict.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete-attempt="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete</button></div></div></div>`;
-    }
-    cards.innerHTML=out;
-  }
-
-  function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user(), ok=canSubmit(u.id);
-    let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
-    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
-  }
-
-  setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
 })();
- // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
 </script>
 
 
-<script>
-// ===== RP Student Progress Visibility Add-on =====
-(function(){
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function rpKey(){
-    for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
-      const v=readJSON(k,null); if(Array.isArray(v)) return k;
-    }
-    return "rp_attempt_records_v11";
-  }
-  function session(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
-  function finalScore(r){
-    const manual=Number(r.teacherScore); if(Number.isFinite(manual)&&manual>0)return Math.max(0,Math.min(100,Math.round(manual)));
-    const acc=Number(r.adjustedAccuracy||r.finalScoreOfficial||r.accuracy);
-    const flu=Number(r.adjustedFluency||r.fluency);
-    const wcpm=Number(r.wcpm);
-    if(!Number.isFinite(acc)&&!Number.isFinite(flu)&&!Number.isFinite(wcpm))return null;
-    const speed=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):0;
-    const score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
-    return Math.max(0,Math.min(100,score));
-  }
-  function progressPercent(scores){
-    if(!scores||scores.length<2)return null;
-    const first=Number(scores[0]),last=Number(scores[scores.length-1]);
-    if(!Number.isFinite(first)||!Number.isFinite(last))return null;
-    if(first===0)return last>0?100:0;
-    return Math.round(((last-first)/Math.max(1,first))*100);
-  }
-  function level(p){if(p===null)return"First attempt";if(p>=25)return"Strong growth";if(p>=10)return"Good growth";if(p>=1)return"Slight growth";if(p===0)return"Stable";return"Regression";}
-  function color(v){v=Number(v);if(v>=80)return"#16a34a";if(v>=60)return"#2563eb";if(v>=40)return"#f59e0b";return"#dc2626";}
-  function renderBars(scores){
-    return '<div style="display:flex;gap:5px;align-items:end;height:52px;margin-top:8px">'+scores.map((s,i)=>'<div title="Attempt '+(i+1)+': '+s+'%" style="width:20px;height:'+Math.max(5,Math.round(s/100*48))+'px;background:'+color(s)+';border-radius:7px 7px 0 0"></div>').join("")+'</div>';
-  }
-  function currentStudentId(){
-    const u=session();
-    return String(u.id||u.studentId||u.studentNumber||u.number||"").trim();
-  }
-  function currentStudentName(){
-    const u=session();
-    return String(u.name||u.fullName||u.studentName||"").trim().toLowerCase();
-  }
-  function isStudentView(){
-    const txt=document.body.innerText||"";
-    return txt.includes("Student")||txt.includes("Reading Progress")||txt.includes("Record");
-  }
-  function render(){
-    if(document.getElementById("rp-student-progress-panel"))return;
-    if(!isStudentView())return;
-    const sid=currentStudentId(), name=currentStudentName();
-    const recs=readJSON(rpKey(),[]).filter(r=>{
-      return String(r.studentId||"").trim()===sid || String(r.studentName||"").trim().toLowerCase()===name;
-    }).filter(r=>finalScore(r)!==null);
-    if(!recs.length)return;
-    recs.sort((a,b)=>String(a.submittedAt||a.createdAt||"").localeCompare(String(b.submittedAt||b.createdAt||"")));
-    const scores=recs.map(finalScore);
-    const p=progressPercent(scores);
-    const latest=scores[scores.length-1];
-    const box=document.createElement("div");
-    box.id="rp-student-progress-panel";
-    box.style.cssText="margin:14px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
-    box.innerHTML='<h3 style="margin:0 0 8px;color:#1e293b">📈 My Reading Progress</h3>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Latest: '+latest+'%</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Attempts: '+scores.length+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Growth: '+(p!==null?p+"%":"—")+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">'+level(p)+'</div>'+
-      '</div>'+renderBars(scores);
-    const root=document.getElementById("root")||document.body;
-    root.appendChild(box);
-  }
-  setTimeout(render,1200);
-  setInterval(render,5000);
-})();
- // ===== END RP Student Progress Visibility Add-on =====
-</script>
 
-
-<!-- RP_BUILD_V50_REMOVE_READING_PROGRESS_FROM_V47 -->
-
-<script>
-try{
-  var b=document.getElementById("rp-v11-show");
-  if(b){b.remove();}
-  var p=document.getElementById("rp-v11-panel");
-  if(p){p.style.display="block";}
-}catch(e){}
-</script>
 
 </body>
 </html>
