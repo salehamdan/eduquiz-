@@ -3290,7 +3290,9 @@ document.addEventListener("click", function(e){
   function isRejected(r){ return !!(r && r.status==="rejected"); }
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
   function isCountableAttempt(r){
-    return !!(r && !isDeleted(r) && !isRejected(r) && !isRetakeOpen(r) && finalScore(r)!=="");
+    // Count any evaluated attempt unless it is rejected or deleted.
+    // retake_allowed still shows that the student may retry, but its evaluated score remains part of teacher/student performance.
+    return !!(r && !isDeleted(r) && !isRejected(r) && finalScore(r)!=="");
   }
   async function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
@@ -3638,8 +3640,9 @@ document.addEventListener("click", function(e){
   }
 
   async function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
+    const currentUserRole = String(user().role||"").toLowerCase();
+    if(currentUserRole.includes("teacher")) return;
+    if(!(document.body.innerText||"").includes("Reading Progress")) return;
 
     let all=[];
     try{ all=await syncCloudIntoLocal(); }catch(e){ all=records(); }
@@ -3665,7 +3668,9 @@ document.addEventListener("click", function(e){
       box=document.createElement("div");
       box.id="rp-v11-student-status";
       box.style.cssText="margin:10px 24px;padding:12px;border-radius:16px;font-family:system-ui;font-weight:800;line-height:1.6;border:1px solid #dbeafe";
-      (document.getElementById("root")||document.body).appendChild(box);
+      const host=(document.getElementById("root")||document.body);
+      if(host.firstChild) host.insertBefore(box, host.firstChild);
+      else host.appendChild(box);
     }
 
     box.innerHTML=`
@@ -3680,7 +3685,7 @@ document.addEventListener("click", function(e){
         <span style="padding:7px 10px;border-radius:12px;background:#fef2f2;color:#991b1b">Rejected excluded: ${rejectedCount}</span>
       </div>
       ${last&&last.teacherNotes?`<div style="margin-top:8px;color:#475569">Teacher note: ${last.teacherNotes}</div>`:""}
-      <div style="margin-top:8px;color:#64748b;font-size:12px">Rejected and deleted attempts are not counted in Average / Best.</div>
+      <div style="margin-top:8px;color:#64748b;font-size:12px">Rejected and deleted attempts are not counted. Evaluated retake-allowed attempts remain counted until a new attempt is evaluated.</div>
     `;
     box.style.background="#ffffff";
     box.style.color="#334155";
@@ -3914,5 +3919,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FAIR_SCORING_PERSIST_RESULT -->
 
 <!-- BUILD_DELETE_ATTEMPT_STUDENT_PERFORMANCE_SAFE -->
+
+<!-- BUILD_COUNT_RETAKE_SCORE_SHOW_STUDENT_DASHBOARD -->
 </body>
 </html>
