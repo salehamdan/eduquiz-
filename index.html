@@ -3584,7 +3584,7 @@ document.addEventListener("click", function(e){
       const text=await transcribeRecord(r);
       const res=score(refText(r),text,r.seconds||r.duration||60);
       const saved=await updateRecord(id,{...res,transcript:text,analysisStatus:"Completed"});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(saved||res)+"%");
+      if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%");
     }catch(err){
       await updateRecord(id,{analysisStatus:"Failed: "+err.message});
       if(!silent) alert("فشل التحليل: "+err.message);
@@ -3611,7 +3611,17 @@ document.addEventListener("click", function(e){
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2><button id="rp-v11-hide" type="button" style="padding:8px 10px;border:0;border-radius:10px;background:#64748b;color:white">Hide</button></div>
       <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
       <div id="rp-v11-summary" style="margin:12px 0"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><select id="rp-v11-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;max-width:220px"><option value="all">All Classes</option></select><button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button><button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Class</button><button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button><button id="rp-v11-accept-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white">Accept Class</button><button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Class</button><button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Class</button></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <input id="rp-v11-class" type="text" placeholder="All Classes / اكتب الصف أو الفصل" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:210px">
+        <input id="rp-v11-student" type="text" placeholder="All Students / اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:240px">
+        <button id="rp-v11-clear-filters" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#64748b;color:white">All Classes / All Students</button>
+        <button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button>
+        <button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Visible</button>
+        <button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button>
+        <button id="rp-v11-accept-visible" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">Accept Visible Attempts</button>
+        <button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Visible</button>
+        <button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Visible</button>
+      </div>
       <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
     (document.getElementById("root")||document.body).prepend(panel);
 
@@ -3622,9 +3632,37 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
       if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
       if(id==="rp-v11-test-key"){await testKey();return;}
-      if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
-      if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; await setClass(cls,st); await renderCards(); return;}
+      if(id==="rp-v11-clear-filters"){
+        document.getElementById("rp-v11-class").value="";
+        document.getElementById("rp-v11-student").value="";
+        await renderCards();
+        return;
+      }
+      if(id==="rp-v11-analyze-class"){
+        const arr=await currentVisibleRecords();
+        const ids=arr.filter(r=>!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id);
+        if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في النطاق الظاهر.");
+        for(const x of ids)await analyzeOne(x,true);
+        await renderCards();
+        return;
+      }
+      if(id==="rp-v11-analyze-all"){
+        const ids=records().filter(r=>!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id);
+        if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل.");
+        for(const x of ids)await analyzeOne(x,true);
+        await renderCards();
+        return;
+      }
+      if(id==="rp-v11-accept-visible"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){
+        const arr=await currentVisibleRecords();
+        if(!arr.length)return alert("لا توجد محاولات في النطاق الظاهر.");
+        const st=(id==="rp-v11-retake-class")?"retake_allowed":(id==="rp-v11-reject-class")?"rejected":"accepted";
+        if(st==="retake_allowed"&&!confirm("السماح للمحاولات الظاهرة بإعادة التسجيل؟"))return;
+        if(st==="rejected"&&!confirm("رفض كل المحاولات الظاهرة؟"))return;
+        for(const r of arr){ if(!isDeleted(r)) await updateRecord(r.id,{status:st}); }
+        await renderCards();
+        return;
+      }
       const del=e.target.getAttribute("data-delete");
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
@@ -3636,17 +3674,28 @@ document.addEventListener("click", function(e){
       const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; await updateRecord(rid,{status:st}); await renderCards(); }
     });
     panel.addEventListener("input",async e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)await updateRecord(s,{teacherScore:e.target.value}); if(n)await updateRecord(n,{teacherNotes:e.target.value});});
-    panel.addEventListener("change",async e=>{if(e.target.id==="rp-v11-class")await renderCards();});
+    panel.addEventListener("input",async e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student")await renderCards();});
+    panel.addEventListener("change",async e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student")await renderCards();});
     renderCards();
+  }
+
+  function searchText(v){ return String(v||"").trim().toLowerCase(); }
+  function includesText(v,q){ return !q || String(v||"").toLowerCase().includes(q); }
+  function studentLabel(r){
+    return `${r.studentName||"Student"}${r.studentId?` · ${r.studentId}`:""}${r.className?` · ${r.className}`:""}`;
+  }
+  async function currentVisibleRecords(){
+    const arr=await syncCloudIntoLocal();
+    const clsQ=searchText(document.getElementById("rp-v11-class")?.value||"");
+    const stuQ=searchText(document.getElementById("rp-v11-student")?.value||"");
+    return arr.filter(r=>!isDeleted(r)
+      && includesText(r.className,clsQ)
+      && (!stuQ || includesText(r.studentName,stuQ) || includesText(r.studentId,stuQ) || includesText(studentLabel(r),stuQ)));
   }
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=await syncCloudIntoLocal(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
-    const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
-    sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    sel.value=classes.includes(current)?current:"all";
-    const shown=arr.filter(r=>(sel.value==="all"||r.className===sel.value)&&!isDeleted(r));
+    const shown=await currentVisibleRecords();
     const completed=shown.filter(r=>finalScore(r)!=="");
     const counted=shown.filter(isCountableAttempt);
     const rejectedCount=shown.filter(isRejected).length;
@@ -3951,5 +4000,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FIX_REFERENCE_TEXT_NOT_DASHBOARD_TEXT -->
 
 <!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
+
+<!-- BUILD_TEXT_FILTERS_ACCEPT_VISIBLE_NO_ORANGE_SELECT -->
 </body>
 </html>
