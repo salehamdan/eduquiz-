@@ -3774,213 +3774,9 @@ document.addEventListener("click", function(e){
 </script>
 
 
-<script>
-// ===== RP V12 ADD-ON: LEVELS + WORD HIGHLIGHT + DELETE + SHOW + AUDIO SPEED =====
-(function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const DB_NAME = "EduQuizRP_AudioDB";
-  const STORE = "audios";
 
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function writeJSON(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
-  function records(){return readJSON(RP_KEY,[]);}
-  function saveRecords(a){writeJSON(RP_KEY,a);}
+<!-- RP V12 old word-analysis add-on removed safely -->
 
-  function openDB(){
-    return new Promise((resolve,reject)=>{
-      const req=indexedDB.open(DB_NAME,1);
-      req.onupgradeneeded=e=>{
-        const db=e.target.result;
-        if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:"id"});
-      };
-      req.onsuccess=()=>resolve(req.result);
-      req.onerror=()=>reject(req.error);
-    });
-  }
-  async function deleteAudio(id){
-    if(!id) return;
-    const db=await openDB();
-    await new Promise((resolve,reject)=>{
-      const tx=db.transaction(STORE,"readwrite");
-      tx.objectStore(STORE).delete(id);
-      tx.oncomplete=resolve;
-      tx.onerror=()=>reject(tx.error);
-    });
-  }
-
-  function finalScore(r){
-    const t=Number(r.teacherScore);
-    if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
-    const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):NaN;
-    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)) return Math.round(acc*0.60+flu*0.25+ws*0.15);
-    const vals=[acc,flu,ws].filter(Number.isFinite);
-    return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
-  }
-  function accLevel(acc){
-    acc=Number(acc);
-    if(!Number.isFinite(acc)) return ["Not analyzed","#64748b","#f8fafc"];
-    if(acc>=90) return ["Advanced","#166534","#ecfdf5"];
-    if(acc>=70) return ["Developing","#92400e","#fffbeb"];
-    return ["Needs Support","#991b1b","#fef2f2"];
-  }
-  function prevScore(studentId,id){
-    const arr=records().filter(r=>r.studentId===studentId&&r.id!==id&&finalScore(r)!=="");
-    return arr.length?Number(finalScore(arr[arr.length-1])):NaN;
-  }
-  function progressLevel(cur,prev){
-    cur=Number(cur);prev=Number(prev);
-    if(!Number.isFinite(cur)||!Number.isFinite(prev)) return ["First attempt","#1d4ed8","#eff6ff"];
-    const d=cur-prev;
-    if(d>=10) return ["Clear Progress","#166534","#ecfdf5"];
-    if(d>=3) return ["Moderate Progress","#92400e","#fffbeb"];
-    return ["Limited Progress","#991b1b","#fef2f2"];
-  }
-  function cleanWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function referenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function wordAnalysisHtml(transcript){
-    if(!transcript) return "";
-    const ref=cleanWords(referenceText()), hyp=cleanWords(transcript), used=Array(hyp.length).fill(false);
-    const rendered=[]; const extra=[]; const repeated=[];
-    ref.forEach(w=>{
-      const i=hyp.findIndex((x,j)=>!used[j]&&x===w);
-      if(i>=0){
-        used[i]=true;
-        const rep=i>0&&hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        rendered.push(`<span style="padding:2px 5px;border-radius:6px;background:${rep?"#ede9fe":"transparent"};color:${rep?"#6d28d9":"inherit"}">${w}</span>`);
-      }else{
-        rendered.push(`<span style="padding:2px 5px;border-radius:6px;background:#ffedd5;color:#c2410c;text-decoration:line-through">${w}</span>`);
-      }
-    });
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0&&hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-    if(extra.length){
-      rendered.push(`<br><b style="color:#991b1b">Extra / wrong:</b> `+extra.map(w=>`<span style="padding:2px 5px;border-radius:6px;background:#fee2e2;color:#991b1b">${w}</span>`).join(" "));
-    }
-    if(repeated.length){
-      rendered.push(`<br><b style="color:#6d28d9">Repeated:</b> `+[...new Set(repeated)].map(w=>`<span style="padding:2px 5px;border-radius:6px;background:#ede9fe;color:#6d28d9">${w}</span>`).join(" "));
-    }
-    return rendered.join(" ");
-  }
-
-  function syncDashboard(){
-    const by={};
-    records().forEach(r=>{
-      const fs=finalScore(r);
-      if(fs==="") return;
-      if(!by[r.studentId]) by[r.studentId]={studentId:r.studentId,studentName:r.studentName,className:r.className,scores:[],accuracy:[],wcpm:[],fluency:[],submissions:0};
-      by[r.studentId].scores.push(Number(fs));
-      by[r.studentId].accuracy.push(Number(r.accuracy||0));
-      by[r.studentId].wcpm.push(Number(r.wcpm||0));
-      by[r.studentId].fluency.push(Number(r.fluency||0));
-      by[r.studentId].submissions++;
-    });
-    const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
-    const summary=Object.values(by).map(s=>({...s,averageFinal:avg(s.scores),averageAccuracy:avg(s.accuracy),averageWCPM:avg(s.wcpm),averageFluency:avg(s.fluency),latestFinal:s.scores[s.scores.length-1]||0}));
-    writeJSON("rp_dashboard_summary",summary);
-  }
-
-  function enhanceAudio(){
-    document.querySelectorAll("audio").forEach(audio=>{
-      if(audio.dataset.rpV12Controls) return;
-      audio.dataset.rpV12Controls="1";
-      audio.controls=true;
-      const bar=document.createElement("div");
-      bar.style.cssText="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px";
-      bar.innerHTML=`<button type="button" data-rp-a="-5" style="padding:7px 9px;border:0;border-radius:8px;background:#334155;color:white">⏪ 5s</button><button type="button" data-rp-a="play" style="padding:7px 9px;border:0;border-radius:8px;background:#2563eb;color:white">▶️/⏸</button><button type="button" data-rp-a="+5" style="padding:7px 9px;border:0;border-radius:8px;background:#334155;color:white">5s ⏩</button><select data-rp-speed style="padding:7px;border:1px solid #bfdbfe;border-radius:8px"><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option></select>`;
-      audio.insertAdjacentElement("afterend",bar);
-      bar.onclick=e=>{
-        const a=e.target.getAttribute("data-rp-a");
-        if(a==="-5") audio.currentTime=Math.max(0,audio.currentTime-5);
-        if(a==="+5") audio.currentTime=Math.min(audio.duration||audio.currentTime+5,audio.currentTime+5);
-        if(a==="play") audio.paused?audio.play():audio.pause();
-      };
-      bar.querySelector("[data-rp-speed]").onchange=e=>audio.playbackRate=Number(e.target.value||1);
-    });
-  }
-
-  function addShowButton(){
-    if(document.getElementById("rp-v12-show")) return;
-    const b=document.createElement("button");
-    b.id="rp-v12-show"; b.textContent="📖 Show Reading Progress"; b.type="button";
-    b.style.cssText="position:fixed;right:12px;bottom:72px;z-index:99999;padding:10px 12px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.2)";
-    b.onclick=()=>{const p=document.getElementById("rp-v11-panel"); if(p)p.style.display="block"; b.remove();};
-    document.body.appendChild(b);
-  }
-
-  function enhanceCards(){
-    const panel=document.getElementById("rp-v11-panel");
-    if(!panel) return;
-    const recs=records();
-
-    // Make Hide show a re-open button
-    const hide=[...panel.querySelectorAll("button")].find(b=>b.textContent.trim()==="Hide");
-    if(hide && !hide.dataset.rpV12Hide){
-      hide.dataset.rpV12Hide="1";
-      hide.addEventListener("click",()=>setTimeout(addShowButton,100));
-    }
-
-    recs.forEach(r=>{
-      const card=[...panel.querySelectorAll("div")].find(d=>d.innerText&&d.innerText.includes(r.studentName||"__none__")&&d.innerText.includes(r.studentId||"__none__"));
-      if(!card || card.dataset.rpV12Enhanced) return;
-      card.dataset.rpV12Enhanced="1";
-
-      const acc=accLevel(r.accuracy);
-      const prog=progressLevel(finalScore(r),prevScore(r.studentId,r.id));
-      const badges=document.createElement("div");
-      badges.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0";
-      badges.innerHTML=`<div style="padding:8px 10px;border-radius:12px;background:${acc[2]};color:${acc[1]};font-weight:900">Accuracy Level: ${acc[0]}</div><div style="padding:8px 10px;border-radius:12px;background:${prog[2]};color:${prog[1]};font-weight:900">Progress: ${prog[0]}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:900">Correct Words/Min: ${r.wcpm||"-"}</div>`;
-      card.appendChild(badges);
-
-      if(r.transcript){
-        const wa=document.createElement("div");
-        wa.style.cssText="padding:10px;border-radius:12px;border:1px solid #e2e8f0;background:#fff;line-height:2;margin-top:8px";
-        wa.innerHTML=`<b>Word Analysis:</b><br>${wordAnalysisHtml(r.transcript)}<div style="font-size:12px;color:#64748b;margin-top:6px">Orange = missing, Red = extra/wrong, Purple = repeated.</div>`;
-        card.appendChild(wa);
-      }
-
-      const controls=document.createElement("div");
-      controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px";
-      controls.innerHTML=`<button type="button" data-rp-del="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button><button type="button" data-rp-delall="${r.studentId}" style="padding:10px 12px;border:0;border-radius:10px;background:#111827;color:white;font-weight:800">Delete All Student Attempts</button>`;
-      card.appendChild(controls);
-    });
-    enhanceAudio();
-    syncDashboard();
-  }
-
-  document.addEventListener("click",async e=>{
-    const del=e.target.getAttribute("data-rp-del");
-    const delall=e.target.getAttribute("data-rp-delall");
-    if(del){
-      if(!confirm("Delete this attempt and its audio?")) return;
-      const a=records(); const r=a.find(x=>x.id===del);
-      if(r&&r.audioId) await deleteAudio(r.audioId);
-      saveRecords(a.filter(x=>x.id!==del));
-      location.reload();
-    }
-    if(delall){
-      if(!confirm("Delete all attempts for this student?")) return;
-      const a=records(); const target=a.filter(x=>x.studentId===delall);
-      for(const r of target){ if(r.audioId) await deleteAudio(r.audioId); }
-      saveRecords(a.filter(x=>x.studentId!==delall));
-      location.reload();
-    }
-  });
-
-  setInterval(enhanceCards,1500);
-  setTimeout(enhanceCards,1000);
-})();
- // ===== END RP V12 ADD-ON =====
-</script>
 
 
 <!-- BUILD_ALLOW_STUDENT_RECORDING_NO_RESTRICTIONS -->
@@ -4002,5 +3798,28 @@ document.addEventListener("click", function(e){
 <!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
 
 <!-- BUILD_TEXT_FILTERS_ACCEPT_VISIBLE_NO_ORANGE_SELECT -->
+
+<script>
+(function(){
+  function addReadingProgressShowButton(){
+    try{
+      const panel=document.getElementById("rp-v11-panel");
+      if(!panel || panel.style.display!=="none") return;
+      if(document.getElementById("rp-safe-show")) return;
+      const b=document.createElement("button");
+      b.id="rp-safe-show";
+      b.type="button";
+      b.textContent="📖 Show Reading Progress";
+      b.style.cssText="position:fixed;right:12px;bottom:72px;z-index:99999;padding:10px 12px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:800;box-shadow:0 8px 20px rgba(0,0,0,.2)";
+      b.onclick=()=>{panel.style.display="block";b.remove();};
+      document.body.appendChild(b);
+    }catch(e){}
+  }
+  setInterval(addReadingProgressShowButton,1500);
+})();
+</script>
+
+
+<!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
 </body>
 </html>
