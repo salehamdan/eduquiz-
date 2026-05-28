@@ -196,12 +196,12 @@ async function fsDel(col, id) {
   await db.collection(col).doc(id).delete();
 }
 async function loadAllData() {
-  const [usersRaw,classesRaw,quizzes,responses,announcements,notes] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes")
+  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions")
   ]);
   const users = mergePreloadedRows(usersRaw, PRELOADED_USERS);
   const classes = mergePreloadedRows(classesRaw, PRELOADED_CLASSES);
-  return {users,classes,quizzes,responses,announcements,notes};
+  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions};
 }
 
 // Session (this device only)
@@ -1582,7 +1582,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     return <TakeComponent quiz={taking} student={user} allResponses={data.responses} onSaved={reload} onDone={()=>{setTaking(null);if(clearDirect)clearDirect();}}/>;
   }
 
-  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
+  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"reading",icon:"📖",label:"Reading"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -1631,6 +1631,8 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
             </Card>;
           })}
         </div>}
+
+        {tab==="reading" && <ReadingProgressStudentV1 user={user} data={data} reload={reload}/>}
 
         {tab==="progress" && <div>
           {myResps.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>Complete quizzes to see progress.</p></Card>:<>
@@ -2366,6 +2368,263 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   );
 }
 
+
+// ── READING PROGRESS V1: AUDIO ONLY ───────────────────────────
+function ReadingProgressTeacherV1({user,data,reload}) {
+  const [title,setTitle]=useState("Reading Progress Task");
+  const [text,setText]=useState("");
+  const [level,setLevel]=useState("intermediate");
+  const [classId,setClassId]=useState("all");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  const classes=(data.classes||[]);
+  const students=(data.users||[]).filter(u=>u.role==="student");
+  const tasks=(data.readingTasks||[]).filter(t=>!t.deleted && (!t.teacherId || t.teacherId===user.id || t.teacherId==="GLOBAL"));
+  const submissions=(data.readingSubmissions||[]).filter(s=>!s.deleted && tasks.some(t=>t.id===s.taskId));
+
+  async function createTask(){
+    if(!text.trim()){alert("اكتب نص القراءة أولًا.");return;}
+    setBusy(true); setMsg("Saving task...");
+    try{
+      const id=uid();
+      await fsSet("readingTasks",id,{
+        id,
+        teacherId:user.id,
+        title:title.trim()||"Reading Progress Task",
+        text:text.trim(),
+        level,
+        classId,
+        status:"open",
+        createdAt:today(),
+        createdAtMs:Date.now()
+      });
+      setText("");
+      setTitle("Reading Progress Task");
+      setMsg("✅ تم إنشاء مهمة القراءة.");
+      await reload();
+    }catch(e){
+      console.error(e);
+      setMsg("❌ Failed to create task: "+((e&&e.message)||e));
+    }finally{setBusy(false);}
+  }
+
+  async function closeTask(t){
+    if(!confirm("Close this reading task?")) return;
+    await fsSet("readingTasks",t.id,{...t,status:"closed",updatedAt:today(),updatedAtMs:Date.now()});
+    await reload();
+  }
+
+  async function deleteTask(t){
+    if(!confirm("Delete this reading task?")) return;
+    await fsSet("readingTasks",t.id,{...t,deleted:true,updatedAt:today(),updatedAtMs:Date.now()});
+    await reload();
+  }
+
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"16px"}}>📖 Reading Progress — Audio Only V1</strong>
+      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Phase 1: create a text, student records, audio is uploaded to Firebase Storage, teacher listens.</p>
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"14px",color:C.tx}}>➕ Create Reading Task</strong>
+      <div style={{display:"grid",gap:"8px",marginTop:"9px"}}>
+        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Task title" style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}/>
+        <select value={classId} onChange={e=>setClassId(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
+          <option value="all">All classes</option>
+          {classes.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={6} placeholder="Paste or type the reading text here..." style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",lineHeight:1.6}}/>
+        <Btn color={C.p} onClick={createTask} disabled={busy}>Save Reading Task</Btn>
+        {msg&&<div style={{fontSize:"12px",fontWeight:800,color:msg.startsWith("❌")?C.d:C.s}}>{msg}</div>}
+      </div>
+    </Card>
+
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"14px",color:C.tx}}>📚 Reading Tasks</strong>
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No reading tasks yet.</p>:tasks.slice().reverse().map(t=><div key={t.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}>
+          <div style={{flex:1}}>
+            <strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong>
+            <div style={{fontSize:"10px",color:C.mu}}>Level: {t.level||"intermediate"} · Class: {(classes.find(c=>c.id===t.classId)||{}).name || "All"} · Status: {t.status||"open"}</div>
+            <p style={{fontSize:"12px",whiteSpace:"pre-wrap",lineHeight:1.5}}>{t.text}</p>
+          </div>
+          <div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}>
+            <Btn size="sm" color={C.w} onClick={()=>closeTask(t)}>Close</Btn>
+            <Btn size="sm" color={C.d} onClick={()=>deleteTask(t)}>Delete</Btn>
+          </div>
+        </div>
+      </div>)}
+    </Card>
+
+    <Card>
+      <strong style={{fontSize:"14px",color:C.tx}}>🎧 Student Recordings</strong>
+      {submissions.length===0?<p style={{fontSize:"12px",color:C.mu}}>No recordings submitted yet.</p>:submissions.slice().reverse().map(s=>{
+        const st=students.find(x=>x.id===s.studentId)||{};
+        const cls=classes.find(c=>c.id===(s.classId||st.classId))||{};
+        const t=tasks.find(x=>x.id===s.taskId)||{};
+        return <div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
+          <strong style={{fontSize:"13px",color:C.tx}}>{st.name||s.studentName||"Student"}</strong>
+          <div style={{fontSize:"10px",color:C.mu}}>{cls.name||""} · {t.title||s.taskTitle||"Reading Task"} · {s.submittedAt||s.createdAt||""}</div>
+          {s.audioUrl?<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"7px"}}/>:<div style={{fontSize:"12px",color:C.d,marginTop:"6px"}}>No audio URL saved.</div>}
+        </div>
+      })}
+    </Card>
+  </div>;
+}
+
+function ReadingProgressStudentV1({user,data,reload}) {
+  const [task,setTask]=useState(null);
+  const [rec,setRec]=useState(null);
+  const [blob,setBlob]=useState(null);
+  const [preview,setPreview]=useState("");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  const startRef=useRef(0);
+
+  const tasks=(data.readingTasks||[]).filter(t=>{
+    if(!t || t.deleted || t.status==="closed") return false;
+    if(t.classId && t.classId!=="all" && t.classId!==user.classId) return false;
+    if(Array.isArray(t.classIds) && t.classIds.length>0 && !t.classIds.includes(user.classId)) return false;
+    return true;
+  });
+  const subs=(data.readingSubmissions||[]).filter(s=>s.studentId===user.id && !s.deleted);
+
+  async function startRecording(){
+    try{
+      setMsg("Recording...");
+      setBlob(null); setPreview("");
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":"");
+      const recorder=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+      const chunks=[];
+      startRef.current=Date.now();
+      recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+      recorder.onstop=()=>{
+        const b=new Blob(chunks,{type:mime||"audio/webm"});
+        setBlob(b);
+        setPreview(URL.createObjectURL(b));
+        stream.getTracks().forEach(x=>x.stop());
+        setMsg("Recording saved. You can submit now.");
+      };
+      recorder.start();
+      setRec(recorder);
+    }catch(e){
+      console.error(e);
+      setMsg("Microphone error: "+((e&&e.message)||e));
+    }
+  }
+
+  function stopRecording(){
+    try{if(rec && rec.state!=="inactive") rec.stop();}catch(e){}
+    setRec(null);
+  }
+
+  async function uploadAudioToFirebase(file,path){
+    if(!FIREBASE_OK || !firebase || !firebase.storage){
+      throw new Error("Firebase Storage is not available.");
+    }
+    const ref=firebase.storage().ref().child(path);
+    await ref.put(file,{contentType:file.type||"audio/webm"});
+    const url=await ref.getDownloadURL();
+    return url;
+  }
+
+  async function submit(){
+    if(!task){setMsg("No task selected.");return;}
+    if(!blob){setMsg("Please record your voice first.");return;}
+    setBusy(true); setMsg("Uploading audio...");
+    try{
+      const id=uid();
+      const duration=Math.max(1,Math.round((Date.now()-(startRef.current||Date.now()))/1000));
+      const safeClass=user.classId||"no_class";
+      const path=`reading-progress-audio/${safeClass}/${user.id}/${task.id}_${Date.now()}.webm`;
+      const audioUrl=await uploadAudioToFirebase(blob,path);
+      const sub={
+        id,
+        taskId:task.id,
+        taskTitle:task.title,
+        studentId:user.id,
+        studentName:user.name||"",
+        studentNumber:user.studentId||"",
+        classId:user.classId||"",
+        teacherId:task.teacherId||"",
+        audioUrl,
+        audioPath:path,
+        duration,
+        seconds:duration,
+        status:"submitted",
+        createdAt:today(),
+        submittedAt:new Date().toISOString()
+      };
+      await fsSet("readingSubmissions",id,sub);
+      setMsg("✅ Submitted to teacher.");
+      setTask(null); setRec(null); setBlob(null); setPreview("");
+      await reload();
+    }catch(e){
+      console.error(e);
+      setMsg("❌ Upload failed: "+((e&&e.message)||e));
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  if(task){
+    return <div>
+      <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+        <strong style={{color:"#fff",fontSize:"15px"}}>📖 {task.title}</strong>
+        <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Read the text aloud, then submit your recording.</p>
+      </Card>
+      <Card>
+        <p style={{fontSize:"15px",lineHeight:1.8,whiteSpace:"pre-wrap",color:C.tx}}>{task.text}</p>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"10px"}}>
+          {!rec?<Btn color={C.p} onClick={startRecording}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRecording}>Stop Recording</Btn>}
+          <Btn color={C.s} onClick={submit} disabled={busy||!blob}>Submit to Teacher</Btn>
+          <Btn color={"#64748b"} onClick={()=>{setTask(null);setBlob(null);setPreview("");setMsg("");}}>Back</Btn>
+        </div>
+        {preview&&<audio controls src={preview} style={{width:"100%",marginTop:"10px"}}/>}
+        {msg&&<p style={{fontSize:"12px",fontWeight:800,color:msg.startsWith("❌")?C.d:(msg.startsWith("✅")?C.s:C.p)}}>{msg}</p>}
+      </Card>
+    </div>;
+  }
+
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"15px"}}>📖 Reading Progress</strong>
+      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Record your reading and submit it to your teacher.</p>
+    </Card>
+    <Card style={{marginBottom:"11px"}}>
+      <strong style={{fontSize:"14px",color:C.tx}}>Active Reading Tasks</strong>
+      {tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No active reading tasks.</p>:tasks.slice().reverse().map(t=>{
+        const done=subs.filter(s=>s.taskId===t.id).length;
+        return <div key={t.id} style={{borderTop:"1px solid "+C.br,padding:"10px 0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center"}}>
+            <div style={{flex:1}}>
+              <strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong>
+              <div style={{fontSize:"10px",color:C.mu}}>Level: {t.level||"intermediate"} · Attempts: {done}</div>
+            </div>
+            <Btn size="sm" color={C.p} onClick={()=>setTask(t)}>Start</Btn>
+          </div>
+        </div>
+      })}
+    </Card>
+    <Card>
+      <strong style={{fontSize:"14px",color:C.tx}}>My Submissions</strong>
+      {subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=><div key={s.id} style={{borderTop:"1px solid "+C.br,padding:"9px 0"}}>
+        <strong style={{fontSize:"12px",color:C.tx}}>{s.taskTitle||"Reading Task"}</strong>
+        <div style={{fontSize:"10px",color:C.mu}}>Status: {s.status||"submitted"} · {s.submittedAt||s.createdAt||""}</div>
+        {s.audioUrl&&<audio controls src={s.audioUrl} style={{width:"100%",marginTop:"6px"}}/>}
+      </div>)}
+    </Card>
+  </div>;
+}
+
 // ── TEACHER APP ───────────────────────────────────────────────
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
@@ -2553,7 +2812,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -2578,6 +2837,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             </Card>
           </div>}
         </div>}
+
+        {tab==="reading" && <ReadingProgressTeacherV1 user={user} data={data} reload={reload}/>}
 
         {tab==="quizzes" && <div>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Quizzes ({myQuizzes.length})</strong><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn></div>
@@ -2947,5 +3208,7 @@ try {
   document.getElementById("root").innerHTML = '<div style="padding:30px;font-family:system-ui;color:#fff;background:#0f172a;min-height:100vh"><h3>App error</h3><pre style="white-space:pre-wrap;font-size:12px;color:#fca5a5">'+(e.message||e)+'</pre></div>';
 }
 </script>
+
+<!-- RP_BUILD_V1_AUDIO_ONLY -->
 </body>
 </html>
