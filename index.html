@@ -3959,8 +3959,28 @@ function App() {
   return <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>{parkedBanner}<div style={{flex:1,minHeight:0}}><StudentApp user={user} data={data} onLogout={parkedTeacher?backToTeacher:handleLogout} reload={reload} directQuiz={directQuiz} clearDirect={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}}/></div></div>;
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state={err:null,info:null}; }
+  static getDerivedStateFromError(err){ return {err}; }
+  componentDidCatch(err,info){ this.setState({err,info}); console.error("React render error:",err,info); }
+  render(){
+    if(this.state.err){
+      const msg=(this.state.err&&this.state.err.message)||String(this.state.err);
+      const stack=(this.state.err&&this.state.err.stack)||"";
+      const comp=(this.state.info&&this.state.info.componentStack)||"";
+      return React.createElement("div",{style:{padding:"20px",fontFamily:"system-ui",background:"#0f172a",minHeight:"100vh",color:"#fff"}},
+        React.createElement("h3",{style:{color:"#fca5a5"}},"⚠️ Screen error"),
+        React.createElement("pre",{style:{whiteSpace:"pre-wrap",fontSize:"11px",color:"#fca5a5",background:"#1e293b",padding:"12px",borderRadius:"8px"}}, msg+"\n\n"+stack.slice(0,400)+"\n\nComponent:"+comp.slice(0,300)),
+        React.createElement("button",{onClick:()=>{this.setState({err:null,info:null});},style:{marginTop:"12px",padding:"10px 16px",background:"#2563eb",color:"#fff",border:"none",borderRadius:"8px",fontWeight:"700"}},"Try again"),
+        React.createElement("p",{style:{color:"#94a3b8",fontSize:"13px",marginTop:"10px"}},"Screenshot this and send it to continue.")
+      );
+    }
+    return this.props.children;
+  }
+}
+
 try {
-  ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 } catch(e) {
   document.getElementById("root").innerHTML = '<div style="padding:30px;font-family:system-ui;color:#fff;background:#0f172a;min-height:100vh"><h3>App error</h3><pre style="white-space:pre-wrap;font-size:12px;color:#fca5a5">'+(e.message||e)+'</pre></div>';
 }
