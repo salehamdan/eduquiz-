@@ -150,6 +150,22 @@ function rpV54CleanupReadingProgressDOM(){
 window.addEventListener("load",function(){setTimeout(rpV54CleanupReadingProgressDOM,250);});
 </script>
 
+
+<script id="rp-v55-cleanup-script">
+function rpV55CleanupReadingProgressDOM(){
+  try{
+    ["rp-v11-panel","rp-v11-show","rp-v11-hide","rp-v11-student-status"].forEach(function(id){
+      var el=document.getElementById(id);
+      if(el){el.remove();}
+    });
+    document.querySelectorAll('[id^="rp-v11"], .rp-v11, .rp-floating, .reading-progress-floating').forEach(function(el){
+      try{el.remove();}catch(e){}
+    });
+  }catch(e){}
+}
+window.addEventListener("load",function(){setTimeout(rpV55CleanupReadingProgressDOM,250);});
+</script>
+
 </head>
 <body>
 <div id="root">
@@ -2879,15 +2895,29 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     await reload();
   }
   async function analyze(sub){
-    if(sub.__local){
-      alert("This Whisper attempt is already linked. Use Analyze Saved Recording in the audio card if you need to re-analyze the audio.");
-      return;
+    try{
+      if(!sub||!sub.id){alert("No submission selected.");return;}
+      const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId)||{};
+      const sourceText=task.text||sub.text||sub.taskText||"";
+      let analysis=sub.analysis?{...sub.analysis}:null;
+      if(!analysis || Object.keys(analysis).length===0){
+        analysis=rpAnalyze(sourceText,sub.transcript||"",sub.seconds||0);
+      }
+      const payload={...sub,analysis,status:"analyzed",analysisStatus:"Completed",updatedAt:new Date().toISOString()};
+      if(sub.__local){
+        const arr=localRecords();
+        const i=arr.findIndex(x=>x.id===sub.id);
+        if(i>=0){arr[i]={...arr[i],...payload};saveLocalRecords(arr);}
+      }else{
+        await fsSet("readingSubmissions",sub.id,payload);
+        await reload();
+      }
+      setMsg("✅ Analyzed.");
+      alert("✅ تم التحليل/إعادة التحليل.");
+    }catch(e){
+      console.error(e);
+      alert("Analyze failed: "+((e&&e.message)||e));
     }
-    const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
-    if(!task){alert("Task not found");return;}
-    const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0);
-    await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"});
-    await reload();
   }
   async function delTask(t){
     if(!confirm("Delete this Reading Progress task?"))return;
@@ -2915,13 +2945,25 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }catch(e){}
   }
   async function updateSubStatus(sub,status){
-    if(sub.__local){
-      const arr=localRecords();
-      const i=arr.findIndex(x=>x.id===sub.id);
-      if(i>=0){arr[i].status=status; arr[i].updatedAt=new Date().toISOString(); saveLocalRecords(arr);}
-    }else{
-      await fsSet("readingSubmissions",sub.id,{...sub,status});
-      await reload();
+    try{
+      if(!sub||!sub.id){alert("No submission selected.");return;}
+      const payload={...sub,status,updatedAt:new Date().toISOString()};
+      if(status==="retake_allowed") payload.retakeAllowedAt=new Date().toISOString();
+      if(status==="rejected") payload.rejectedAt=new Date().toISOString();
+      if(status==="accepted") payload.acceptedAt=new Date().toISOString();
+      if(sub.__local){
+        const arr=localRecords();
+        const i=arr.findIndex(x=>x.id===sub.id);
+        if(i>=0){arr[i]={...arr[i],...payload};saveLocalRecords(arr);}
+      }else{
+        await fsSet("readingSubmissions",sub.id,payload);
+        await reload();
+      }
+      setMsg("✅ Updated: "+status);
+      alert("✅ تم التحديث: "+status);
+    }catch(e){
+      console.error(e);
+      alert("Update failed: "+((e&&e.message)||e));
     }
   }
   async function deleteSub(sub){
@@ -3102,7 +3144,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px"}}>
       <strong style={{fontSize:"13px"}}>Assessment / Report Settings</strong>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}>
-        <select value={viewMode} onChange={e=>setViewMode(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
+        <strong style={{fontSize:"13px"}}>⚙️ Assessment Options</strong><div style={{height:"8px"}}></div><select value={viewMode} onChange={e=>setViewMode(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
           <option value="official">Official Report</option><option value="teacher">Teacher View</option>
         </select>
         <select value={sensitivity} onChange={e=>setSensitivity(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}>
@@ -3806,7 +3848,7 @@ function App() {
   },[]);
 
   function handleLogin(u){setUser(u);reload();}
-  function handleLogout(){clearSession();rpV54CleanupReadingProgressDOM(); setUser(null);}
+  function handleLogout(){clearSession();rpV54CleanupReadingProgressDOM(); rpV55CleanupReadingProgressDOM(); setUser(null);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -3819,7 +3861,7 @@ function App() {
       <div style={{fontSize:"18px",fontWeight:"800",color:C.tx,marginBottom:"6px",textAlign:"center"}}>{directQuiz.title}</div>
       <div style={{fontSize:"13px",color:C.mu,marginBottom:"22px",textAlign:"center"}}>You're logged in as a teacher. This is a student quiz link.</div>
       <button onClick={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:C.p,color:"#fff",border:"none",borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F,marginBottom:"10px"}}>Go to my Teacher Dashboard →</button>
-      <button onClick={()=>{clearSession();rpV54CleanupReadingProgressDOM(); setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
+      <button onClick={()=>{clearSession();rpV54CleanupReadingProgressDOM(); rpV55CleanupReadingProgressDOM(); setUser(null);}} style={{width:"100%",maxWidth:"320px",padding:"13px",background:"#fff",color:C.p,border:"2px solid "+C.p,borderRadius:"10px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>👁 Open quiz as a student (test it)</button>
     </div>;
   }
   if(directQuiz && user && user.role==="student"){
@@ -3893,865 +3935,21 @@ document.addEventListener("click", function(e){
 
 
 
-<script>
-// ===== READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
-(function(){
-  const RP_KEY = "rp_attempt_records_v11";
-  const OLD_KEYS = ["rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
-  const API_KEY = "rp_openai_api_key";
-  const DB_NAME = "EduQuizRP_AudioDB";
-  const STORE = "audios";
-  let panelMade = false;
 
-  function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
-  function writeJSON(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
-  function records(){
-    let cur = readJSON(RP_KEY, null);
-    if(Array.isArray(cur)) return cur;
-    for(const k of OLD_KEYS){
-      let old = readJSON(k, null);
-      if(Array.isArray(old)){ writeJSON(RP_KEY, old); return old; }
-    }
-    writeJSON(RP_KEY, []);
-    return [];
-  }
-  function saveRecords(a){ writeJSON(RP_KEY,a); }
-
-  function openDB(){
-    return new Promise((resolve,reject)=>{
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = e => {
-        const db = e.target.result;
-        if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE,{keyPath:"id"});
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  async function saveAudio(blob){
-    const db = await openDB();
-    const id = "aud_" + Date.now() + "_" + Math.random().toString(36).slice(2);
-    const item = {id, blob, type:blob.type||"audio/webm", size:blob.size, createdAt:new Date().toISOString()};
-    await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readwrite");
-      tx.objectStore(STORE).put(item);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return item;
-  }
-  async function getAudio(id){
-    if(!id) return null;
-    const db = await openDB();
-    return await new Promise((resolve,reject)=>{
-      const tx = db.transaction(STORE,"readonly");
-      const req = tx.objectStore(STORE).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
-  function user(){
-    const u=session();
-    return {
-      id:String(u.id||u.studentId||u.ID||u.number||u.studentNumber||u.name||"unknown").trim(),
-      name:String(u.name||u.fullName||u.studentName||u.id||"Student").trim(),
-      className:String(u.className||u.classId||u.class||u.grade||"Unassigned").trim(),
-      role:String(u.role||u.type||"").toLowerCase()
-    };
-  }
-  function isTeacher(){
-    const u=user(), b=document.body.innerText||"";
-    return u.role.includes("teacher") || b.includes("TEACHER DASHBOARD") || b.includes("Teacher Dashboard") || b.includes("+ Quiz");
-  }
-  function taskId(){return "reading-progress-task-1";}
-  function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
-  function canSubmit(studentId){ const r=latest(studentId); return !r || r.status==="retake_allowed"; }
-  function cleanScoreWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-
-  function defaultReferenceText(){
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-
-  function errorStats(r){
-    const ref = cleanScoreWords(r.referenceText || r.taskText || defaultReferenceText());
-    const hyp = cleanScoreWords(r.transcript || "");
-    const used = Array(hyp.length).fill(false);
-    let correct = 0, missing = 0, repeated = 0;
-    const extra = [];
-
-    ref.forEach(w=>{
-      const i = hyp.findIndex((x,j)=>!used[j] && x===w);
-      if(i >= 0){
-        used[i] = true;
-        correct++;
-        if(i>0 && hyp[i-1]===w) repeated++;
-      }else{
-        missing++;
-      }
-    });
-
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0 && hyp[i-1]===w) repeated++;
-        else extra.push(w);
-      }
-    });
-
-    const totalRef = Math.max(1, ref.length);
-    return {
-      correct,
-      missing,
-      extra: extra.length,
-      repeated,
-      totalRef,
-      errorTotal: missing + extra.length + repeated
-    };
-  }
-
-  function finalScore(r){
-    const manual = Number(r.teacherScore);
-    if(Number.isFinite(manual) && manual > 0) return Math.max(0, Math.min(100, Math.round(manual)));
-
-    const acc = Number(r.accuracy);
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    if(!Number.isFinite(acc) && !Number.isFinite(flu) && !Number.isFinite(wcpm)) return "";
-
-    const difficulty = r.difficulty || "intermediate";
-    const speedSetting = r.speedSetting || "reduced";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : 0;
-    const es = errorStats(r);
-
-    let base;
-    if(speedSetting === "excluded"){
-      const vals = [acc, flu].filter(Number.isFinite);
-      base = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0) / vals.length) : acc;
-    }else if(speedSetting === "normal"){
-      base = Math.round((Number.isFinite(acc)?acc*.68:0)+(Number.isFinite(flu)?flu*.24:0)+(Number.isFinite(speedScore)?speedScore*.08:0));
-    }else{
-      base = Math.round((Number.isFinite(acc)?acc*.80:0)+(Number.isFinite(flu)?flu*.18:0)+(Number.isFinite(speedScore)?speedScore*.02:0));
-    }
-
-    let bonus = 0;
-    if(difficulty === "beginner") bonus = 4;
-    if(difficulty === "intermediate") bonus = 1;
-    if(difficulty === "advanced") bonus = 0;
-
-    const missingPenalty = es.missing * 1.6;
-    const extraPenalty = es.extra * 1.25;
-    const repeatedPenalty = es.repeated * 0.7;
-    let score = Math.round(base + bonus - missingPenalty - extraPenalty - repeatedPenalty);
-
-    const severeErrors = es.missing + es.extra;
-    const errorRatio = severeErrors / es.totalRef;
-
-    if(errorRatio >= 0.75) score = Math.min(score, 18);
-    else if(errorRatio >= 0.60) score = Math.min(score, 25);
-    else if(errorRatio >= 0.45) score = Math.min(score, 32);
-    else if(errorRatio >= 0.35) score = Math.min(score, 40);
-    else if(errorRatio >= 0.25) score = Math.min(score, 50);
-
-    if(Number.isFinite(acc)){
-      if(acc < 15) score = Math.min(score, 12);
-      else if(acc < 25) score = Math.min(score, 20);
-      else if(acc < 35) score = Math.min(score, 28);
-      else if(acc < 45) score = Math.min(score, 36);
-      else if(acc < 55) score = Math.min(score, 45);
-      else if(acc < 65 && errorRatio >= 0.35) score = Math.min(score, 38);
-    }
-
-    return Math.max(0, Math.min(100, score));
-  }
-
-  function difficultyBonus(r){
-    const difficulty = r.difficulty || "intermediate";
-    const acc = Number(r.accuracy);
-    if(difficulty === "beginner"){
-      if(Number.isFinite(acc) && acc < 35) return 1;
-      if(Number.isFinite(acc) && acc < 50) return 2;
-      return 4;
-    }
-    if(difficulty === "intermediate"){
-      if(Number.isFinite(acc) && acc < 35) return 0;
-      return 1;
-    }
-    return 0;
-  }
-
-  function adjustedAccuracy(r){
-    const acc = Number(r.accuracy);
-    if(!Number.isFinite(acc)) return "";
-    const es = errorStats(r);
-    const severeErrors = es.missing + es.extra;
-    const errorRatio = severeErrors / es.totalRef;
-
-    let out = Math.round(acc + difficultyBonus(r) - (es.missing*1.15) - (es.extra*0.85));
-
-    if(errorRatio >= 0.60) out = Math.min(out, 25);
-    else if(errorRatio >= 0.45) out = Math.min(out, 32);
-    else if(errorRatio >= 0.35) out = Math.min(out, 40);
-
-    if(acc < 15) out = Math.min(out, 12);
-    else if(acc < 25) out = Math.min(out, 20);
-    else if(acc < 35) out = Math.min(out, 28);
-    else if(acc < 45) out = Math.min(out, 36);
-    else if(acc < 55) out = Math.min(out, 45);
-
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function adjustedFluency(r){
-    const flu = Number(r.fluency);
-    const wcpm = Number(r.wcpm);
-    const acc = Number(r.accuracy);
-    if(!Number.isFinite(flu) && !Number.isFinite(wcpm)) return "";
-
-    const speedSetting = r.speedSetting || "reduced";
-    const speedScore = Number.isFinite(wcpm) ? Math.min(100, Math.round((wcpm / 130) * 100)) : flu;
-    const es = errorStats(r);
-    const errorRatio = (es.missing + es.extra) / es.totalRef;
-
-    let base;
-    if(speedSetting === "excluded") base = Number.isFinite(flu) ? flu : speedScore;
-    else if(speedSetting === "normal") base = Math.round((Number.isFinite(flu)?flu*.85:0)+(Number.isFinite(speedScore)?speedScore*.15:0));
-    else base = Math.round((Number.isFinite(flu)?flu*.95:0)+(Number.isFinite(speedScore)?speedScore*.05:0));
-
-    const difficulty = r.difficulty || "intermediate";
-    let bonus = difficulty === "beginner" ? 2 : difficulty === "intermediate" ? 1 : 0;
-    let out = Math.round(base + bonus - es.missing*0.9 - es.extra*0.6);
-
-    if(errorRatio >= 0.60) out = Math.min(out, 25);
-    else if(errorRatio >= 0.45) out = Math.min(out, 34);
-    else if(errorRatio >= 0.35) out = Math.min(out, 42);
-
-    if(Number.isFinite(acc)){
-      if(acc < 15) out = Math.min(out, 18);
-      else if(acc < 25) out = Math.min(out, 25);
-      else if(acc < 35) out = Math.min(out, 33);
-      else if(acc < 45) out = Math.min(out, 42);
-      else if(acc < 55) out = Math.min(out, 52);
-    }
-
-    return Math.max(0, Math.min(100, out));
-  }
-
-  function updateRecord(id,updates){
-    const a=records(), i=a.findIndex(r=>r.id===id);
-    if(i>=0){
-      const m={...a[i],...updates};
-      m.finalScoreOfficial = finalScore(m);
-      m.adjustedAccuracy = adjustedAccuracy(m);
-      m.adjustedFluency = adjustedFluency(m);
-      m.updatedAt=new Date().toISOString();
-      a[i]=m;
-      saveRecords(a);
-    }
-  }
-  function setClass(cls, status){
-    const a=records();
-    a.forEach(r=>{ if(r.className===cls){ r.status=status; r.updatedAt=new Date().toISOString(); }});
-    saveRecords(a);
-  }
-
-  // Patch MediaRecorder and save the finished audio in IndexedDB.
-  if(window.MediaRecorder && !window.__rpV11Patched){
-    window.__rpV11Patched = true;
-    const Original = window.MediaRecorder;
-    window.MediaRecorder = function(stream, options){
-      const opts = Original.isTypeSupported("audio/webm;codecs=opus") ? {mimeType:"audio/webm;codecs=opus", audioBitsPerSecond:32000} : options;
-      const mr = new Original(stream, opts);
-      const chunks = [];
-      mr.addEventListener("dataavailable", e => { if(e.data && e.data.size) chunks.push(e.data); });
-      mr.addEventListener("stop", async () => {
-        try{
-          const blob = new Blob(chunks,{type:mr.mimeType||"audio/webm"});
-          const item = await saveAudio(blob);
-          window.__RP_LAST_AUDIO_ID = item.id;
-          window.__RP_LAST_AUDIO_URL = URL.createObjectURL(blob);
-          window.__RP_LAST_AUDIO_SIZE = item.size;
-          alert("Audio saved successfully ✅");
-        }catch(err){
-          alert("Audio save failed: " + (err.message||err));
-        }
-      });
-      return mr;
-    };
-    window.MediaRecorder.isTypeSupported = Original.isTypeSupported.bind(Original);
-  }
-
-  document.addEventListener("click", async function(e){
-    const btn=e.target.closest("button"); if(!btn) return;
-    const label=String(btn.textContent||"").trim().toLowerCase();
-    if(!(label.includes("submit to teacher") || label==="submit")) return;
-    if(isTeacher()) return;
-
-    const u=user();
-    if(!canSubmit(u.id)){
-      e.preventDefault(); e.stopPropagation();
-      alert("تم تسليم التسجيل مسبقًا. لا يمكنك إعادة التسجيل إلا إذا سمح المعلم بذلك.");
-      return false;
-    }
-    if(!window.__RP_LAST_AUDIO_ID){
-      e.preventDefault(); e.stopPropagation();
-      alert("لا يوجد تسجيل محفوظ. سجل الصوت أولًا ثم أوقف التسجيل وانتظر رسالة Audio saved successfully.");
-      return false;
-    }
-    if(!confirm("تأكيد الإرسال: سيتم إرسال هذا التسجيل مرة واحدة فقط. هل تريد الإرسال؟")){
-      e.preventDefault(); e.stopPropagation(); return false;
-    }
-    const item = await getAudio(window.__RP_LAST_AUDIO_ID);
-    if(!item || !item.blob){
-      e.preventDefault(); e.stopPropagation();
-      alert("لم يتم العثور على ملف الصوت. أعد التسجيل.");
-      return false;
-    }
-
-    const a=records();
-    a.push({
-      id:"rp_"+Date.now()+"_"+Math.random().toString(36).slice(2),
-      taskId:taskId(),
-      studentId:u.id,
-      studentName:u.name,
-      className:u.className,
-      submittedAt:new Date().toISOString(),
-      status:"submitted",
-      analysisStatus:"Pending",
-      audioId:item.id,
-      audioStatus:"audio attached",
-      audioSize:item.size,
-      audioType:item.type,
-      accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"",
-      teacherScore:"", teacherNotes:"", transcript:""
-    });
-    saveRecords(a);
-    alert("Audio submitted to teacher ✅");
-    studentStatus();
-  }, true);
-
-  function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
-  function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
-
-  async function transcribe(audioId){
-    const key=getKey();
-    if(!key) throw new Error("Add OpenAI API Key first.");
-    const item=await getAudio(audioId);
-    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
-    const file = new File([item.blob], "student-reading.webm", {type:item.type||"audio/webm"});
-    const form=new FormData();
-    form.append("file",file);
-    form.append("model","whisper-1");
-    form.append("language","en");
-    form.append("response_format","json");
-    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
-    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
-    const data=await resp.json();
-    return (data.text||"").trim();
-  }
-  function refText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
-  function score(ref,spoken,seconds=60){
-    const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
-    const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
-    let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
-    const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const accuracy=a.length?Math.round(correct/a.length*100):0;
-    const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
-    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
-  }
-  async function analyzeOne(id,silent=false){
-    const r=records().find(x=>x.id===id);
-    if(!r) return alert("Submission not found.");
-    if(!r.audioId) return alert("No audio attached. Allow retake and ask student to record again.");
-    updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
-    await renderCards();
-    try{
-      const text=await transcribe(r.audioId);
-      const res=score(refText(),text,60);
-      updateRecord(id,{...res,transcript:text});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
-    }catch(err){
-      updateRecord(id,{analysisStatus:"Failed: "+err.message});
-      if(!silent) alert("فشل التحليل: "+err.message);
-    }
-    await renderCards();
-  }
-  async function testKey(){
-    const key=getKey(); if(!key) return alert("ضع مفتاح OpenAI أولًا.");
-    try{
-      const resp=await fetch("https://api.openai.com/v1/models",{headers:{"Authorization":"Bearer "+key}});
-      if(!resp.ok) throw new Error("Status "+resp.status);
-      alert("API Key works ✅");
-    }catch(e){ alert("API Key test failed: "+e.message); }
-  }
-  function fmt(n){ n=Number(n||0); if(!n)return"-"; if(n<1024)return n+" B"; if(n<1048576)return Math.round(n/1024)+" KB"; return (n/1048576).toFixed(1)+" MB"; }
-
-  function teacherPanel(){
-    if(!isTeacher()||panelMade) return;
-    panelMade=true;
-    const panel=document.createElement("div");
-    panel.id="rp-v11-panel";
-    panel.style.cssText="margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
-    panel.innerHTML=`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2><button id="rp-v11-hide" type="button" style="padding:8px 10px;border:0;border-radius:10px;background:#64748b;color:white">Hide</button></div>
-      <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
-      <div id="rp-v11-summary" style="margin:12px 0"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><select id="rp-v11-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;max-width:220px"><option value="all">All Classes</option></select><button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button><button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Class</button><button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button><button id="rp-v11-accept-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white">Accept Class</button><button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Class</button><button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Class</button></div>
-      <div style="margin:10px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0">
-        <b>Class Assessment</b>
-        <div style="font-size:12px;color:#64748b;margin:4px 0 8px">Apply difficulty and speed settings to all Reading Progress attempts in the selected class.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="rp-v11-class-difficulty" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="beginner">Beginner / Supportive</option>
-            <option value="intermediate" selected>Intermediate / Normal</option>
-            <option value="advanced">Advanced / Strict</option>
-          </select>
-          <select id="rp-v11-class-speed" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-            <option value="normal">Speed Normal</option>
-            <option value="reduced" selected>Speed Reduced</option>
-            <option value="excluded">Exclude Speed</option>
-          </select>
-          <button id="rp-v11-apply-class-assessment" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:800">Apply to Class</button>
-        </div>
-        <div id="rp-v11-class-assessment-summary" style="margin-top:8px;font-size:12px;color:#334155"></div>
-      </div>
-      <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
-    (document.getElementById("root")||document.body).prepend(panel);
-
-    panel.addEventListener("click",async e=>{
-      const id=e.target.id;
-      if(e.target.id==="rp-v11-hide"){
-        panel.style.display="none";
-        if(!document.getElementById("rp-v11-show")){
-          const b=document.createElement("button");
-          b.id="rp-v11-show";
-          b.type="button";
-          b.textContent="📖 Show Reading Progress";
-          b.style.cssText="position:fixed;right:12px;bottom:82px;z-index:99999;padding:10px 13px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;box-shadow:0 8px 20px rgba(0,0,0,.22)";
-          b.onclick=function(){const p=document.getElementById("rp-v11-panel");if(p)p.style.display="block";b.remove();};
-          document.body.appendChild(b);
-        }
-        return;
-      }
-      if(id==="rp-v11-refresh"){await renderCards();return;}
-      if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
-      if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
-      if(id==="rp-v11-test-key"){await testKey();return;}
-      if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
-      if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; setClass(cls,st); await renderCards(); return;}
-      if(id==="rp-v11-apply-class-assessment"){
-        const cls=document.getElementById("rp-v11-class").value;
-        if(cls==="all")return alert("اختر فصلًا محددًا أولًا.");
-        const difficulty=document.getElementById("rp-v11-class-difficulty").value;
-        const speedSetting=document.getElementById("rp-v11-class-speed").value;
-        const a=records();
-        let count=0;
-        const selectedText=document.getElementById("rp-v11-class").selectedOptions[0]?.textContent||cls;
-        a.forEach(r=>{
-          if(r.className===cls || r.classId===cls || r.className===selectedText || r.classId===selectedText){
-            r.difficulty=difficulty;
-            r.speedSetting=speedSetting;
-            r.finalScoreOfficial=finalScore(r);
-            r.adjustedAccuracy=adjustedAccuracy(r);
-            r.adjustedFluency=adjustedFluency(r);
-            r.updatedAt=new Date().toISOString();
-            count++;
-          }
-        });
-        saveRecords(a);
-        await renderCards();
-        alert("تم تطبيق تقييم الفصل على "+count+" محاولة.");
-        return;
-      }
-      const delAttempt=e.target.getAttribute("data-delete-attempt"); if(delAttempt){if(confirm("Delete this attempt and its audio?")){const a=records();const rec=a.find(x=>x.id===delAttempt);if(rec&&rec.audioId){try{const db=await openDB();await new Promise((res,rej)=>{const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).delete(rec.audioId);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}catch(err){}}saveRecords(a.filter(x=>x.id!==delAttempt));await renderCards();}return;}
-      const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; updateRecord(rid,{status:st}); await renderCards(); }
-    });
-    panel.addEventListener("input",e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)updateRecord(s,{teacherScore:e.target.value}); if(n)updateRecord(n,{teacherNotes:e.target.value});});
-    panel.addEventListener("change",async e=>{const did=e.target.getAttribute("data-difficulty");const sid=e.target.getAttribute("data-speed-setting");if(did){updateRecord(did,{difficulty:e.target.value});await renderCards();return;}if(sid){updateRecord(sid,{speedSetting:e.target.value});await renderCards();return;}if(e.target.id==="rp-v11-class")await renderCards();});
-    renderCards();
-  }
-
-  async function renderCards(){
-    const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const arr=records(), sel=document.getElementById("rp-v11-class"), current=sel.value||"all";
-    const classes=[...new Set(arr.map(r=>r.className).filter(Boolean))];
-    sel.innerHTML=`<option value="all">All Classes</option>`+classes.map(c=>`<option value="${c}">${c}</option>`).join("");
-    sel.value=classes.includes(current)?current:"all";
-    const shown=arr.filter(r=>sel.value==="all"||r.className===sel.value), completed=shown.filter(r=>finalScore(r)!=="");
-    const avg=completed.length?Math.round(completed.reduce((s,r)=>s+Number(finalScore(r)),0)/completed.length):"-";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Average Final: ${avg}${avg==="-"?"":"%"}</div></div>`;
-    const ca=document.getElementById("rp-v11-class-assessment-summary");
-    if(ca){
-      const clsName=sel.value==="all"?"All Classes":sel.value;
-      const levels={beginner:"Supportive",intermediate:"Normal",advanced:"Strict"};
-      const classDiff=document.getElementById("rp-v11-class-difficulty")?.value||"intermediate";
-      const classSpeed=document.getElementById("rp-v11-class-speed")?.value||"reduced";
-      ca.innerHTML=`Current view: <b>${clsName}</b> · Attempts: <b>${shown.length}</b> · Analyzed: <b>${completed.length}</b> · Average: <b>${avg}${avg==="-"?"":"%"}</b> · Selected class assessment: <b>${levels[classDiff]||classDiff}</b> / <b>${classSpeed}</b>`;
-    }
-    const cards=document.getElementById("rp-v11-cards");
-    if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
-    let out="";
-    for(const r of shown){
-      const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):"";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(item.size)+" · "+(item.type||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Official: ${finalScore(r)===""?"-":finalScore(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#dbeafe;color:#1d4ed8;font-weight:800">Official Acc: ${adjustedAccuracy(r)===""?"-":adjustedAccuracy(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Official Fluency: ${adjustedFluency(r)===""?"-":adjustedFluency(r)+"%"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#64748b;font-weight:800">Raw Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff1f2;color:#9f1239;font-weight:800">Missing+Extra: ${errorStats(r).missing + errorStats(r).extra}</div></div>${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}
-            ${r.transcript?`<div style="padding:10px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155"><b>Colored Word Feedback</b><div style="font-size:12px;color:#64748b;margin:4px 0">Green = correct · Orange = missing · Red = extra/wrong · Purple = repeated</div>${window.coloredWordAnalysis(r.transcript)}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select data-difficulty="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Difficulty</option><option value="beginner" ${r.difficulty==="beginner"?"selected":""}>Beginner</option><option value="intermediate" ${r.difficulty==="intermediate"?"selected":""}>Intermediate</option><option value="advanced" ${r.difficulty==="advanced"?"selected":""}>Advanced</option></select><select data-speed-setting="${r.id}" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><option value="">Speed Weight</option><option value="normal" ${r.speedSetting==="normal"?"selected":""}>Speed Normal</option><option value="reduced" ${r.speedSetting==="reduced"?"selected":""}>Speed Reduced</option><option value="excluded" ${r.speedSetting==="excluded"?"selected":""}>Exclude Speed</option></select></div><div style="font-size:12px;color:#64748b;margin-top:-2px">Beginner changes the official score immediately. Intermediate is normal. Advanced is strict.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete-attempt="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete</button></div></div></div>`;
-    }
-    cards.innerHTML=out;
-  }
-
-  function studentStatus(){
-    if(isTeacher())return;
-    if(!(document.body.innerText||"").includes("Reading Progress"))return;
-    const u=user(), ok=canSubmit(u.id);
-    let box=document.getElementById("rp-v11-student-status");
-    if(!box){box=document.createElement("div");box.id="rp-v11-student-status";box.style.cssText="margin:10px 24px;padding:10px;border-radius:12px;font-family:system-ui;font-weight:800";(document.getElementById("root")||document.body).appendChild(box);}
-    box.textContent=ok?"Reading Progress: You can submit one recording.":"Reading Progress: Submitted. Retake is locked until teacher allows it.";
-    box.style.background=ok?"#eff6ff":"#ecfdf5"; box.style.color=ok?"#1d4ed8":"#166534";
-    if(!ok){document.querySelectorAll("button").forEach(b=>{const t=String(b.textContent||"").toLowerCase(); if(t.includes("start recording")||t.includes("submit to teacher")){b.disabled=true;b.style.opacity=".5";b.style.pointerEvents="none";}});}
-  }
-
-  setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
-})();
- // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
-</script>
+<!-- legacy reading progress script removed -->
 
 
-<script>
-// ===== RP Student Progress Visibility Add-on =====
-(function(){
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function rpKey(){
-    for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
-      const v=readJSON(k,null); if(Array.isArray(v)) return k;
-    }
-    return "rp_attempt_records_v11";
-  }
-  function session(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
-  function finalScore(r){
-    const manual=Number(r.teacherScore); if(Number.isFinite(manual)&&manual>0)return Math.max(0,Math.min(100,Math.round(manual)));
-    const acc=Number(r.adjustedAccuracy||r.finalScoreOfficial||r.accuracy);
-    const flu=Number(r.adjustedFluency||r.fluency);
-    const wcpm=Number(r.wcpm);
-    if(!Number.isFinite(acc)&&!Number.isFinite(flu)&&!Number.isFinite(wcpm))return null;
-    const speed=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/130*100)):0;
-    const score=Math.round((Number.isFinite(acc)?acc*.70:0)+(Number.isFinite(flu)?flu*.25:0)+(Number.isFinite(speed)?speed*.05:0));
-    return Math.max(0,Math.min(100,score));
-  }
-  function progressPercent(scores){
-    if(!scores||scores.length<2)return null;
-    const first=Number(scores[0]),last=Number(scores[scores.length-1]);
-    if(!Number.isFinite(first)||!Number.isFinite(last))return null;
-    if(first===0)return last>0?100:0;
-    return Math.round(((last-first)/Math.max(1,first))*100);
-  }
-  function level(p){if(p===null)return"First attempt";if(p>=25)return"Strong growth";if(p>=10)return"Good growth";if(p>=1)return"Slight growth";if(p===0)return"Stable";return"Regression";}
-  function color(v){v=Number(v);if(v>=80)return"#16a34a";if(v>=60)return"#2563eb";if(v>=40)return"#f59e0b";return"#dc2626";}
-  function renderBars(scores){
-    return '<div style="display:flex;gap:5px;align-items:end;height:52px;margin-top:8px">'+scores.map((s,i)=>'<div title="Attempt '+(i+1)+': '+s+'%" style="width:20px;height:'+Math.max(5,Math.round(s/100*48))+'px;background:'+color(s)+';border-radius:7px 7px 0 0"></div>').join("")+'</div>';
-  }
-  function currentStudentId(){
-    const u=session();
-    return String(u.id||u.studentId||u.studentNumber||u.number||"").trim();
-  }
-  function currentStudentName(){
-    const u=session();
-    return String(u.name||u.fullName||u.studentName||"").trim().toLowerCase();
-  }
-  function isStudentView(){
-    const txt=document.body.innerText||"";
-    return txt.includes("Student")||txt.includes("Reading Progress")||txt.includes("Record");
-  }
-  function render(){
-    if(document.getElementById("rp-student-progress-panel"))return;
-    if(!isStudentView())return;
-    const sid=currentStudentId(), name=currentStudentName();
-    const recs=readJSON(rpKey(),[]).filter(r=>{
-      return String(r.studentId||"").trim()===sid || String(r.studentName||"").trim().toLowerCase()===name;
-    }).filter(r=>finalScore(r)!==null);
-    if(!recs.length)return;
-    recs.sort((a,b)=>String(a.submittedAt||a.createdAt||"").localeCompare(String(b.submittedAt||b.createdAt||"")));
-    const scores=recs.map(finalScore);
-    const p=progressPercent(scores);
-    const latest=scores[scores.length-1];
-    const box=document.createElement("div");
-    box.id="rp-student-progress-panel";
-    box.style.cssText="margin:14px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
-    box.innerHTML='<h3 style="margin:0 0 8px;color:#1e293b">📈 My Reading Progress</h3>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Latest: '+latest+'%</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Attempts: '+scores.length+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Growth: '+(p!==null?p+"%":"—")+'</div>'+
-      '<div style="padding:9px 12px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">'+level(p)+'</div>'+
-      '</div>'+renderBars(scores);
-    const root=document.getElementById("root")||document.body;
-    root.appendChild(box);
-  }
-  setTimeout(render,1200);
-  setInterval(render,5000);
-})();
- // ===== END RP Student Progress Visibility Add-on =====
-</script>
 
 
-<script>
-// ===== RP Student Instant Practice + Colored Feedback =====
-(function(){
-  const PASS_PREFIX = "rp_student_practice_passed_";
-
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function rpKey(){
-    for(const k of ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8"]){
-      const v=readJSON(k,null); if(Array.isArray(v)) return k;
-    }
-    return "rp_attempt_records_v11";
-  }
-  function session(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
-  function currentStudent(){
-    const u=session();
-    return {
-      id:String(u.id||u.studentId||u.studentNumber||u.number||u.name||"").trim(),
-      name:String(u.name||u.fullName||u.studentName||"").trim()
-    };
-  }
-  function isTeacher(){
-    const txt=document.body.innerText||"";
-    const u=session();
-    return String(u.role||u.type||"").toLowerCase().includes("teacher") || txt.includes("TEACHER DASHBOARD") || txt.includes("+ Quiz");
-  }
-  function isReadingStudent(){
-    if(isTeacher()) return false;
-    const txt=document.body.innerText||"";
-    return txt.includes("Reading Progress") || txt.includes("Start Recording") || txt.includes("Submit to Teacher");
-  }
-  function cleanWords(s){
-    return String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
-  }
-  function escapeHtml(s){
-    return String(s||"").replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-  function referenceText(){
-    // Try to extract visible reading text first. If unavailable, use safe fallback.
-    const candidates=[...document.querySelectorAll("p,div,textarea")].map(x=>x.value||x.innerText||"")
-      .filter(t=>t && t.length>80 && /reading|student|words|practice|learn|travel|food|technology|stress/i.test(t));
-    const best=candidates.sort((a,b)=>b.length-a.length)[0];
-    if(best && best.length<1200) return best;
-    return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times.";
-  }
-  function practiceWords(){
-    const stop=new Set(["the","a","an","and","or","to","in","on","of","is","are","was","were","it","this","that","can","with","for","by","they","them","their","from","as","at","be","has","have","had","will","not","but","when","then","also"]);
-    const words=cleanWords(referenceText()).filter(w=>w.length>=5&&!stop.has(w));
-    const unique=[...new Set(words)];
-    return unique.slice(0,6);
-  }
-  function latestStudentRecord(){
-    const st=currentStudent();
-    const name=st.name.toLowerCase();
-    const recs=readJSON(rpKey(),[]).filter(r=>{
-      return String(r.studentId||"").trim()===st.id || String(r.studentName||"").trim().toLowerCase()===name;
-    });
-    return recs.length?recs[recs.length-1]:null;
-  }
-  function coloredWordFeedback(transcript){
-    if(!transcript) return "";
-    const ref=cleanWords(referenceText());
-    const hyp=cleanWords(transcript);
-    const used=Array(hyp.length).fill(false);
-    const out=[], extra=[], repeated=[];
-    let correct=0, missing=0;
-
-    ref.forEach(w=>{
-      const i=hyp.findIndex((x,j)=>!used[j]&&x===w);
-      if(i>=0){
-        used[i]=true; correct++;
-        const rep=i>0&&hyp[i-1]===w;
-        if(rep) repeated.push(w);
-        out.push(`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:${rep?"#ede9fe":"#dcfce7"};color:${rep?"#6d28d9":"#166534"};font-weight:700">${escapeHtml(w)}</span>`);
-      }else{
-        missing++;
-        out.push(`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ffedd5;color:#c2410c;text-decoration:line-through;font-weight:700">${escapeHtml(w)}</span>`);
-      }
-    });
-    hyp.forEach((w,i)=>{
-      if(!used[i]){
-        if(i>0&&hyp[i-1]===w) repeated.push(w);
-        else extra.push(w);
-      }
-    });
-
-    let html=`<div style="line-height:2">${out.join(" ")}</div>`;
-    if(extra.length){
-      html+=`<div style="margin-top:8px"><b style="color:#991b1b">Extra / wrong words:</b> `+extra.map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#fee2e2;color:#991b1b;font-weight:700">${escapeHtml(w)}</span>`).join(" ")+`</div>`;
-    }
-    if(repeated.length){
-      html+=`<div style="margin-top:6px"><b style="color:#6d28d9">Repeated words:</b> `+[...new Set(repeated)].map(w=>`<span style="display:inline-block;margin:2px;padding:2px 6px;border-radius:7px;background:#ede9fe;color:#6d28d9;font-weight:700">${escapeHtml(w)}</span>`).join(" ")+`</div>`;
-    }
-    html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px">
-      <span style="padding:5px 8px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800">Correct: ${correct}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ffedd5;color:#c2410c;font-weight:800">Missing: ${missing}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800">Extra/Wrong: ${extra.length}</span>
-      <span style="padding:5px 8px;border-radius:10px;background:#ede9fe;color:#6d28d9;font-weight:800">Repeated: ${repeated.length}</span>
-    </div>`;
-    return html;
-  }
-
-  function coloredWordAnalysis(transcript){ return window.coloredWordFeedback(transcript); }
-
-  function passKey(){
-    const st=currentStudent();
-    return PASS_PREFIX + (st.id||st.name||"unknown");
-  }
-  function hasPassed(){
-    return localStorage.getItem(passKey())==="1";
-  }
-  function setPassed(v){
-    if(v) localStorage.setItem(passKey(),"1");
-    else localStorage.removeItem(passKey());
-  }
-  function hasRecording(){
-    return !!window.__RP_LAST_AUDIO_ID || !!window.__RP_LAST_AUDIO_SIZE || document.body.innerText.includes("Audio saved successfully");
-  }
-  function renderPracticePanel(){
-    if(!isReadingStudent()) return;
-    if(document.getElementById("rp-student-practice-panel")) return;
-
-    const words=practiceWords();
-    const latest=latestStudentRecord();
-    const panel=document.createElement("div");
-    panel.id="rp-student-practice-panel";
-    panel.style.cssText="margin:14px;padding:14px;border:2px solid #7c3aed;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
-    panel.innerHTML=`
-      <h3 style="margin:0 0 8px;color:#1e293b">🎯 Practice Before Submit</h3>
-      <div style="font-size:12px;color:#64748b;margin-bottom:8px">
-        After recording, practice these words. If your pronunciation is accepted, you can submit. If not, retry.
-      </div>
-      <div id="rp-practice-words" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
-        ${words.map(w=>`<span data-word="${escapeHtml(w)}" style="padding:6px 10px;border-radius:999px;background:#f1f5f9;color:#334155;font-weight:800">${escapeHtml(w)}</span>`).join("")}
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button id="rp-start-practice" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Start Practice Check</button>
-        <button id="rp-reset-practice" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Reset Practice</button>
-      </div>
-      <div id="rp-practice-result" style="margin-top:10px;font-size:13px;font-weight:800;color:#64748b">
-        ${hasPassed()?"✅ Practice passed. You can submit.":"Practice is required before submitting."}
-      </div>
-      ${latest&&latest.transcript?`<div style="margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc"><b>My Colored Reading Feedback</b><div style="font-size:12px;color:#64748b;margin:4px 0">Green = correct · Orange = missing · Red = extra/wrong · Purple = repeated</div>${window.coloredWordFeedback(latest.transcript)}</div>`:""}
-    `;
-    const root=document.getElementById("root")||document.body;
-    root.appendChild(panel);
-
-    document.getElementById("rp-start-practice").onclick=startPractice;
-    document.getElementById("rp-reset-practice").onclick=()=>{
-      setPassed(false);
-      updatePracticeUI([], "Practice reset. Try again.");
-    };
-    updateSubmitButtons();
-  }
-  function updatePracticeUI(correctWords, message){
-    const wordEls=[...document.querySelectorAll("#rp-practice-words [data-word]")];
-    const okSet=new Set(correctWords.map(w=>String(w).toLowerCase()));
-    wordEls.forEach(el=>{
-      const w=String(el.getAttribute("data-word")||"").toLowerCase();
-      if(okSet.has(w)){
-        el.style.background="#dcfce7"; el.style.color="#166534";
-      }else{
-        el.style.background="#fee2e2"; el.style.color="#991b1b";
-      }
-    });
-    const res=document.getElementById("rp-practice-result");
-    if(res) res.textContent=message;
-    updateSubmitButtons();
-  }
-  function updateSubmitButtons(){
-    const pass=hasPassed();
-    document.querySelectorAll("button").forEach(b=>{
-      const t=String(b.textContent||"").toLowerCase();
-      if(t.includes("submit to teacher") || t==="submit"){
-        if(!pass){
-          b.style.opacity=".55";
-          b.title="Practice check required before submit.";
-        }else{
-          b.style.opacity="1";
-          b.title="Practice passed.";
-        }
-      }
-    });
-  }
-  function startPractice(){
-    if(!hasRecording()){
-      alert("Record your reading first, then start the practice check.");
-      return;
-    }
-    const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SpeechRecognition){
-      alert("Speech recognition is not supported in this browser. Use Chrome on Android if possible.");
-      return;
-    }
-    const words=practiceWords();
-    const rec=new SpeechRecognition();
-    rec.lang="en-US";
-    rec.interimResults=false;
-    rec.maxAlternatives=1;
-    const resultBox=document.getElementById("rp-practice-result");
-    if(resultBox) resultBox.textContent="Listening... Say the practice words clearly.";
-    rec.onresult=e=>{
-      const said=Array.from(e.results).map(r=>r[0].transcript).join(" ").toLowerCase();
-      const saidWords=cleanWords(said);
-      const correct=words.filter(w=>saidWords.includes(w.toLowerCase()));
-      const ratio=words.length?correct.length/words.length:0;
-      if(ratio>=0.75){
-        setPassed(true);
-        updatePracticeUI(correct, "✅ Practice passed. You can submit now.");
-      }else{
-        setPassed(false);
-        updatePracticeUI(correct, "❌ Practice not passed. Correct words: "+correct.length+"/"+words.length+". Retry before submitting.");
-      }
-    };
-    rec.onerror=e=>{
-      setPassed(false);
-      if(resultBox) resultBox.textContent="Speech check failed. Please retry: "+(e.error||"unknown error");
-      updateSubmitButtons();
-    };
-    rec.start();
-  }
-
-  // Block submit before practice pass.
-  window.addEventListener("click", function(e){
-    const btn=e.target.closest&&e.target.closest("button");
-    if(!btn||isTeacher()) return;
-    const t=String(btn.textContent||"").toLowerCase().trim();
-    if(t.includes("submit to teacher") || t==="submit"){
-      if(!hasPassed()){
-        e.preventDefault();
-        e.stopPropagation();
-        alert("Practice check is required before submitting. Press Start Practice Check first.");
-        return false;
-      }
-    }
-  }, true);
-
-  window.addEventListener("rp-audio-saved", ()=>{
-    setPassed(false);
-    renderPracticePanel();
-    const res=document.getElementById("rp-practice-result");
-    if(res) res.textContent="Audio saved. Now complete the practice check before submitting.";
-    updateSubmitButtons();
-  });
-
-  setTimeout(renderPracticePanel,1500);
-  setInterval(()=>{renderPracticePanel();updateSubmitButtons();},4000);
-})();
- // ===== END RP Student Instant Practice + Colored Feedback =====
-</script>
+<!-- legacy reading progress script removed -->
 
 
-<!-- RP_BUILD_V54_ROLLBACK_V52_NO_WORD_GATE -->
+
+
+<!-- legacy reading progress script removed -->
+
+
+
+<!-- RP_BUILD_V55_REMOVE_LEGACY_PRACTICE_FIX_BUTTONS -->
 </body>
 </html>
