@@ -3289,10 +3289,14 @@ document.addEventListener("click", function(e){
   function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted")); }
   function isRejected(r){ return !!(r && r.status==="rejected"); }
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
+  function isTeacherApproved(r){
+    const manual=Number(r&&r.teacherScore);
+    return !!(r && (r.status==="accepted" || (!Number.isNaN(manual) && manual>0)));
+  }
   function isCountableAttempt(r){
-    // Count any evaluated attempt unless it is rejected or deleted.
-    // retake_allowed still shows that the student may retry, but its evaluated score remains part of teacher/student performance.
-    return !!(r && !isDeleted(r) && !isRejected(r) && finalScore(r)!=="");
+    // لا تدخل المحاولة في لوحة الأداء إلا بعد اعتماد المعلم أو وضع درجة يدوية.
+    // submitted / retake_allowed / rejected / deleted لا تدخل في المتوسط.
+    return !!(r && !isDeleted(r) && !isRejected(r) && isTeacherApproved(r) && finalScore(r)!=="");
   }
   async function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
@@ -3541,18 +3545,18 @@ document.addEventListener("click", function(e){
 
     let finalScore=Math.round(accuracy*0.80 + fluency*0.10 + speedScore*0.10 - Math.min(20,mistakePenalty*0.25));
 
-    // If the student read all required words and added no meaningful extras, the score should be high.
+    // If the student read all required words with no extra/repeated words, it is a full correct reading.
     if(total>0 && correct===total && extra===0 && repeated===0){
-      finalScore=Math.max(90, finalScore);
-      fluency=Math.max(90, fluency);
+      finalScore=100;
+      fluency=100;
+      speedScore=Math.max(95, speedScore);
+    }else{
+      // Very short mostly-correct readings should not be marked low because of speed formula.
+      if(total<=8 && accuracy>=90 && missing===0){
+        finalScore=Math.max(88, finalScore);
+      }
+      finalScore=Math.max(0,Math.min(100,finalScore));
     }
-
-    // Very short correct readings should not be marked low because of speed formula.
-    if(total<=8 && accuracy>=90 && missing===0){
-      finalScore=Math.max(88, finalScore);
-    }
-
-    finalScore=Math.max(0,Math.min(100,finalScore));
 
     return {
       accuracy,
@@ -3647,7 +3651,7 @@ document.addEventListener("click", function(e){
     const counted=shown.filter(isCountableAttempt);
     const rejectedCount=shown.filter(isRejected).length;
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)),0)/counted.length):"-";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Rejected Excluded: ${rejectedCount}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Average Final: ${avg}${avg==="-"?"":"%"}</div></div>`;
+    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:9px 12px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Submissions: ${shown.length}</div><div style="padding:9px 12px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">Analyzed: ${completed.length}</div><div style="padding:9px 12px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Rejected Excluded: ${rejectedCount}</div><div style="padding:9px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Approved Average: ${avg}${avg==="-"?"":"%"}</div></div>`;
     const cards=document.getElementById("rp-v11-cards");
     if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
     let out="";
@@ -3707,7 +3711,7 @@ document.addEventListener("click", function(e){
         <span style="padding:7px 10px;border-radius:12px;background:#fef2f2;color:#991b1b">Rejected excluded: ${rejectedCount}</span>
       </div>
       ${last&&last.teacherNotes?`<div style="margin-top:8px;color:#475569">Teacher note: ${last.teacherNotes}</div>`:""}
-      <div style="margin-top:8px;color:#64748b;font-size:12px">Rejected and deleted attempts are not counted. Evaluated retake-allowed attempts remain counted until a new attempt is evaluated.</div>
+      <div style="margin-top:8px;color:#64748b;font-size:12px">Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
     `;
     box.style.background="#ffffff";
     box.style.color="#334155";
@@ -3945,5 +3949,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_COUNT_RETAKE_SCORE_SHOW_STUDENT_DASHBOARD -->
 
 <!-- BUILD_FIX_REFERENCE_TEXT_NOT_DASHBOARD_TEXT -->
+
+<!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
 </body>
 </html>
