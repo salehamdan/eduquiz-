@@ -2584,6 +2584,18 @@ function ReadingProgressStudentV1({user,data,reload}) {
     return await rpV5TimeoutPromise(fileRef.getDownloadURL(), 10000, "Download URL");
   }
 
+  
+  function rpV6BlobToDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      try{
+        const reader=new FileReader();
+        reader.onload=()=>resolve(reader.result);
+        reader.onerror=()=>reject(reader.error||new Error("FileReader failed"));
+        reader.readAsDataURL(file);
+      }catch(e){reject(e);}
+    });
+  }
+
   async function submit(){
     if(!blob || !task) return;
     if(blob.size < 500){
@@ -2591,29 +2603,15 @@ function ReadingProgressStudentV1({user,data,reload}) {
       return;
     }
     setBusy(true);
-    setMsg("⏳ جاري رفع الملف الصوتي إلى السحابة...");
+    setMsg("⚡ جاري حفظ التسجيل بسرعة وإرساله للمعلم...");
     try {
-      let cloudUrl = "";
-      let cloudPath = "";
-      let audioDataUrl = "";
-      let storageStatus = "not_started";
-
       const submissionId = user.id + "_" + task.id + "_" + Date.now().toString(36);
       const duration = Math.max(1, Math.round((Date.now()-(startTimeRef.current||Date.now()))/1000));
       const submittedAtIso = new Date().toISOString();
 
-      cloudPath = `readingProgress/${user.classId||"no_class"}/${user.id}_${task.id}_${Date.now()}.webm`;
-
-      try{
-        setMsg("⏳ جاري رفع الصوت إلى Firebase Storage...");
-        cloudUrl = await rpV5UploadStorageWithTimeout(blob, cloudPath);
-        storageStatus = "uploaded";
-      }catch(storageError){
-        console.warn("Storage upload failed/fallback used:", storageError);
-        storageStatus = "fallback_firestore_audio";
-        setMsg("⚠️ تعذر رفع Storage، سيتم حفظ التسجيل احتياطيًا...");
-        audioDataUrl = await rpV5BlobToDataUrl(blob);
-      }
+      // V6: Fast mode. Save compressed audio directly in Firestore record.
+      // This avoids long Firebase Storage waiting on mobile networks.
+      const audioDataUrl = await rpV6BlobToDataUrl(blob);
 
       const submissionData = {
         id: submissionId,
@@ -2624,11 +2622,11 @@ function ReadingProgressStudentV1({user,data,reload}) {
         studentNumber: user.studentId || "",
         classId: user.classId || "",
         teacherId: task.teacherId || "",
-        audioUrl: cloudUrl,
+        audioUrl: "",
         audioDataUrl: audioDataUrl,
-        audioPath: cloudPath,
+        audioPath: "",
         audioSize: blob.size,
-        storageStatus,
+        storageStatus: "fast_firestore_audio",
         duration,
         seconds: duration,
         status: "pending",
@@ -2645,14 +2643,14 @@ function ReadingProgressStudentV1({user,data,reload}) {
         localStorage.setItem("eq_readingSubmissions", JSON.stringify(local));
       }
 
-      setMsg(storageStatus==="uploaded" ? "🚀 تم الرفع والإرسال بنجاح للمعلم!" : "✅ تم الإرسال للمعلم بنظام الحفظ الاحتياطي.");
+      setMsg("🚀 تم الإرسال بسرعة للمعلم!");
       setBlob(null);
       setTimeout(async ()=>{
         setTask(null);
         setPreview("");
         setMsg("");
         await reload();
-      }, 1200);
+      }, 900);
     } catch(e) {
       setMsg("❌ فشل إرسال الصوت: " + ((e&&e.message)||e));
     } finally {
@@ -3296,6 +3294,6 @@ try {
 }
 </script>
 
-<!-- RP_BUILD_V5_AUDIO_UPLOAD_TIMEOUT_FALLBACK -->
+<!-- RP_BUILD_V6_FAST_FIRESTORE_AUDIO -->
 </body>
 </html>
