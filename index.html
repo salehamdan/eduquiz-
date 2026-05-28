@@ -3197,10 +3197,22 @@ document.addEventListener("click", function(e){
     };
   }
 
+  function recordTime(r){
+    const t=Date.parse((r&&(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt))||"");
+    return Number.isFinite(t)?t:0;
+  }
   function mergeRecords(local, remote){
     const map={};
-    (local||[]).forEach(r=>{ if(r&&r.id) map[r.id]=normalizeRecord(r); });
-    (remote||[]).forEach(r=>{ if(r&&r.id) map[r.id]={...(map[r.id]||{}),...normalizeRecord(r)}; });
+    function put(r){
+      if(!r||!r.id) return;
+      const nr=normalizeRecord(r);
+      const old=map[nr.id];
+      if(!old || recordTime(nr)>=recordTime(old)){
+        map[nr.id]={...(old||{}),...nr};
+      }
+    }
+    (local||[]).forEach(put);
+    (remote||[]).forEach(put);
     return Object.values(map);
   }
 
@@ -3254,36 +3266,62 @@ document.addEventListener("click", function(e){
     return true;
   }
   function finalScore(r){
-    const t=Number(r.teacherScore); if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
+    const t=Number(r.teacherScore);
+    if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
+
+    const stored=Number(r.finalScore);
+    if(!Number.isNaN(stored)&&stored>0) return Math.max(0,Math.min(100,Math.round(stored)));
+
+    const ai=Number(r.aiScore);
+    if(!Number.isNaN(ai)&&ai>0) return Math.max(0,Math.min(100,Math.round(ai)));
+
     const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/140*100)):NaN;
+    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/100*100)):NaN;
+    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)){
+      let v=Math.round(acc*0.80+flu*0.10+ws*0.10);
+      if(acc>=98) v=Math.max(90,v);
+      return Math.max(0,Math.min(100,v));
+    }
     const vals=[acc,flu,ws].filter(Number.isFinite);
     return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
   }
-  function updateRecord(id,updates){
+  async function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
     if(i>=0){
       const m={...a[i],...updates};
-      m.finalScore=finalScore(m);
+      if(updates && updates.finalScore!==undefined){
+        m.finalScore=Math.max(0,Math.min(100,Math.round(Number(updates.finalScore)||0)));
+      }else{
+        m.finalScore=finalScore(m);
+      }
       m.updatedAt=new Date().toISOString();
-      m.reviewedAt=m.updatedAt;
+      if(updates && (updates.analysisStatus==="Completed" || updates.transcript!==undefined || updates.accuracy!==undefined)){
+        m.analyzedAt=m.updatedAt;
+      }
+      if(updates && (updates.status || updates.teacherScore!==undefined || updates.teacherNotes!==undefined)){
+        m.reviewedAt=m.updatedAt;
+      }
       a[i]=m;
       saveRecords(a);
-      cloudSaveRecord(m);
+      await cloudSaveRecord(m);
+      return m;
     }
+    return null;
   }
-  function setClass(cls, status){
+  async function setClass(cls, status){
     const a=records();
+    const saves=[];
     a.forEach(r=>{
       if(r.className===cls){
         r.status=status;
         r.updatedAt=new Date().toISOString();
         r.reviewedAt=r.updatedAt;
         r.finalScore=finalScore(r);
-        cloudSaveRecord(r);
+        saves.push(cloudSaveRecord(r));
       }
     });
     saveRecords(a);
+    await Promise.allSettled(saves);
   }
 
   // Patch MediaRecorder and save the finished audio in IndexedDB.
@@ -3443,26 +3481,77 @@ document.addEventListener("click", function(e){
     const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
     const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
     let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j]&&x===w); if(i>=0){correct++;used[i]=true;}});
-    const missing=Math.max(0,a.length-correct), extra=Math.max(0,b.length-correct), repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
-    const accuracy=a.length?Math.round(correct/a.length*100):0;
-    const wcpm=Math.round(correct/Math.max(seconds/60,.25));
-    const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.7+Math.min(wcpm,140)/140*100*.3-repeated*2)));
-    return {accuracy,wcpm,fluency,mistakes:missing+extra+repeated,missing,extra,repeated,aiScore:accuracy,analysisStatus:"Completed"};
+    a.forEach(w=>{
+      const i=b.findIndex((x,j)=>!used[j]&&x===w);
+      if(i>=0){correct++;used[i]=true;}
+    });
+
+    const total=a.length;
+    const missing=Math.max(0,total-correct);
+    const extra=Math.max(0,b.length-correct);
+    const repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
+
+    const accuracy=total?Math.round(correct/total*100):0;
+
+    // Use real duration when available. For short texts, do not punish speed too harshly.
+    const safeSeconds=Math.max(1, Number(seconds)||0);
+    const minutes=Math.max(safeSeconds/60, 1/60);
+    const wcpm=Math.round(correct/minutes);
+
+    let speedScore=100;
+    if(total>=12){
+      speedScore=Math.max(50,Math.min(100,Math.round(wcpm/90*100)));
+    }else{
+      speedScore=Math.max(80,Math.min(100,Math.round(wcpm/60*100)));
+    }
+
+    const mistakePenalty = (missing*12) + (extra*4) + (repeated*3);
+    let fluency=Math.max(0,Math.min(100,Math.round(accuracy*0.75 + speedScore*0.25 - repeated*2)));
+
+    let finalScore=Math.round(accuracy*0.80 + fluency*0.10 + speedScore*0.10 - Math.min(20,mistakePenalty*0.25));
+
+    // If the student read all required words and added no meaningful extras, the score should be high.
+    if(total>0 && correct===total && extra===0 && repeated===0){
+      finalScore=Math.max(90, finalScore);
+      fluency=Math.max(90, fluency);
+    }
+
+    // Very short correct readings should not be marked low because of speed formula.
+    if(total<=8 && accuracy>=90 && missing===0){
+      finalScore=Math.max(88, finalScore);
+    }
+
+    finalScore=Math.max(0,Math.min(100,finalScore));
+
+    return {
+      accuracy,
+      wcpm,
+      fluency,
+      speedScore,
+      finalScore,
+      mistakes:missing+extra+repeated,
+      missing,
+      extra,
+      repeated,
+      correctWords:correct,
+      totalWords:total,
+      aiScore:finalScore,
+      analysisStatus:"Completed"
+    };
   }
   async function analyzeOne(id,silent=false){
     const r=records().find(x=>x.id===id);
     if(!r) return alert("Submission not found.");
     if(!r.audioId && !r.audioDataUrl && !r.audioUrl) return alert("No audio attached. Allow retake and ask student to record again.");
-    updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
+    await updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
     await renderCards();
     try{
       const text=await transcribeRecord(r);
       const res=score(refText(r),text,r.seconds||r.duration||60);
-      updateRecord(id,{...res,transcript:text});
-      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(res)+"%");
+      const saved=await updateRecord(id,{...res,transcript:text,analysisStatus:"Completed"});
+      if(!silent) alert("تم التحليل من التسجيل نفسه. Final: "+finalScore(saved||res)+"%");
     }catch(err){
-      updateRecord(id,{analysisStatus:"Failed: "+err.message});
+      await updateRecord(id,{analysisStatus:"Failed: "+err.message});
       if(!silent) alert("فشل التحليل: "+err.message);
     }
     await renderCards();
@@ -3500,11 +3589,11 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-test-key"){await testKey();return;}
       if(id==="rp-v11-analyze-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أو استخدم Analyze All."); const ids=records().filter(r=>r.className===cls&&r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في هذا الفصل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل الفصل.");return;}
       if(id==="rp-v11-analyze-all"){const ids=records().filter(r=>r.audioId&&r.status!=="rejected").map(r=>r.id); if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل."); for(const x of ids)await analyzeOne(x,true); alert("تم تحليل جميع التسجيلات.");return;}
-      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; setClass(cls,st); await renderCards(); return;}
+      if(id==="rp-v11-accept-class"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){const cls=document.getElementById("rp-v11-class").value; if(cls==="all")return alert("اختر فصلًا محددًا أولًا."); const st=id.includes("accept")?"accepted":id.includes("retake")?"retake_allowed":"rejected"; if(st==="retake_allowed"&&!confirm("السماح لجميع طلاب الفصل بإعادة التسجيل؟"))return; await setClass(cls,st); await renderCards(); return;}
       const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; updateRecord(rid,{status:st}); await renderCards(); }
+      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; await updateRecord(rid,{status:st}); await renderCards(); }
     });
-    panel.addEventListener("input",e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)updateRecord(s,{teacherScore:e.target.value}); if(n)updateRecord(n,{teacherNotes:e.target.value});});
+    panel.addEventListener("input",async e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)await updateRecord(s,{teacherScore:e.target.value}); if(n)await updateRecord(n,{teacherNotes:e.target.value});});
     panel.addEventListener("change",async e=>{if(e.target.id==="rp-v11-class")await renderCards();});
     renderCards();
   }
@@ -3526,7 +3615,7 @@ document.addEventListener("click", function(e){
       const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||"");
       const audioSize=item&&item.size?item.size:(r.audioSize||0);
       const audioType=item&&item.type?item.type:(r.audioType||"audio/webm");
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button></div></div></div>`;
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button></div></div></div>`;
     }
     cards.innerHTML=out;
   }
@@ -3763,5 +3852,9 @@ document.addEventListener("click", function(e){
 <!-- BUILD_TEACHER_RECEIVES_STUDENT_RECORDINGS -->
 
 <!-- BUILD_FIX_ANALYZE_USES_ACTUAL_READING_TEXT -->
+
+<!-- BUILD_PERSIST_ANALYSIS_RESULT_TEACHER_STUDENT -->
+
+<!-- BUILD_FAIR_SCORING_PERSIST_RESULT -->
 </body>
 </html>
