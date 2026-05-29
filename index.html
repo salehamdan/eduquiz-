@@ -2718,20 +2718,6 @@ function cleanClassLabel(v){
   return s;
 }
 
-
-function classDisplayName(raw, classes){
-  const s=String(raw||"").trim();
-  if(!s) return "";
-  const found=(classes||[]).find(c=>String(c.id)===s || String(c.name)===s);
-  if(found) return String(found.name||found.id);
-  if(/^class_3_1$/i.test(s)) return "ثالث أول — 3-1";
-  if(/^class_3_2$/i.test(s)) return "ثالث ثاني — 3-2";
-  if(/^class_3_3$/i.test(s)) return "ثالث ثالث — 3-3";
-  if(/^class_3_4$/i.test(s)) return "ثالث رابع — 3-4";
-  if(/^mph/i.test(s) || s.length>22) return "";
-  return s;
-}
-
 function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [selectedClasses,setSelectedClasses]=useState([]);
@@ -2756,7 +2742,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
   function sname(r){return String(r.studentName||r.name||"Student").trim();}
   function fixedSid(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3136"; return String(r.studentNumber||r.studentId||"").trim();}
-  function cls(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3"; return classDisplayName(r.className||r.classId, data.classes||myClasses);}
+  function cls(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3"; return cleanClassLabel(r.className||r.classId);}
   function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
   function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
   function perfLevel(v){if(v===null)return "—"; if(v>=90)return "Excellent"; if(v>=80)return "Very Good"; if(v>=70)return "Good"; if(v>=60)return "Needs Practice"; return "Needs Support";}
@@ -2770,12 +2756,12 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   let all=Object.values(map);
 
   const fixedStudents=myStudents.map(fixAhmedStudent);
-  const classNameById={}; (data.classes||myClasses||[]).forEach(c=>{const clean=classDisplayName(c.name||c.id,data.classes||myClasses); if(clean)classNameById[c.id]=clean;});
-  const platformClasses=(data.classes||myClasses||[]).map(c=>classDisplayName(c.name||c.id,data.classes||myClasses)).filter(Boolean);
-  const allClassNames=[...new Set([...platformClasses,...raw.map(cls)].filter(Boolean))];
-  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||classDisplayName(s.className||s.classId, data.classes||myClasses)}));
+  const classNameById={}; myClasses.forEach(c=>{const clean=cleanClassLabel(c.name||c.id); if(clean)classNameById[c.id]=clean;});
+  const allowedClassLabels=["ثالث أول — 3-1","ثالث ثاني — 3-2","ثالث ثالث — 3-3","ثالث رابع — 3-4","3/1- 3","3/1"].filter(Boolean);
+  const allClassNames=[...new Set([...allowedClassLabels,...raw.map(cls)].map(cleanClassLabel).filter(Boolean))];
+  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||cleanClassLabel(s.className||s.classId)}));
 
-  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(classDisplayName(r.classId, data.classes||myClasses))||selectedClasses.includes(classNameById[r.classId]));
+  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(cleanClassLabel(r.classId))||selectedClasses.includes(classNameById[r.classId]));
   if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(fixedSid(r))||selectedStudents.includes(r.studentId));
   if(search.trim()){const q=search.toLowerCase(); all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
 
@@ -4251,164 +4237,59 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
 
 <!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
-
 <!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
-<!-- BUILD_FINAL_DYNAMIC_CLASSES_HIDE_NAV_DELETE_ATTEMPTS -->
 
-<script id="rp-recordings-collapsible-nav-delete-fix">
+<script id="rp-safe-page-nav-only">
 (function(){
-  const ATTEMPT_KEYS = ["readingSubmissions","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"];
-  function qsa(sel, root){ return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
-  function readArr(k){ try{ const a=JSON.parse(localStorage.getItem(k)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
-  function writeArr(k,a){ try{ localStorage.setItem(k, JSON.stringify(a)); }catch(e){} }
-  function pageTop(){ window.scrollTo({top:0,behavior:"smooth"}); }
-  function pageBottom(){ window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"}); }
-  function findTeacherReadingRoot(){
-    const nodes=qsa("div"); let best=null, bestScore=-1;
+  function qsa(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel));}
+  function makeBtn(text,bg,fn){
+    var b=document.createElement("button");
+    b.type="button"; b.textContent=text;
+    b.style.cssText="padding:8px 10px;border:0;border-radius:10px;background:"+bg+";color:#fff;font-weight:900;font-size:12px";
+    b.onclick=fn; return b;
+  }
+  function findReadingRoot(){
+    var nodes=qsa("div"), best=null, bestScore=-1;
     nodes.forEach(function(el){
-      const t=(el.innerText||""); if(t.indexOf("Reading Progress")<0) return;
-      let score=0;
-      if(t.indexOf("Create Reading Task")>=0) score+=4;
-      if(t.indexOf("Tasks")>=0) score+=2;
-      if(t.indexOf("Analyze Visible")>=0) score+=5;
-      if(t.indexOf("Accept Visible")>=0) score+=5;
-      if(t.indexOf("Audio Recording")>=0 || t.indexOf("Recordings")>=0 || t.indexOf("Pending")>=0) score+=3;
-      if(score>bestScore){ best=el; bestScore=score; }
+      var t=(el.innerText||"");
+      if(t.indexOf("Reading Progress")<0)return;
+      var score=0;
+      if(t.indexOf("Analyze Visible")>=0)score+=5;
+      if(t.indexOf("Accept Visible")>=0)score+=5;
+      if(t.indexOf("Reading Tasks")>=0 || t.indexOf("Tasks")>=0)score+=3;
+      if(t.indexOf("Audio Recording")>=0)score+=2;
+      if(score>bestScore){best=el;bestScore=score;}
     });
     return best;
   }
-  function findTasksAnchor(root){
-    const items=qsa("strong,div,h2,h3", root).filter(function(el){
-      const t=(el.innerText||"").trim();
-      return t==="Create Reading Task" || t==="Tasks" || t.indexOf("Create Reading Task")>=0;
-    });
-    return items[0] || root;
-  }
-  function allAttempts(){
-    let out=[]; ATTEMPT_KEYS.forEach(function(k){ readArr(k).forEach(function(x){ if(x) out.push(Object.assign({__key:k}, x)); }); });
-    return out;
-  }
-  function findRecordingCards(root){
-    const cards=qsa("div",root).filter(function(el){
-      if(el.closest("#rp-recordings-collapsible")) return false;
-      const txt=(el.innerText||"");
-      if(txt.indexOf("API")>=0 || txt.indexOf("OpenAI")>=0 || txt.indexOf("Generate AI")>=0 || txt.indexOf("Save Key")>=0) return false;
-      const hasAudio=!!el.querySelector("audio");
-      const hasActions=txt.indexOf("Analyze")>=0 || txt.indexOf("Accept")>=0 || txt.indexOf("Reject")>=0 || txt.indexOf("Retake")>=0 || txt.indexOf("Delete Attempt")>=0;
-      const hasReadingSignal=txt.indexOf("Recording")>=0 || txt.indexOf("Status")>=0 || txt.indexOf("Submitted")>=0 || txt.indexOf("Student")>=0;
-      return hasAudio && hasActions && hasReadingSignal;
-    });
-    return cards.filter(function(el){ return !cards.some(function(other){ return other!==el && other.contains(el); }); });
-  }
-  function attemptIdFromCard(card, idx){
-    if(card.dataset.rpAttemptId) return card.dataset.rpAttemptId;
-    const audio=card.querySelector("audio");
-    const src=audio ? (audio.currentSrc || audio.src || "") : "";
-    const stored=allAttempts();
-    if(src){
-      const found=stored.find(function(x){
-        const a=String(x.audioUrl||x.audioDataUrl||"");
-        return a && (a===src || src.indexOf(a)>=0 || a.indexOf(src)>=0);
-      });
-      if(found && found.id) return String(found.id);
+  function findText(root, words){
+    var els=qsa("strong,h2,h3,div",root);
+    for(var i=0;i<els.length;i++){
+      var t=(els[i].innerText||"").trim();
+      for(var j=0;j<words.length;j++){
+        if(t.indexOf(words[j])>=0)return els[i];
+      }
     }
-    const txt=card.innerText||"";
-    const m=txt.match(/\b([a-zA-Z0-9_-]{16,})\b/);
-    if(m) return m[1];
-    return "dom_attempt_"+idx;
-  }
-  function selectedIds(){ return qsa(".rp-recording-select:checked").map(function(x){return x.value;}).filter(Boolean); }
-  function updateSelectedCount(){ const c=document.getElementById("rp-selected-count"); if(c) c.textContent=String(selectedIds().length); }
-  function deleteAttempts(ids, all){
-    if(!all && !ids.length){ alert("Please select attempts first."); return; }
-    const msg = all
-      ? "Are you sure? This will permanently delete ALL Reading Progress attempts only. Tasks, students, classes, and API settings will not be deleted."
-      : "Are you sure? This will permanently delete the selected reading attempts only.";
-    if(!confirm(msg)) return;
-    ATTEMPT_KEYS.forEach(function(k){
-      const arr=readArr(k);
-      if(all){ writeArr(k, []); }
-      else { writeArr(k, arr.filter(function(x){ return !x || ids.indexOf(String(x.id||""))<0; })); }
-    });
-    if(all){
-      Object.keys(localStorage).forEach(function(k){ if(k.indexOf("rp_attempt_count_")===0 || k==="rp_submitted_recording_ids") localStorage.removeItem(k); });
-    }else{
-      try{
-        const submitted=JSON.parse(localStorage.getItem("rp_submitted_recording_ids")||"[]");
-        localStorage.setItem("rp_submitted_recording_ids", JSON.stringify(submitted.filter(function(x){return ids.indexOf(String(x))<0;})));
-      }catch(e){}
-    }
-    alert(all ? "All Reading Progress attempts deleted permanently." : "Selected reading attempts deleted permanently.");
-    location.reload();
-  }
-  function makeBtn(text,bg,fn){
-    const b=document.createElement("button"); b.type="button"; b.textContent=text;
-    b.style.cssText="padding:8px 10px;border:0;border-radius:10px;background:"+bg+";color:white;font-weight:900;font-size:12px";
-    b.onclick=fn; return b;
-  }
-  function ensureSection(root){
-    let section=document.getElementById("rp-recordings-collapsible");
-    if(section) return section;
-    section=document.createElement("div");
-    section.id="rp-recordings-collapsible";
-    section.style.cssText="border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin:10px 0;background:#fff";
-    const title=document.createElement("button");
-    title.id="rp-recordings-toggle"; title.type="button"; title.textContent="Student Recordings ▾";
-    title.style.cssText="width:100%;padding:10px;border:0;border-radius:10px;background:#1e293b;color:#fff;font-weight:900;text-align:left;margin-bottom:8px";
-    const toolbar=document.createElement("div"); toolbar.id="rp-recordings-toolbar";
-    toolbar.style.cssText="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:8px 0;padding:8px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0";
-    const list=document.createElement("div"); list.id="rp-recordings-list";
-    let open=true;
-    title.onclick=function(){
-      open=!open; list.style.display=open?"":"none"; toolbar.style.display=open?"flex":"none"; title.textContent=open?"Student Recordings ▾":"Student Recordings ▸";
-    };
-    toolbar.appendChild(makeBtn("Page Up","#2563eb",pageTop));
-    toolbar.appendChild(makeBtn("Page Bottom","#7c3aed",pageBottom));
-    toolbar.appendChild(makeBtn("Go to Tasks","#0f766e",function(){ const a=findTasksAnchor(root); if(a) a.scrollIntoView({behavior:"smooth",block:"start"}); }));
-    toolbar.appendChild(makeBtn("Go to Recordings","#0f766e",function(){ section.scrollIntoView({behavior:"smooth",block:"start"}); }));
-    toolbar.appendChild(makeBtn("Select All","#64748b",function(){ qsa(".rp-recording-select",list).forEach(function(x){x.checked=true;}); updateSelectedCount(); }));
-    toolbar.appendChild(makeBtn("Clear Selection","#64748b",function(){ qsa(".rp-recording-select",list).forEach(function(x){x.checked=false;}); updateSelectedCount(); }));
-    toolbar.appendChild(makeBtn("Delete Selected Attempts","#dc2626",function(){ deleteAttempts(selectedIds(), false); }));
-    toolbar.appendChild(makeBtn("Delete All Reading Attempts","#7f1d1d",function(){ deleteAttempts([], true); }));
-    const count=document.createElement("span"); count.style.cssText="font-size:12px;font-weight:900;color:#334155";
-    count.innerHTML='Selected: <span id="rp-selected-count">0</span>'; toolbar.appendChild(count);
-    section.appendChild(title); section.appendChild(toolbar); section.appendChild(list);
-    root.insertBefore(section, root.children[1] || null);
-    return section;
-  }
-  function moveRecordings(root){
-    const section=ensureSection(root); const list=document.getElementById("rp-recordings-list");
-    if(!list || list.dataset.built==="1") return;
-    const cards=findRecordingCards(root);
-    if(!cards.length){ list.innerHTML='<div style="font-size:12px;color:#64748b;padding:8px">No visible recordings found yet.</div>'; return; }
-    list.innerHTML="";
-    cards.forEach(function(card,idx){
-      const id=attemptIdFromCard(card,idx);
-      const shell=document.createElement("div");
-      shell.style.cssText="border:1px solid #e2e8f0;border-radius:12px;padding:8px;margin:8px 0;background:#fff";
-      const label=document.createElement("label");
-      label.style.cssText="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:900;color:#334155;margin-bottom:6px";
-      label.innerHTML='<input class="rp-recording-select" type="checkbox" value="'+String(id).replace(/"/g,"&quot;")+'"> Select attempt';
-      label.querySelector("input").onchange=updateSelectedCount;
-      shell.appendChild(label); shell.appendChild(card); list.appendChild(shell);
-    });
-    list.dataset.built="1";
-  }
-  function removeOldHideShow(){
-    qsa("button").forEach(function(btn){
-      const txt=(btn.textContent||"").trim().toLowerCase();
-      if((txt==="hide" || txt==="show") && !btn.closest("#rp-recordings-collapsible")) btn.style.display="none";
-    });
+    return root;
   }
   function init(){
-    const root=findTeacherReadingRoot(); if(!root) return;
-    ensureSection(root); moveRecordings(root); removeOldHideShow();
+    var root=findReadingRoot();
+    if(!root || document.getElementById("rp-safe-page-nav-bar"))return;
+    var bar=document.createElement("div");
+    bar.id="rp-safe-page-nav-bar";
+    bar.style.cssText="display:flex;gap:7px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin:8px 0;padding:8px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0";
+    bar.appendChild(makeBtn("Page Up","#2563eb",function(){window.scrollTo({top:0,behavior:"smooth"});}));
+    bar.appendChild(makeBtn("Page Bottom","#7c3aed",function(){window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});}));
+    bar.appendChild(makeBtn("Go to Tasks","#0f766e",function(){findText(root,["Tasks","Create Reading Task"]).scrollIntoView({behavior:"smooth",block:"start"});}));
+    bar.appendChild(makeBtn("Go to Recordings","#0f766e",function(){findText(root,["Student Recordings","Audio Recording","Status:"]).scrollIntoView({behavior:"smooth",block:"start"});}));
+    root.insertBefore(bar,root.firstChild);
   }
-  setTimeout(init,1000); setInterval(init,3000);
+  setTimeout(init,800);
+  setInterval(init,2500);
 })();
 </script>
 
 
-<!-- BUILD_FINAL_RECORDINGS_COLLAPSIBLE_NAV_DELETE_FIX -->
+<!-- BUILD_EMERGENCY_RESTORE_EVALUATION_BUTTONS -->
 </body>
 </html>
