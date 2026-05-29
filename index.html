@@ -4238,58 +4238,104 @@ document.addEventListener("click", function(e){
 
 <!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
 <!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
+<!-- BUILD_EMERGENCY_RESTORE_EVALUATION_BUTTONS -->
 
-<script id="rp-safe-page-nav-only">
+<style id="final-clean-scroll-style">
+  .chatgpt-scroll-smart-btn{
+    position:fixed;
+    right:18px;
+    bottom:88px;
+    width:52px;
+    height:52px;
+    border-radius:999px;
+    border:0;
+    background:#2563eb;
+    color:white;
+    font-size:26px;
+    font-weight:900;
+    box-shadow:0 10px 24px rgba(15,23,42,.25);
+    z-index:9999;
+    opacity:0;
+    pointer-events:none;
+    transform:translateY(10px);
+    transition:opacity .2s ease, transform .2s ease;
+  }
+  .chatgpt-scroll-smart-btn.show{
+    opacity:.94;
+    pointer-events:auto;
+    transform:translateY(0);
+  }
+</style>
+<script id="final-chatgpt-style-scroll-only">
 (function(){
   function qsa(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel));}
-  function makeBtn(text,bg,fn){
-    var b=document.createElement("button");
-    b.type="button"; b.textContent=text;
-    b.style.cssText="padding:8px 10px;border:0;border-radius:10px;background:"+bg+";color:#fff;font-weight:900;font-size:12px";
-    b.onclick=fn; return b;
-  }
-  function findReadingRoot(){
-    var nodes=qsa("div"), best=null, bestScore=-1;
-    nodes.forEach(function(el){
-      var t=(el.innerText||"");
-      if(t.indexOf("Reading Progress")<0)return;
-      var score=0;
-      if(t.indexOf("Analyze Visible")>=0)score+=5;
-      if(t.indexOf("Accept Visible")>=0)score+=5;
-      if(t.indexOf("Reading Tasks")>=0 || t.indexOf("Tasks")>=0)score+=3;
-      if(t.indexOf("Audio Recording")>=0)score+=2;
-      if(score>bestScore){best=el;bestScore=score;}
-    });
-    return best;
-  }
-  function findText(root, words){
-    var els=qsa("strong,h2,h3,div",root);
-    for(var i=0;i<els.length;i++){
-      var t=(els[i].innerText||"").trim();
-      for(var j=0;j<words.length;j++){
-        if(t.indexOf(words[j])>=0)return els[i];
+
+  function removeOldNavButtons(){
+    qsa("button").forEach(function(btn){
+      var t=(btn.textContent||"").trim();
+      if(
+        t==="Hide" || t==="Show" ||
+        t==="Page Up" || t==="Page Bottom" ||
+        t==="Go to Tasks" || t==="Go to Recordings" ||
+        t==="↑ Page Up" || t==="↓ Page Bottom" || t==="↩ Recordings"
+      ){
+        btn.style.display="none";
       }
-    }
-    return root;
+    });
   }
-  function init(){
-    var root=findReadingRoot();
-    if(!root || document.getElementById("rp-safe-page-nav-bar"))return;
-    var bar=document.createElement("div");
-    bar.id="rp-safe-page-nav-bar";
-    bar.style.cssText="display:flex;gap:7px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin:8px 0;padding:8px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0";
-    bar.appendChild(makeBtn("Page Up","#2563eb",function(){window.scrollTo({top:0,behavior:"smooth"});}));
-    bar.appendChild(makeBtn("Page Bottom","#7c3aed",function(){window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});}));
-    bar.appendChild(makeBtn("Go to Tasks","#0f766e",function(){findText(root,["Tasks","Create Reading Task"]).scrollIntoView({behavior:"smooth",block:"start"});}));
-    bar.appendChild(makeBtn("Go to Recordings","#0f766e",function(){findText(root,["Student Recordings","Audio Recording","Status:"]).scrollIntoView({behavior:"smooth",block:"start"});}));
-    root.insertBefore(bar,root.firstChild);
+
+  function hideOldPerformancePanels(){
+    qsa("div").forEach(function(el){
+      var txt=(el.innerText||"");
+      var isOld =
+        txt.indexOf("Pending / Recent Recordings")>=0 ||
+        (txt.indexOf("Student")>=0 && txt.indexOf("Accuracy")>=0 && txt.indexOf("Submissions")>=0 && txt.indexOf("Pending / Recent")>=0);
+      var isNewReadingPerformance = txt.indexOf("Student and class performance report")>=0 || txt.indexOf("Mobile-friendly student and class performance report")>=0;
+      if(isOld && !isNewReadingPerformance){
+        el.style.display="none";
+      }
+    });
   }
-  setTimeout(init,800);
-  setInterval(init,2500);
+
+  var btn=document.createElement("button");
+  btn.className="chatgpt-scroll-smart-btn";
+  btn.type="button";
+  btn.textContent="↓";
+  document.body.appendChild(btn);
+
+  var hideTimer=null;
+  function updateBtn(){
+    var y=window.scrollY || document.documentElement.scrollTop || 0;
+    var max=(document.documentElement.scrollHeight-window.innerHeight);
+    var nearBottom=y > max*0.55;
+    btn.textContent=nearBottom ? "↑" : "↓";
+    btn.onclick=function(){
+      if((window.scrollY||0) > (document.documentElement.scrollHeight-window.innerHeight)*0.55){
+        window.scrollTo({top:0,behavior:"smooth"});
+      }else{
+        window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"});
+      }
+    };
+    btn.classList.add("show");
+    clearTimeout(hideTimer);
+    hideTimer=setTimeout(function(){btn.classList.remove("show");},2200);
+  }
+
+  window.addEventListener("scroll", updateBtn, {passive:true});
+  window.addEventListener("touchmove", updateBtn, {passive:true});
+  window.addEventListener("wheel", updateBtn, {passive:true});
+  setTimeout(function(){
+    removeOldNavButtons();
+    hideOldPerformancePanels();
+  },800);
+  setInterval(function(){
+    removeOldNavButtons();
+    hideOldPerformancePanels();
+  },2500);
 })();
 </script>
 
 
-<!-- BUILD_EMERGENCY_RESTORE_EVALUATION_BUTTONS -->
+<!-- BUILD_FINAL_CHATGPT_SCROLL_REMOVE_OLD_DASHBOARD -->
 </body>
 </html>
