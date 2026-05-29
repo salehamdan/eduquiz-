@@ -1784,6 +1784,31 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
           })}
         </div>}
       </div></div>
+      <Modal open={!!classManage} onClose={()=>setClassManage(null)} title={"Manage Class — "+(classManage?.name||"")}>
+        {classManage && (()=>{const inClass=myStudents.filter(s=>s.classId===classManage.id);const available=myStudents.filter(s=>s.classId!==classManage.id && (!classStudentSearch||s.name.toLowerCase().includes(classStudentSearch.toLowerCase())||(s.studentId||"").includes(classStudentSearch)));let selectedAdd=[];return <div>
+          <TxtInput label="Class Name *" value={classManage.name||""} onChange={v=>setClassManage(c=>({...c,name:v}))}/>
+          <TxtInput label="Grade / Code" value={classManage.grade||""} onChange={v=>setClassManage(c=>({...c,grade:v}))}/>
+          <Btn onClick={saveManagedClass} style={{width:"100%",marginBottom:"12px"}}>💾 Save Class Name</Btn>
+
+          <div style={{fontWeight:"800",fontSize:"13px",color:C.tx,marginBottom:"7px",fontFamily:F}}>Students in this class ({inClass.length})</div>
+          <div style={{maxHeight:"180px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px",padding:"7px",marginBottom:"12px",background:"#f8fafc"}}>
+            {inClass.length===0?<div style={{fontSize:"12px",color:C.mu,fontFamily:F}}>No students in this class.</div>:inClass.map(st=><div key={st.id} style={{display:"flex",gap:"7px",alignItems:"center",justifyContent:"space-between",padding:"7px",borderBottom:"1px solid "+C.br}}>
+              <div><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{st.name}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {st.studentId}{st.nationalId?" · Nat: "+st.nationalId:""}</div></div>
+              <Btn size="sm" color={C.d} onClick={()=>removeStudentFromManagedClass(st)}>Remove</Btn>
+            </div>)}
+          </div>
+
+          <div style={{fontWeight:"800",fontSize:"13px",color:C.tx,marginBottom:"7px",fontFamily:F}}>Add existing students to this class</div>
+          <input value={classStudentSearch} onChange={e=>setClassStudentSearch(e.target.value)} placeholder="Search name or ID…" style={{width:"100%",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",marginBottom:"8px",boxSizing:"border-box",fontFamily:F}}/>
+          <div style={{maxHeight:"190px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px",padding:"7px",background:"#fff"}}>
+            {available.length===0?<div style={{fontSize:"12px",color:C.mu,fontFamily:F}}>No available students.</div>:available.slice(0,80).map(st=><label key={st.id} style={{display:"flex",gap:"7px",alignItems:"center",padding:"7px",borderBottom:"1px solid "+C.br,fontSize:"12px",fontFamily:F}}>
+              <input type="checkbox" onChange={e=>{if(e.target.checked)selectedAdd.push(st.id);else selectedAdd=selectedAdd.filter(x=>x!==st.id);}}/>
+              <span style={{flex:1}}>{st.name}<span style={{color:C.mu}}> · {st.studentId}</span></span>
+            </label>)}
+          </div>
+          <Btn color={C.s} onClick={()=>{const boxes=[...document.querySelectorAll('input[type="checkbox"]')].filter(x=>x.closest('[role="dialog"]'));addSelectedStudentsToManagedClass(boxes.filter(x=>x.checked).map(x=>{const txt=x.parentElement?.innerText||"";const found=myStudents.find(s=>txt.includes(s.studentId));return found?.id;}).filter(Boolean));}} style={{width:"100%",marginTop:"10px"}}>➕ Add Selected Students</Btn>
+        </div>})()}
+      </Modal>
       <ProfileModal user={user} classes={data.classes} open={profileOpen} onClose={()=>setProfileOpen(false)} onSaved={async()=>{await reload();}}/>
       <ReviewModal open={!!reviewResp} response={reviewResp?.response} quiz={reviewResp?.quiz} onClose={()=>setReviewResp(null)}/>
     </div>
@@ -2827,7 +2852,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [esMsg,setEsMsg]=useState("");
   const stuFileRef = useRef();
   const [resumeAfterEdit,setResumeAfterEdit]=useState(false);
-  const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
+  const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[classManage,setClassManage]=useState(null),[classStudentSearch,setClassStudentSearch]=useState(""),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
   const [shareModal,setShareModal]=useState(null);
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
@@ -2874,39 +2899,104 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     try {
       const buf=await file.arrayBuffer();
       const wb=XLSX.read(new Uint8Array(buf),{type:"array"});
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""});
       if(!rows.length){setImportMsg("File is empty.");return;}
-      // Detect header columns
       const hdr=rows[0].map(c=>String(c||"").trim().toLowerCase());
-      let ci={name:-1,id:-1,cls:-1,email:-1};
+      let ci={name:-1,id:-1,cls:-1,email:-1,nationalId:-1};
       hdr.forEach((h,i)=>{
-        if(ci.name<0&&(h==="name"||h.includes("student name")||h.includes("full name")||h==="اسم"||h.includes("الاسم"))) ci.name=i;
-        else if(ci.id<0&&(h==="id"||h.includes("student id")||h.includes("number")||h.includes("رقم")||h.includes("هوية"))) ci.id=i;
-        else if(ci.cls<0&&(h==="class"||h.includes("class")||h.includes("grade")||h.includes("صف")||h.includes("فصل"))) ci.cls=i;
-        else if(ci.email<0&&h.includes("email")) ci.email=i;
+        const x=h.replace(/\s+/g," ");
+        if(ci.name<0&&(x==="name"||x.includes("student name")||x.includes("full name")||x==="اسم"||x.includes("اسم الطالب")||x.includes("الاسم"))) ci.name=i;
+        else if(ci.id<0&&(x==="id"||x.includes("student id")||x.includes("student number")||x.includes("number")||x.includes("رقم الطالب")||x==="رقم"||x.includes("الرقم"))) ci.id=i;
+        else if(ci.cls<0&&(x==="class"||x.includes("class")||x.includes("grade")||x.includes("section")||x.includes("الصف")||x.includes("الفصل")||x.includes("صف")||x.includes("فصل"))) ci.cls=i;
+        else if(ci.nationalId<0&&(x.includes("national")||x.includes("civil")||x.includes("السجل")||x.includes("الهوية")||x.includes("هوية")||x.includes("مدني"))) ci.nationalId=i;
+        else if(ci.email<0&&x.includes("email")) ci.email=i;
       });
-      const hasHeader=ci.name>=0||ci.id>=0;
-      if(!hasHeader){ci={name:0,id:1,cls:2,email:-1};}
+      const hasHeader=ci.name>=0||ci.id>=0||ci.cls>=0;
+      if(!hasHeader){ci={name:0,id:1,cls:2,nationalId:3,email:-1};}
       const dataRows=rows.slice(hasHeader?1:0);
-      const existing=await fsAll("users");
-      let added=0,skipped=0,dupe=0;
-      const myClassList=data.classes.filter(c=>(c.teacherIds||[]).includes(user.id));
+      const latest=await loadAllData();
+      const existing=[...latest.users];
+      const classes=[...latest.classes];
+      function norm(v){return String(v||"").trim().toLowerCase();}
+      async function ensureClass(className){
+        const cn=String(className||"").trim();
+        if(!cn) return "";
+        let found=classes.find(c=>!c.deleted&&(norm(c.name)===norm(cn)||norm(c.grade)===norm(cn)||norm(c.id)===norm(cn)));
+        if(found) return found.id;
+        const id="class_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,6);
+        const nc={id,name:cn,grade:cn,teacherIds:[user.id],createdAt:today(),imported:true};
+        await fsSet("classes",id,nc);
+        classes.push(nc);
+        return id;
+      }
+      let added=0,updated=0,skipped=0;
       for(const r of dataRows){
         const name=String(r[ci.name]||"").trim();
         const sid=String(r[ci.id]||"").trim();
-        if(!name||!sid){skipped++;continue;}
-        if(existing.find(u=>(u.studentId||"")===sid)){dupe++;continue;}
-        // Match class by name if provided
-        let classId="";
-        if(ci.cls>=0){const cn=String(r[ci.cls]||"").trim().toLowerCase();const mc=myClassList.find(c=>c.name.toLowerCase()===cn||((c.grade||"").toLowerCase()===cn));if(mc)classId=mc.id;}
+        const className=ci.cls>=0?String(r[ci.cls]||"").trim():"";
+        const nationalId=ci.nationalId>=0?String(r[ci.nationalId]||"").trim():"";
         const email=ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():"";
-        const nu={id:uid(),role:"student",name,studentId:sid,classId,email,password:"",createdAt:today()};
-        await fsSet("users",nu.id,nu);
-        existing.push(nu); added++;
+        if(!name||!sid){skipped++;continue;}
+        const classId=await ensureClass(className);
+        const existingStudent=existing.find(u=>u.role==="student"&&!u.deleted&&((u.studentId||"")===sid || (nationalId && (u.nationalId||"")===nationalId)));
+        if(existingStudent){
+          const upd={...existingStudent,name,shortName:(existingStudent.shortName||name.split(/\s+/).slice(0,2).join(" ")),studentId:sid,classId,email:email||existingStudent.email||"",nationalId:nationalId||existingStudent.nationalId||"",password:existingStudent.password||sid,updatedAt:today()};
+          await fsSet("users",existingStudent.id,upd);
+          Object.assign(existingStudent,upd);
+          updated++;
+        }else{
+          const id="student_"+sid.replace(/[^\w-]/g,"_")+"_"+Math.random().toString(36).slice(2,5);
+          const nu={id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId,email,nationalId,password:sid,createdAt:today()};
+          await fsSet("users",id,nu);
+          existing.push(nu);
+          added++;
+        }
       }
       await reload();
-      setImportMsg("✅ Added "+added+" students."+(dupe?" Skipped "+dupe+" already existing.":"")+(skipped?" Skipped "+skipped+" rows missing name/ID.":""));
+      setImportMsg("✅ Import complete: added "+added+", updated "+updated+(skipped?", skipped "+skipped:"")+".");
     } catch(err){ setImportMsg("Error: "+(err.message||err)); }
+  }
+
+  function downloadStudentTemplate(){
+    const rows=[["Student Name","Student ID","Class","National ID"],["أحمد علي الخميس","3136","3/1",""]];
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"]=[{wch:28},{wch:14},{wch:16},{wch:18}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Students");
+    XLSX.writeFile(wb,"Students_Import_Template.xlsx");
+  }
+
+  async function deleteAllStudentsOnly(){
+    if(!confirm("Delete ALL students permanently from the platform?\n\nClasses, quizzes, tasks, and settings will remain.\nStudents will not be able to log in after deletion.")) return;
+    if(!confirm("Final confirmation: delete all students only?")) return;
+    const latest=await loadAllData();
+    const students=latest.users.filter(u=>u.role==="student"&&!u.deleted);
+    for(const st of students){ await fsSet("users",st.id,{...st,deleted:true,updatedAt:today()}); }
+    await reload();
+    setImportMsg("✅ Deleted "+students.length+" students.");
+  }
+
+  async function addSelectedStudentsToManagedClass(ids){
+    if(!classManage||!ids.length) return;
+    for(const sid of ids){
+      const st=data.users.find(u=>u.id===sid);
+      if(st) await fsSet("users",st.id,{...st,classId:classManage.id,updatedAt:today()});
+    }
+    await reload();
+  }
+
+  async function removeStudentFromManagedClass(st){
+    if(!classManage||!st) return;
+    if(!confirm("Remove "+st.name+" from "+classManage.name+"? The student will stay in the platform.")) return;
+    await fsSet("users",st.id,{...st,classId:"",updatedAt:today()});
+    await reload();
+  }
+
+  async function saveManagedClass(){
+    if(!classManage||!String(classManage.name||"").trim()) return;
+    await fsSet("classes",classManage.id,{...classManage,name:String(classManage.name||"").trim(),grade:String(classManage.grade||"").trim(),teacherIds:(classManage.teacherIds&&classManage.teacherIds.includes("GLOBAL"))?classManage.teacherIds:[user.id],updatedAt:today()});
+    await reload();
+    setClassManage(null);
   }
 
   // ── EXPORT GRADEBOOK (grid: students x quizzes) ──
@@ -2957,7 +3047,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!esForm.name.trim()||!esForm.studentId.trim()){setEsMsg("Name and ID are required.");return;}
     const all=(await loadAllData()).users;
     if(all.find(u=>u.id!==editStu.id && !u.deleted && (u.studentId||"")===esForm.studentId.trim())){setEsMsg("That Student ID is used by another student.");return;}
-    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:esForm.studentId.trim(),classId:esForm.classId,email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
+    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:esForm.studentId.trim(),classId:esForm.classId,email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),nationalId:(esForm.nationalId||"").trim(),updatedAt:today()};
     if(esForm.password.trim()) updated.password=esForm.password.trim();
     await fsSet("users",editStu.id,updated);
     await reload();
@@ -2965,17 +3055,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setTimeout(()=>setEditStu(null),700);
   }
   async function createCls(){if(!newCls.name.trim())return;const id=uid();await fsSet("classes",id,{id,name:newCls.name.trim(),grade:newCls.grade.trim(),teacherIds:[user.id],createdAt:today()});await reload();setClsModal(false);setNewCls({name:"",grade:""});}
-  async function editClass(cls){
-    const name = prompt("Edit class name:", cls.name||"");
-    if(name===null || !name.trim()) return;
-    const grade = prompt("Edit class code/grade:", cls.grade||"");
-    await fsSet("classes", cls.id, {...cls, name:name.trim(), grade:(grade||"").trim(), teacherIds:(cls.teacherIds&&cls.teacherIds.includes("GLOBAL"))?cls.teacherIds:[user.id], updatedAt:today()});
-    await reload();
+  function editClass(cls){
+    setClassManage({...cls});
+    setClassStudentSearch("");
   }
   async function deleteClass(cls){
     const studs = data.users.filter(u=>u.role==="student" && u.classId===cls.id && !u.deleted);
     if(!confirm("Delete class: "+cls.name+"?"+(studs.length?"\nStudents in this class will be moved to No class.":""))) return;
-    for(const st of studs){ await fsSet("users", st.id, {...st, classId:""}); }
+    for(const st of studs){ await fsSet("users", st.id, {...st, classId:"", updatedAt:today()}); }
     await fsSet("classes", cls.id, {...cls, deleted:true, updatedAt:today()});
     await reload();
   }
@@ -3071,10 +3158,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",gap:"7px",marginBottom:"9px",flexWrap:"wrap"}}>
             <label htmlFor="stuImport" style={{flex:1,minWidth:"150px",padding:"10px",background:C.s,color:"#fff",borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,boxSizing:"border-box"}}>📥 Import Students (Excel)</label>
             <input id="stuImport" type="file" accept=".xlsx,.xls,.csv" ref={stuFileRef} onChange={importStudents} style={{display:"none"}}/>
+            <Btn color={C.p} onClick={downloadStudentTemplate}>📄 Template</Btn>
+            <Btn color={C.d} onClick={deleteAllStudentsOnly}>🗑 Delete All Students</Btn>
             <Btn color={C.w} onClick={exportResults}>📤 Export Results</Btn>
           </div>
           {importMsg && <div style={{background:importMsg.startsWith("✅")?"#f0fdf4":"#eff6ff",border:"1px solid "+(importMsg.startsWith("✅")?"#86efac":"#93c5fd"),borderRadius:"8px",padding:"9px 12px",fontSize:"12px",color:importMsg.startsWith("✅")?"#166534":"#1e40af",marginBottom:"9px",fontFamily:F}}>{importMsg}</div>}
-          <div style={{fontSize:"10px",color:C.mu,marginBottom:"9px",fontFamily:F,background:"#f8fafc",padding:"8px 11px",borderRadius:"7px"}}>💡 Excel columns: <strong>Name</strong>, <strong>ID</strong> (required), <strong>Class</strong> (optional). Students log in with name + class + ID + password. Default password for imported students is their ID; teacher can edit it.</div>
+          <div style={{fontSize:"10px",color:C.mu,marginBottom:"9px",fontFamily:F,background:"#f8fafc",padding:"8px 11px",borderRadius:"7px"}}>💡 Excel columns: <strong>Student Name</strong>, <strong>Student ID</strong>, <strong>Class</strong>, <strong>National ID</strong> (optional). If a class does not exist, it will be created automatically. Existing Student IDs are updated, not duplicated.</div>
           <div style={{display:"flex",gap:"7px",marginBottom:"11px",flexWrap:"wrap"}}>
             <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search name or ID…" style={{flex:1,minWidth:"150px",padding:"8px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",fontFamily:F}}/>
             <select value={filterCls} onChange={e=>setFilterCls(e.target.value)} style={{padding:"8px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"11px",fontFamily:F,background:C.wh}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
@@ -3088,7 +3177,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               {sk.length>0&&<div style={{flex:1,minWidth:"160px"}}>{sk.slice(0,3).map(x=>(<div key={x.skill} style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}}><div style={{width:"75px",fontSize:"9px",color:C.mu,fontFamily:F,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.skill}</div><div style={{flex:1,height:"5px",background:"#f1f5f9",borderRadius:"999px"}}><div style={{height:"100%",width:x.score+"%",background:gc(x.score),borderRadius:"999px"}}/></div><div style={{fontSize:"9px",fontWeight:"700",color:gc(x.score),width:"28px",fontFamily:F}}>{x.score}%</div></div>))}</div>}
               <div style={{display:"flex",flexDirection:"column",gap:"5px"}}>
                 <Btn size="sm" color={C.p} onClick={()=>{setNoteModal(s);setNoteText(note?.note||"");}}>📝 Note</Btn>
-                <Btn size="sm" color={C.pu} onClick={()=>{setEditStu(s);setEsForm({name:s.name||"",shortName:s.shortName||String(s.name||"").split(/\s+/).slice(0,2).join(" "),studentId:s.studentId||"",classId:s.classId||"",email:s.email||"",password:"",fatherName:s.fatherName||""});setEsMsg("");}}>✏️ Edit</Btn>
+                <Btn size="sm" color={C.pu} onClick={()=>{setEditStu(s);setEsForm({name:s.name||"",shortName:s.shortName||String(s.name||"").split(/\s+/).slice(0,2).join(" "),studentId:s.studentId||"",classId:s.classId||"",email:s.email||"",password:"",fatherName:s.fatherName||"",nationalId:s.nationalId||""});setEsMsg("");}}>✏️ Edit</Btn>
                 <Btn size="sm" color={C.d} onClick={()=>deleteStudent(s)}>🗑 Delete</Btn>
                 <Btn size="sm" color={C.w} onClick={()=>setAttemptsModal(s)}>📊 Attempts</Btn>
               </div>
@@ -3270,6 +3359,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             <option value="">No class</option>
             {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
           </select>
+          <Label text="السجل المدني National ID (optional)"/>
+          <input value={esForm.nationalId||""} onChange={e=>setEsForm(f=>({...f,nationalId:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
           <Label text="اسم الأب Father's Name (for password recovery)"/>
           <input value={esForm.fatherName} onChange={e=>setEsForm(f=>({...f,fatherName:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
           <Label text="كلمة سر جديدة New Password (leave blank to keep current)"/>
@@ -4337,5 +4428,7 @@ document.addEventListener("click", function(e){
 
 
 <!-- BUILD_FINAL_CHATGPT_SCROLL_REMOVE_OLD_DASHBOARD -->
+
+<!-- BUILD_FINAL_EXCEL_IMPORT_CLASS_STUDENT_MANAGEMENT -->
 </body>
 </html>
