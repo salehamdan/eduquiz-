@@ -2483,7 +2483,33 @@ function ReadingProgressStudent({user,data,reload}){
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null);
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
-  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id); const subs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
+  const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id);
+  const taskIds=new Set(tasks.map(t=>t.id));
+  const rawSubs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id || taskIds.has(s.taskId));
+  function rpOldDeleted(s){return !!(s && (s.deleted===true || s.status==="deleted"));}
+  function rpApprovedForDashboard(s){
+    const teacherScore=Number(s&&s.teacherScore);
+    return !!(s && !rpOldDeleted(s) && s.status!=="rejected" && (s.status==="accepted" || (!Number.isNaN(teacherScore)&&teacherScore>0)));
+  }
+  function rpScoreForDashboard(s){
+    const teacherScore=Number(s&&s.teacherScore);
+    if(!Number.isNaN(teacherScore)&&teacherScore>0) return Math.max(0,Math.min(100,Math.round(teacherScore)));
+    const finalScore=Number(s&&s.finalScore);
+    if(!Number.isNaN(finalScore)&&finalScore>0) return Math.max(0,Math.min(100,Math.round(finalScore)));
+    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.accuracy))) return Math.round(Number(s.analysis.accuracy));
+    return null;
+  }
+  function rpWcpmForDashboard(s){
+    if(Number.isFinite(Number(s&&s.wcpm))) return Math.round(Number(s.wcpm));
+    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.wcpm))) return Math.round(Number(s.analysis.wcpm));
+    return null;
+  }
+  function rpFluencyForDashboard(s){
+    if(Number.isFinite(Number(s&&s.fluency))) return Math.round(Number(s.fluency));
+    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.fluency))) return Math.round(Number(s.analysis.fluency));
+    return null;
+  }
+  const subs=rawSubs.filter(s=>!rpOldDeleted(s) && taskIds.has(s.taskId));
   async function gen(){
     const topic=title.trim()||"Reading";
     const fallback=rpGenerateTextWords(level,wordCount,topic);
@@ -2507,7 +2533,16 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function delTask(t){if(!confirm("Delete this Reading Progress task?"))return; await fsDel("readingTasks",t.id); await reload();}
   const targetStudents=myStudents.filter(s=>!classIds.length||classIds.includes(s.classId));
   const filteredStudents=myStudents.filter(s=>(filter==="all"||s.classId===filter)&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search)));
-  const studentStats=filteredStudents.map(st=>{const ss=subs.filter(x=>x.studentId===st.id&&x.analysis); const avg=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.accuracy,0)/ss.length):null; const w=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.wcpm,0)/ss.length):null; const f=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.fluency,0)/ss.length):null; return {st,ss,avg,w,f};});
+  const studentStats=filteredStudents.map(st=>{
+    const ss=subs.filter(x=>x.studentId===st.id && rpApprovedForDashboard(x));
+    const scores=ss.map(rpScoreForDashboard).filter(x=>x!==null);
+    const wcpmVals=ss.map(rpWcpmForDashboard).filter(x=>x!==null);
+    const fluVals=ss.map(rpFluencyForDashboard).filter(x=>x!==null);
+    const avg=scores.length?Math.round(scores.reduce((a,x)=>a+x,0)/scores.length):null;
+    const w=wcpmVals.length?Math.round(wcpmVals.reduce((a,x)=>a+x,0)/wcpmVals.length):null;
+    const f=fluVals.length?Math.round(fluVals.reduce((a,x)=>a+x,0)/fluVals.length):null;
+    return {st,ss,avg,w,f};
+  });
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p></Card>
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx}}>{editingTaskId?"Edit Reading Task":"Create Reading Task"}</strong><div style={{display:"grid",gridTemplateColumns:"1fr 130px 120px",gap:"8px",marginTop:"9px"}}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Topic / Title" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select><input type="number" min="5" max="180" value={wordCount} onChange={e=>setWordCount(e.target.value)} placeholder="Words" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div>
@@ -2521,7 +2556,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}</Card>
     <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
     <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
-    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
+    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
   </div>;
 }
 
@@ -3862,5 +3897,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
 
 <!-- BUILD_EDIT_TASKS_STUDENT_TARGETING_AI_IN_ORIGINAL_FORM -->
+
+<!-- BUILD_REMOVE_OLD_RECORDINGS_LINK_DASHBOARD_NEW_RESULTS -->
 </body>
 </html>
