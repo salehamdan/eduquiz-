@@ -2512,8 +2512,11 @@ function ReadingProgressStudent({user,data,reload}){
     return 1 + retakes;
   }
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
-  function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||""):"";}
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
+  function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||"")+"_"+String(recordingId||""):"";}
+  function submittedRecordingIds(){try{return JSON.parse(localStorage.getItem("rp_submitted_recording_ids")||"[]");}catch(e){return []}}
+  function markRecordingSubmitted(id){try{localStorage.setItem("rp_submitted_recording_ids",JSON.stringify([...new Set([...submittedRecordingIds(),id])]))}catch(e){}}
+  function isRecordingSubmitted(id){return !!id && submittedRecordingIds().includes(id);}
   function stopModelAudio(){try{window.speechSynthesis.cancel();}catch(e){} setModelPlaying(false);}
   function playModel(t){
     if(recording){setMsg("Stop recording before playing model audio.");return;}
@@ -2531,7 +2534,7 @@ function ReadingProgressStudent({user,data,reload}){
     if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
-    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");chunksRef.current=[];voiceRef.current=false;
+    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId("rec_"+Date.now()+"_"+Math.random().toString(36).slice(2));chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
@@ -2576,7 +2579,7 @@ function ReadingProgressStudent({user,data,reload}){
     if(submitting){setMsg("Uploading already in progress. Please wait.");return;}
     if(!task||!blob){setMsg("Record your reading first.");return;}
     const key=currentBlobKey();
-    if(sentBlobKey && sentBlobKey===key){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
+    if((sentBlobKey && sentBlobKey===key)||isRecordingSubmitted(recordingId)){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
     if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
@@ -2590,6 +2593,7 @@ function ReadingProgressStudent({user,data,reload}){
     try{
       await fsSet("readingSubmissions",id,submission);
       saveStudentAttemptMarker(submission);
+      markRecordingSubmitted(recordingId);
       setSentBlobKey(key);
       setMsg("✅ Submitted to teacher. This recording cannot be submitted again.");
       setBlob(null); setAudioUrl(""); setTask(null); await reload();
@@ -2606,7 +2610,7 @@ function ReadingProgressStudent({user,data,reload}){
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>Stop the model audio before recording.</div>}
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
-      <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":(sentBlobKey&&sentBlobKey===currentBlobKey()?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
+      <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":((sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=attemptsForTask(t);const last=done.slice().sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0))[done.length-1];const limit=totalAllowedAttempts(t);const teacherExtra=extraRetakeAllowed(done);const allowed=canAttemptTask(t);return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit} · retakes: {Math.max(0,Number(t.retakeLimit??0)||0)}</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}{!allowed&&<div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}{teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}</div><Btn size="sm" color={allowed?C.p:C.mu} disabled={!allowed} onClick={()=>allowed&&setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
@@ -2694,171 +2698,58 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
 }
 
 
+
+function fixAhmedStudent(u){
+  if(!u) return u;
+  const n=String(u.name||"").replace(/\s+/g," ").trim();
+  const looksAhmed=n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali");
+  if(!looksAhmed) return u;
+  return {...u, studentId:"3136", className:"3/1- 3", fixedClassName:"3/1- 3"};
+}
 function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [selectedClasses,setSelectedClasses]=useState([]);
   const [selectedStudents,setSelectedStudents]=useState([]);
   const [filtersOpen,setFiltersOpen]=useState(true);
   const [refreshTick,setRefreshTick]=useState(0);
-
-  function localRecords(){
-    let out=[];
-    try{
-      ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"].forEach(k=>{
-        const arr=JSON.parse(localStorage.getItem(k)||"[]");
-        if(Array.isArray(arr)) out=out.concat(arr);
-      });
-    }catch(e){}
-    return out;
-  }
+  function localRecords(){let out=[];try{["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"].forEach(k=>{const a=JSON.parse(localStorage.getItem(k)||"[]");if(Array.isArray(a))out=out.concat(a);});}catch(e){}return out;}
   function isDeleted(r){return !!(r&&(r.deleted===true||r.status==="deleted"));}
   function isRejected(r){return !!(r&&r.status==="rejected");}
   function isApproved(r){const t=Number(r&&r.teacherScore);return !!(r&&!isDeleted(r)&&!isRejected(r)&&(r.status==="accepted"||(!Number.isNaN(t)&&t>0)));}
-  function score(r){
-    const t=Number(r&&r.teacherScore); if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t)));
-    const f=Number(r&&r.finalScore); if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f)));
-    const ai=Number(r&&r.aiScore); if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai)));
-    const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(Math.max(0,Math.min(100,a)));
-    if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy));
-    return null;
-  }
-  function accuracy(r){const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(a); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return score(r);}
-  function wcpm(r){if(Number.isFinite(Number(r&&r.wcpm)))return Math.round(Number(r.wcpm)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm)))return Math.round(Number(r.analysis.wcpm)); return null;}
-  function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
-  function sid(r){return String(r.studentId||r.studentNumber||"").trim();}
+  function score(r){const t=Number(r&&r.teacherScore);if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t)));const f=Number(r&&r.finalScore);if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f)));const ai=Number(r&&r.aiScore);if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai)));const a=Number(r&&r.accuracy);if(!Number.isNaN(a)&&a>0)return Math.round(Math.max(0,Math.min(100,a)));if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy));return null;}
+  function accuracy(r){const a=Number(r&&r.accuracy);if(!Number.isNaN(a)&&a>0)return Math.round(a);if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy));return score(r);}
+  function wcpm(r){if(Number.isFinite(Number(r&&r.wcpm)))return Math.round(Number(r.wcpm));if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm)))return Math.round(Number(r.analysis.wcpm));return null;}
+  function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency));if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency));return null;}
   function sname(r){return String(r.studentName||r.name||"Student").trim();}
-  function cls(r){return String(r.className||r.classId||"").trim();}
+  function fixedSid(r){const n=sname(r).replace(/\s+/g," ");if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3136";return String(r.studentNumber||r.studentId||"").trim();}
+  function cls(r){const n=sname(r).replace(/\s+/g," ");if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3";return String(r.className||r.classId||"").trim();}
   function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
   function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
-  function perfLevel(v){
-    if(v===null)return "—";
-    if(v>=90)return "Excellent";
-    if(v>=80)return "Very Good";
-    if(v>=70)return "Good";
-    if(v>=60)return "Needs Practice";
-    return "Needs Support";
-  }
-  function improveText(items){
-    const sorted=items.slice().sort((a,b)=>timeOf(a)-timeOf(b)).map(score).filter(x=>x!==null);
-    if(sorted.length===0)return "—";
-    if(sorted.length===1)return "Baseline: "+sorted[0]+"%";
-    const min=Math.min(...sorted), last=sorted[sorted.length-1], diff=last-min;
-    if(diff>=50)return "+"+diff+"% Excellent Growth";
-    if(diff>=30)return "+"+diff+"% Strong Growth";
-    if(diff>=20)return "+"+diff+"% Good Growth";
-    if(diff>=10)return "+"+diff+"% Growth";
-    if(diff>0)return "+"+diff+"% Slight Growth";
-    return "+0% Stable";
-  }
-  function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
-  function bar(label,value,max,color){
-    const w=max?Math.round((value/max)*100):0;
-    return <div style={{marginBottom:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.mu,fontWeight:800}}><span>{label}</span><span>{value}</span></div><div style={{height:"9px",background:"#e2e8f0",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:w+"%",background:color,borderRadius:"999px"}}/></div></div>;
-  }
-
-  const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id || myStudents.some(s=>s.id===r.studentId||s.studentId===r.studentId));
-  const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));
-  const map={}; raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||"")); if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});
-  let all=Object.values(map);
-
+  function perfLevel(v){if(v===null)return "—";if(v>=90)return "Excellent";if(v>=80)return "Very Good";if(v>=70)return "Good";if(v>=60)return "Needs Practice";return "Needs Support";}
+  function improveText(items){const sorted=items.slice().sort((a,b)=>timeOf(a)-timeOf(b)).map(score).filter(x=>x!==null);if(!sorted.length)return "—";if(sorted.length===1)return "Baseline: "+sorted[0]+"%";const min=Math.min(...sorted), last=sorted[sorted.length-1], diff=last-min;if(diff>=50)return "+"+diff+"% Excellent Growth";if(diff>=30)return "+"+diff+"% Strong Growth";if(diff>=20)return "+"+diff+"% Good Growth";if(diff>=10)return "+"+diff+"% Growth";if(diff>0)return "+"+diff+"% Slight Growth";return "+0% Stable";}
+  function toggle(a,setter,v){setter(a.includes(v)?a.filter(x=>x!==v):[...a,v]);}
+  function miniBar(label,value,max,color){const w=max?Math.round((value/max)*100):0;return <div style={{marginBottom:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.mu,fontWeight:800}}><span>{label}</span><span>{value}</span></div><div style={{height:"9px",background:"#e2e8f0",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:w+"%",background:color,borderRadius:"999px"}}/></div></div>;}
+  const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id||myStudents.some(s=>s.id===r.studentId||s.studentId===r.studentId));
+  const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));const map={};raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||""));if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});let all=Object.values(map);
+  const fixedStudents=myStudents.map(fixAhmedStudent);const classNameById={};myClasses.forEach(c=>{classNameById[c.id]=c.name;});
   const allClassNames=[...new Set([...myClasses.map(c=>c.name),...myClasses.map(c=>c.id),...raw.map(cls)].filter(Boolean))].sort();
-  const classNameById={}; myClasses.forEach(c=>{classNameById[c.id]=c.name;});
-  const studentList=myStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:classNameById[s.classId]||s.className||s.classId||""}));
-
-  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(r.classId)||selectedClasses.includes(classNameById[r.classId]));
-  if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(sid(r))||selectedStudents.includes(r.studentId));
-  if(search.trim()){
-    const q=search.toLowerCase();
-    all=all.filter(r=>(sname(r)+" "+sid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));
-  }
-
-  const approved=all.filter(isApproved), pending=all.filter(r=>!isApproved(r)&&!isRejected(r)), rejected=all.filter(isRejected);
-  const grouped={};
-  approved.forEach(r=>{
-    const key=sid(r)||sname(r);
-    if(!grouped[key])grouped[key]={name:sname(r),sid:sid(r),cls:cls(r),items:[]};
-    grouped[key].items.push(r);
-  });
-  const rows=Object.values(grouped).sort((a,b)=>a.name.localeCompare(b.name));
-  const overall=avg(approved.map(score)), accAvg=avg(approved.map(accuracy)), fluAvg=avg(approved.map(fluency));
-  const highest=approved.map(score).filter(x=>x!==null).length?Math.max(...approved.map(score).filter(x=>x!==null)):null;
-
-  const dist=[
-    {label:"90-100",count:approved.filter(r=>score(r)>=90).length,color:C.s},
-    {label:"80-89",count:approved.filter(r=>score(r)>=80&&score(r)<90).length,color:C.p},
-    {label:"70-79",count:approved.filter(r=>score(r)>=70&&score(r)<80).length,color:C.w},
-    {label:"<70",count:approved.filter(r=>score(r)!==null&&score(r)<70).length,color:C.d}
-  ];
-  const classGroups={};
-  approved.forEach(r=>{const k=cls(r)||"—"; if(!classGroups[k])classGroups[k]=[]; classGroups[k].push(score(r));});
-  const classBars=Object.entries(classGroups).map(([k,v])=>({label:k,value:avg(v)||0})).sort((a,b)=>b.value-a.value).slice(0,6);
-  const studentBars=rows.map(r=>({label:r.name,value:avg(r.items.map(score))||0})).sort((a,b)=>b.value-a.value).slice(0,8);
-
-  return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
-        <div><strong style={{color:"#fff",fontSize:"16px"}}>📊 Reading Performance</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Professional report linked to accepted Reading Progress results and Teacher Scores.</p></div>
-        <Btn size="sm" color={C.s} onClick={()=>setRefreshTick(refreshTick+1)}>Refresh</Btn>
-      </div>
-    </Card>
-
-    <Card style={{marginBottom:"11px"}}>
-      <button onClick={()=>setFiltersOpen(!filtersOpen)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#f8fafc",fontWeight:900,color:C.tx,textAlign:"left"}}>🔎 Filters {filtersOpen?"▴":"▾"}</button>
-      {filtersOpen&&<div style={{marginTop:"10px"}}>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name / ID / task" style={{flex:1,minWidth:"190px",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/>
-          <Btn size="sm" color={C.mu} onClick={()=>{setSearch("");setSelectedClasses([]);setSelectedStudents([]);}}>Reset</Btn>
-        </div>
-        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Classes / مجموعة الفصول</div>
-        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{allClassNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div>
-        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Students / مجموعة الطلاب</div>
-        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"115px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div>
-      </div>}
-    </Card>
-
-    <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"8px",marginBottom:"11px"}}>
-      <Stat icon="👥" label="Students" value={rows.length} color={C.pu}/>
-      <Stat icon="✅" label="Accepted" value={approved.length} color={C.s}/>
-      <Stat icon="📊" label="Average Final" value={overall!==null?overall+"%":"—"} color={C.p}/>
-      <Stat icon="🎯" label="Accuracy" value={accAvg!==null?accAvg+"%":"—"} color={C.p}/>
-      <Stat icon="🏆" label="Highest" value={highest!==null?highest+"%":"—"} color={C.w}/>
-      <Stat icon="⏳" label="Pending" value={pending.length} color={C.d}/>
-    </div>
-
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px",marginBottom:"11px"}}>
-      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Score Distribution</strong>{dist.map(d=>bar(d.label,d.count,Math.max(1,approved.length),d.color))}</Card>
-      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Class Average</strong>{classBars.length?classBars.map(d=>bar(d.label,d.value,100,C.p)):bar("No data",0,1,C.mu)}</Card>
-      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Top Student Averages</strong>{studentBars.length?studentBars.map(d=>bar(d.label,d.value,100,C.s)):bar("No data",0,1,C.mu)}</Card>
-    </div>
-
-    <Card style={{padding:0,overflow:"hidden"}}>
-      <div style={{overflowX:"auto"}}>
-        <table style={{borderCollapse:"collapse",minWidth:"1120px",width:"100%",fontSize:"11px",fontFamily:F}}>
-          <thead><tr style={{background:"#f8fafc"}}>
-            {["Student","Class","Attempts","Final Score for each test","Average Final","Accuracy","WCPM","Fluency","Improvement %","Performance Level","Teacher Notes"].map(h=><th key={h} style={{padding:"9px",borderBottom:"2px solid "+C.br,textAlign:"left"}}>{h}</th>)}
-          </tr></thead>
-          <tbody>{rows.length===0?<tr><td colSpan="11" style={{padding:"16px",textAlign:"center",color:C.mu}}>No accepted results yet. Press Accept or enter Teacher Score in Reading Progress.</td></tr>:rows.map(r=>{
-            const sorted=r.items.slice().sort((a,b)=>timeOf(a)-timeOf(b));
-            const scores=sorted.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x),note:x.teacherNotes||""})).filter(x=>x.score!==null);
-            const notes=sorted.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | ");
-            const av=avg(sorted.map(score)), aa=avg(sorted.map(accuracy)), aw=avg(sorted.map(wcpm)), af=avg(sorted.map(fluency));
-            return <tr key={r.sid||r.name}>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900}}>{r.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {r.sid||"—"}</div></td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.cls||"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.items.length}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{scores.map((s,i)=><div key={i}>{s.task}: <b>{s.score}%</b></div>)}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900,color:av!==null?gc(av):C.mu}}>{av!==null?av+"%":"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aa!==null?aa+"%":"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aw!==null?aw:"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{af!==null?af+"%":"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900,color:C.p}}>{improveText(sorted)}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900}}>{perfLevel(av)}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{notes||"—"}</td>
-            </tr>})}</tbody>
-        </table>
-      </div>
-    </Card>
-  </div>;
+  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||s.className||s.classId||""}));
+  if(selectedClasses.length)all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(r.classId)||selectedClasses.includes(classNameById[r.classId]));
+  if(selectedStudents.length)all=all.filter(r=>selectedStudents.includes(fixedSid(r))||selectedStudents.includes(r.studentId));
+  if(search.trim()){const q=search.toLowerCase();all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
+  const approved=all.filter(isApproved), pending=all.filter(r=>!isApproved(r)&&!isRejected(r));
+  const grouped={};approved.forEach(r=>{const key=fixedSid(r)||sname(r);if(!grouped[key])grouped[key]={name:sname(r),sid:fixedSid(r),cls:cls(r),items:[]};grouped[key].items.push(r);});
+  const rows=Object.values(grouped).sort((a,b)=>a.name.localeCompare(b.name));const overall=avg(approved.map(score)), accAvg=avg(approved.map(accuracy));const high=approved.map(score).filter(x=>x!==null).length?Math.max(...approved.map(score).filter(x=>x!==null)):null;
+  const dist=[{label:"90-100",count:approved.filter(r=>score(r)>=90).length,color:C.s},{label:"80-89",count:approved.filter(r=>score(r)>=80&&score(r)<90).length,color:C.p},{label:"70-79",count:approved.filter(r=>score(r)>=70&&score(r)<80).length,color:C.w},{label:"<70",count:approved.filter(r=>score(r)!==null&&score(r)<70).length,color:C.d}];
+  const classGroups={};approved.forEach(r=>{const k=cls(r)||"—";if(!classGroups[k])classGroups[k]=[];classGroups[k].push(r);});
+  const classCards=Object.entries(classGroups).map(([k,items])=>{const scores=items.map(score), av=avg(scores);return {className:k,items,students:[...new Set(items.map(r=>fixedSid(r)||sname(r)))].length,av,aa:avg(items.map(accuracy)),aw:avg(items.map(wcpm)),af:avg(items.map(fluency)),high:scores.filter(x=>x!==null).length?Math.max(...scores.filter(x=>x!==null)):null};}).sort((a,b)=>(b.av||0)-(a.av||0));
+  function resetFilters(){setSearch("");setSelectedClasses([]);setSelectedStudents([]);setRefreshTick(refreshTick+1);}
+  return <div><Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{color:"#fff",fontSize:"16px"}}>📊 Reading Performance</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Mobile-friendly student and class report.</p></div><Btn size="sm" color={C.s} onClick={()=>setRefreshTick(refreshTick+1)}>Refresh</Btn></div></Card>
+  <Card style={{marginBottom:"11px"}}><button onClick={()=>setFiltersOpen(!filtersOpen)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#f8fafc",fontWeight:900,color:C.tx,textAlign:"left"}}>🔎 Filters {filtersOpen?"▴":"▾"}</button>{filtersOpen&&<div style={{marginTop:"10px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student name / ID" style={{flex:1,minWidth:"190px",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/><Btn size="sm" color={C.mu} onClick={resetFilters}>Reset</Btn></div><div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Classes</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{allClassNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div><div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Students</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"115px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div></div>}</Card>
+  <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"8px",marginBottom:"11px"}}><Stat icon="👥" label="Students" value={rows.length} color={C.pu}/><Stat icon="✅" label="Accepted" value={approved.length} color={C.s}/><Stat icon="📊" label="Average Final" value={overall!==null?overall+"%":"—"} color={C.p}/><Stat icon="🎯" label="Accuracy" value={accAvg!==null?accAvg+"%":"—"} color={C.p}/><Stat icon="🏆" label="Highest" value={high!==null?high+"%":"—"} color={C.w}/><Stat icon="⏳" label="Pending" value={pending.length} color={C.d}/></div>
+  <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",display:"block",marginBottom:"8px"}}>Score Distribution</strong>{dist.map(d=>miniBar(d.label,d.count,Math.max(1,approved.length),d.color))}</Card>
+  <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",display:"block",marginBottom:"8px"}}>🏫 Class Performance</strong>{classCards.length===0?<p style={{fontSize:"12px",color:C.mu}}>No accepted class results yet.</p>:classCards.map(c=><div key={c.className} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"10px",marginBottom:"8px",background:"#fff"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><strong style={{fontSize:"14px",color:C.tx}}>Class: {c.className}</strong><span style={{fontWeight:900,color:gc(c.av||0)}}>{c.av!==null?c.av+"%":"—"}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px",fontSize:"11px",color:C.mu}}><div>Students: <b>{c.students}</b></div><div>Accepted: <b>{c.items.length}</b></div><div>Accuracy: <b>{c.aa!==null?c.aa+"%":"—"}</b></div><div>Highest: <b>{c.high!==null?c.high+"%":"—"}</b></div><div>WCPM: <b>{c.aw!==null?c.aw:"—"}</b></div><div>Fluency: <b>{c.af!==null?c.af+"%":"—"}</b></div></div>{miniBar("Class Average",c.av||0,100,C.p)}</div>)}</Card>
+  <Card><strong style={{fontSize:"13px",display:"block",marginBottom:"8px"}}>👤 Student Performance</strong>{rows.length===0?<p style={{fontSize:"12px",color:C.mu}}>No accepted student results yet.</p>:rows.map(r=>{const sorted=r.items.slice().sort((a,b)=>timeOf(a)-timeOf(b));const scores=sorted.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x)})).filter(x=>x.score!==null);const av=avg(sorted.map(score)), aa=avg(sorted.map(accuracy)), aw=avg(sorted.map(wcpm)), af=avg(sorted.map(fluency));const notes=sorted.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | ");return <div key={r.sid||r.name} style={{border:"1px solid "+C.br,borderRadius:"14px",padding:"11px",marginBottom:"10px",background:"#fff",boxShadow:"0 4px 12px rgba(15,23,42,.06)"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{r.name}</strong><div style={{fontSize:"10px",color:C.mu}}>ID: {r.sid||"—"} · Class: {r.cls||"—"}</div></div><div style={{fontWeight:900,color:gc(av||0),fontSize:"18px"}}>{av!==null?av+"%":"—"}</div></div><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"9px",fontSize:"11px"}}><div>Attempts: <b>{r.items.length}</b></div><div>Level: <b>{perfLevel(av)}</b></div><div>Accuracy: <b>{aa!==null?aa+"%":"—"}</b></div><div>WCPM: <b>{aw!==null?aw:"—"}</b></div><div>Fluency: <b>{af!==null?af+"%":"—"}</b></div><div>Improvement: <b>{improveText(sorted)}</b></div></div><div style={{marginTop:"8px",fontSize:"11px",color:C.tx}}><b>Final Scores:</b>{scores.map((s,i)=><div key={i} style={{color:C.mu}}>{s.task}: <b>{s.score}%</b></div>)}</div>{notes&&<div style={{marginTop:"7px",fontSize:"10px",color:C.mu}}>Notes: {notes}</div>}</div>})}</Card></div>;
 }
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
@@ -2880,7 +2771,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
   const myClasses=data.classes.filter(c=>!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded);
-  const myStudents=data.users.filter(u=>u.role==="student"&&(myClasses.some(c=>c.id===u.classId)||!u.classId));
+  const myStudents=data.users.filter(u=>u.role==="student"&&(myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   const myResps=data.responses.filter(r=>myQuizzes.some(q=>q.id===r.quizId));
   const flags=myStudents.filter(s=>{const rs=data.responses.filter(r=>r.studentId===s.id);return calcSkills(rs,data.quizzes).filter(sk=>sk.score<50&&sk.total>=2).length>=2;});
   const sorted=[...myStudents].filter(s=>(filterCls==="all"||s.classId===filterCls)&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search))).sort((a,b)=>{
@@ -3399,12 +3290,12 @@ function App() {
       const code=params.get("quiz");
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
       const sess=loadSession();
-      if(sess){const u=d.users.find(x=>x.id===sess.id);if(u)setUser(u);else if(sess.id)setUser(sess);}
+      if(sess){const u=d.users.find(x=>x.id===sess.id);if(u)setUser(fixAhmedStudent(u));else if(sess.id)setUser(fixAhmedStudent(sess));}
       setLoading(false);
     })();
   },[]);
 
-  function handleLogin(u){setUser(u);reload();}
+  function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
   function handleLogout(){clearSession();setUser(null);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
@@ -4245,65 +4136,9 @@ document.addEventListener("click", function(e){
 
 <!-- BUILD_RESTORE_TOP_HIDE_NAME_FILTERS_ONLY -->
 
-<script id="rp-top-bottom-navigation-safe">
-(function(){
-  function scrollToY(y){ window.scrollTo({top:y,behavior:"smooth"}); }
-  function scrollByAmount(amount){ window.scrollBy({top:amount,behavior:"smooth"}); }
 
-  function makeBtn(txt, bg, onClick){
-    const b=document.createElement("button");
-    b.type="button";
-    b.textContent=txt;
-    b.style.cssText="padding:8px 10px;border:0;border-radius:999px;background:"+bg+";color:#fff;font-weight:900;box-shadow:0 8px 18px rgba(15,23,42,.22);font-family:system-ui;font-size:13px";
-    b.onclick=onClick;
-    return b;
-  }
+<!-- removed floating navigation -->
 
-  function addFixedTopBottom(){
-    if(document.getElementById("rp-fixed-top-bottom-nav")) return;
-    const wrap=document.createElement("div");
-    wrap.id="rp-fixed-top-bottom-nav";
-    wrap.style.cssText="position:fixed;left:10px;bottom:70px;z-index:999999;display:flex;flex-direction:column;gap:7px";
-    wrap.appendChild(makeBtn("⬆ Top","#2563eb",()=>scrollToY(0)));
-    wrap.appendChild(makeBtn("⬇ Bottom","#334155",()=>scrollToY(document.body.scrollHeight)));
-    document.body.appendChild(wrap);
-  }
-
-  function addPanelArrows(panel, id){
-    if(!panel || panel.querySelector("[data-rp-panel-nav='"+id+"']")) return;
-    const bar=document.createElement("div");
-    bar.setAttribute("data-rp-panel-nav",id);
-    bar.style.cssText="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin:8px 0";
-    bar.appendChild(makeBtn("⬆","#2563eb",()=>scrollByAmount(-520)));
-    bar.appendChild(makeBtn("⬇","#334155",()=>scrollByAmount(520)));
-    bar.appendChild(makeBtn("Top","#0f766e",()=>scrollToY(0)));
-    bar.appendChild(makeBtn("Bottom","#7c3aed",()=>scrollToY(document.body.scrollHeight)));
-    panel.insertBefore(bar, panel.firstChild);
-  }
-
-  function locateLowerPanel(){
-    const cards=[...document.querySelectorAll("div")];
-    return cards.find(el=>{
-      const t=(el.innerText||"");
-      return t.includes("Tasks") && t.includes("Edit") && t.includes("Delete") && t.includes("Create Reading Task");
-    }) || cards.find(el=>{
-      const t=(el.innerText||"");
-      return t.includes("Tasks") && t.includes("Pending / Recent Recordings");
-    });
-  }
-
-  function initNav(){
-    addFixedTopBottom();
-    const topPanel=document.getElementById("rp-v11-panel");
-    if(topPanel) addPanelArrows(topPanel,"top");
-    const lower=locateLowerPanel();
-    if(lower) addPanelArrows(lower,"lower");
-  }
-
-  setTimeout(initNav,700);
-  setInterval(initNav,1600);
-})();
-</script>
 
 
 <!-- BUILD_TOP_BOTTOM_NAVIGATION_ARROWS -->
@@ -4339,5 +4174,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_STRICT_RETAKE_GATE -->
 
 <!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
+
+<!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
 </body>
 </html>
