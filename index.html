@@ -2718,6 +2718,20 @@ function cleanClassLabel(v){
   return s;
 }
 
+
+function classDisplayName(raw, classes){
+  const s=String(raw||"").trim();
+  if(!s) return "";
+  const found=(classes||[]).find(c=>String(c.id)===s || String(c.name)===s);
+  if(found) return String(found.name||found.id);
+  if(/^class_3_1$/i.test(s)) return "ثالث أول — 3-1";
+  if(/^class_3_2$/i.test(s)) return "ثالث ثاني — 3-2";
+  if(/^class_3_3$/i.test(s)) return "ثالث ثالث — 3-3";
+  if(/^class_3_4$/i.test(s)) return "ثالث رابع — 3-4";
+  if(/^mph/i.test(s) || s.length>22) return "";
+  return s;
+}
+
 function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [selectedClasses,setSelectedClasses]=useState([]);
@@ -2742,7 +2756,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
   function sname(r){return String(r.studentName||r.name||"Student").trim();}
   function fixedSid(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3136"; return String(r.studentNumber||r.studentId||"").trim();}
-  function cls(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3"; return cleanClassLabel(r.className||r.classId);}
+  function cls(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3"; return classDisplayName(r.className||r.classId, data.classes||myClasses);}
   function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
   function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
   function perfLevel(v){if(v===null)return "—"; if(v>=90)return "Excellent"; if(v>=80)return "Very Good"; if(v>=70)return "Good"; if(v>=60)return "Needs Practice"; return "Needs Support";}
@@ -2756,12 +2770,12 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   let all=Object.values(map);
 
   const fixedStudents=myStudents.map(fixAhmedStudent);
-  const classNameById={}; myClasses.forEach(c=>{const clean=cleanClassLabel(c.name||c.id); if(clean)classNameById[c.id]=clean;});
-  const allowedClassLabels=["ثالث أول — 3-1","ثالث ثاني — 3-2","ثالث ثالث — 3-3","ثالث رابع — 3-4","3/1- 3","3/1"].filter(Boolean);
-  const allClassNames=[...new Set([...allowedClassLabels,...raw.map(cls)].map(cleanClassLabel).filter(Boolean))];
-  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||cleanClassLabel(s.className||s.classId)}));
+  const classNameById={}; (data.classes||myClasses||[]).forEach(c=>{const clean=classDisplayName(c.name||c.id,data.classes||myClasses); if(clean)classNameById[c.id]=clean;});
+  const platformClasses=(data.classes||myClasses||[]).map(c=>classDisplayName(c.name||c.id,data.classes||myClasses)).filter(Boolean);
+  const allClassNames=[...new Set([...platformClasses,...raw.map(cls)].filter(Boolean))];
+  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||classDisplayName(s.className||s.classId, data.classes||myClasses)}));
 
-  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(cleanClassLabel(r.classId))||selectedClasses.includes(classNameById[r.classId]));
+  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(classDisplayName(r.classId, data.classes||myClasses))||selectedClasses.includes(classNameById[r.classId]));
   if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(fixedSid(r))||selectedStudents.includes(r.studentId));
   if(search.trim()){const q=search.toLowerCase(); all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
 
@@ -4237,37 +4251,107 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
 
 <!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
+<!-- removed rp-hide-show-panel-fix -->
+<!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
 
-<script id="rp-hide-show-panel-fix">
+<script id="rp-reading-progress-tools-v2">
 (function(){
-  function fixHideShow(){
+  function qsa(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel));}
+  function findReadingPanel(){
+    var candidates=qsa("div");
+    for(var i=0;i<candidates.length;i++){
+      var t=(candidates[i].innerText||"");
+      if(t.indexOf("Reading Progress")>=0 && t.indexOf("Analyze Visible")>=0 && t.indexOf("Accept Visible")>=0){
+        return candidates[i];
+      }
+    }
+    return document.getElementById("rp-v11-panel");
+  }
+  function arrKeys(){return ["readingSubmissions","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"];}
+  function readArr(k){try{var a=JSON.parse(localStorage.getItem(k)||"[]");return Array.isArray(a)?a:[];}catch(e){return [];}}
+  function writeArr(k,a){try{localStorage.setItem(k,JSON.stringify(a));}catch(e){}}
+  function selectedAttemptIds(){return qsa(".rp-attempt-check:checked").map(function(x){return x.value;}).filter(Boolean);}
+  function deleteAttempts(ids){
+    if(!ids.length){alert("Select attempts first.");return;}
+    if(!confirm("Are you sure? This will permanently delete selected attempts."))return;
+    arrKeys().forEach(function(k){
+      var arr=readArr(k);
+      if(arr.length) writeArr(k, arr.filter(function(x){return !x || ids.indexOf(String(x.id||""))<0;}));
+    });
+    alert("Deleted selected attempts permanently.");
+    location.reload();
+  }
+  function deleteAllAttempts(){
+    if(!confirm("Are you sure? This will permanently delete ALL Reading Progress attempts?"))return;
+    arrKeys().forEach(function(k){writeArr(k,[]);});
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("rp_attempt_count_")===0 || k==="rp_submitted_recording_ids") localStorage.removeItem(k);
+    });
+    alert("All attempts deleted permanently.");
+    location.reload();
+  }
+  function addCheckboxes(panel){
+    var cards=qsa("div",panel).filter(function(el){
+      var t=(el.innerText||"");
+      return t.indexOf("Audio Recording")>=0 && (t.indexOf("Status:")>=0 || t.indexOf("Analysis:")>=0);
+    });
+    cards.forEach(function(card,idx){
+      if(card.dataset.rpAttemptTools)return;
+      var txt=card.innerText||"";
+      var idMatch=txt.match(/\b([a-z0-9]{18,})\b/i);
+      var id=(idMatch&&idMatch[1])?idMatch[1]:"dom_attempt_"+idx+"_"+Date.now();
+      card.dataset.rpAttemptTools="1";
+      card.setAttribute("data-rp-attempt-id", id);
+      var wrap=document.createElement("label");
+      wrap.style.cssText="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px;font-weight:800;color:#334155";
+      wrap.innerHTML='<input class="rp-attempt-check" type="checkbox" value="'+id+'"> Select attempt';
+      card.insertBefore(wrap, card.firstChild);
+    });
+  }
+  function addTopControls(panel){
+    if(!panel || panel.dataset.rpTopControls)return;
+    panel.dataset.rpTopControls="1";
+    var bar=document.createElement("div");
+    bar.id="rp-reading-top-controls";
+    bar.style.cssText="display:flex;gap:7px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin:8px 0;padding:8px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0";
+    function btn(txt,bg,fn){
+      var b=document.createElement("button");
+      b.type="button"; b.textContent=txt;
+      b.style.cssText="padding:8px 10px;border:0;border-radius:10px;background:"+bg+";color:#fff;font-weight:900";
+      b.onclick=fn; return b;
+    }
+    var hidden=false;
+    bar.appendChild(btn("Hide","#64748b",function(e){
+      hidden=!hidden;
+      qsa(":scope > *",panel).forEach(function(ch){if(ch!==bar) ch.style.display=hidden?"none":"";});
+      e.target.textContent=hidden?"Show":"Hide";
+      panel.insertBefore(bar,panel.firstChild);
+    }));
+    bar.appendChild(btn("Page Up","#2563eb",function(){window.scrollTo({top:0,behavior:"smooth"});}));
+    bar.appendChild(btn("Page Bottom","#7c3aed",function(){window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});}));
+    bar.appendChild(btn("Delete Selected Attempts","#dc2626",function(){deleteAttempts(selectedAttemptIds());}));
+    bar.appendChild(btn("Delete All Attempts","#0f172a",function(){deleteAllAttempts();}));
+    panel.insertBefore(bar,panel.firstChild);
+  }
+  function hideOldHideButtons(){
+    qsa("button").forEach(function(btn){
+      var txt=(btn.textContent||"").trim().toLowerCase();
+      if((txt==="hide" || txt==="show") && !btn.closest("#rp-reading-top-controls")) btn.style.display="none";
+    });
+  }
+  function init(){
     try{
-      document.querySelectorAll("button").forEach(function(btn){
-        var txt=(btn.textContent||"").trim().toLowerCase();
-        if(txt==="hide" || txt==="show" || txt.indexOf("hide panel")>=0 || txt.indexOf("show panel")>=0){
-          if(btn.dataset.rpHideFixed)return;
-          btn.dataset.rpHideFixed="1";
-          btn.onclick=function(e){
-            e.preventDefault();
-            var panel=document.getElementById("rp-v11-panel");
-            if(!panel){return;}
-            var hidden=panel.dataset.rpHidden==="1";
-            Array.prototype.forEach.call(panel.children,function(ch,i){
-              if(i>0) ch.style.display=hidden?"":"none";
-            });
-            panel.dataset.rpHidden=hidden?"0":"1";
-            btn.textContent=hidden?"Hide":"Show";
-          };
-        }
-      });
+      var panel=findReadingPanel();
+      if(panel){addTopControls(panel);addCheckboxes(panel);}
+      hideOldHideButtons();
     }catch(e){}
   }
-  setTimeout(fixHideShow,700);
-  setInterval(fixHideShow,1800);
+  setTimeout(init,800);
+  setInterval(init,2500);
 })();
 </script>
 
 
-<!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
+<!-- BUILD_FINAL_DYNAMIC_CLASSES_HIDE_NAV_DELETE_ATTEMPTS -->
 </body>
 </html>
