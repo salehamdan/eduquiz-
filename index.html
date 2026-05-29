@@ -3899,5 +3899,111 @@ document.addEventListener("click", function(e){
 <!-- BUILD_EDIT_TASKS_STUDENT_TARGETING_AI_IN_ORIGINAL_FORM -->
 
 <!-- BUILD_REMOVE_OLD_RECORDINGS_LINK_DASHBOARD_NEW_RESULTS -->
+
+<script id="rp-keep-top-hide-name-filters-only">
+(function(){
+  function hideOnlyNameFilters(){
+    try{
+      const classInput=document.getElementById("rp-v11-class");
+      const studentInput=document.getElementById("rp-v11-student");
+      const clearBtn=document.getElementById("rp-v11-clear-filters");
+
+      if(classInput){
+        classInput.value="";
+        classInput.style.display="none";
+        classInput.setAttribute("aria-hidden","true");
+      }
+      if(studentInput){
+        studentInput.value="";
+        studentInput.style.display="none";
+        studentInput.setAttribute("aria-hidden","true");
+      }
+      if(clearBtn){
+        clearBtn.style.display="none";
+        clearBtn.setAttribute("aria-hidden","true");
+      }
+
+      // Important: keep the grading/top RP panel visible.
+      const panel=document.getElementById("rp-v11-panel");
+      if(panel){
+        panel.style.display="block";
+        panel.removeAttribute("data-hidden-by-lower-dashboard");
+      }
+
+      // Hide any accidental linked dashboard from the previous wrong build if it exists.
+      const wrong=document.getElementById("rp-linked-performance-dashboard");
+      if(wrong) wrong.style.display="none";
+    }catch(e){}
+  }
+  setTimeout(hideOnlyNameFilters,500);
+  setInterval(hideOnlyNameFilters,1500);
+})();
+</script>
+
+
+<!-- BUILD_RESTORE_TOP_HIDE_NAME_FILTERS_ONLY -->
+
+<script id="rp-top-bottom-navigation-safe">
+(function(){
+  function scrollToY(y){ window.scrollTo({top:y,behavior:"smooth"}); }
+  function scrollByAmount(amount){ window.scrollBy({top:amount,behavior:"smooth"}); }
+
+  function makeBtn(txt, bg, onClick){
+    const b=document.createElement("button");
+    b.type="button";
+    b.textContent=txt;
+    b.style.cssText="padding:8px 10px;border:0;border-radius:999px;background:"+bg+";color:#fff;font-weight:900;box-shadow:0 8px 18px rgba(15,23,42,.22);font-family:system-ui;font-size:13px";
+    b.onclick=onClick;
+    return b;
+  }
+
+  function addFixedTopBottom(){
+    if(document.getElementById("rp-fixed-top-bottom-nav")) return;
+    const wrap=document.createElement("div");
+    wrap.id="rp-fixed-top-bottom-nav";
+    wrap.style.cssText="position:fixed;left:10px;bottom:70px;z-index:999999;display:flex;flex-direction:column;gap:7px";
+    wrap.appendChild(makeBtn("⬆ Top","#2563eb",()=>scrollToY(0)));
+    wrap.appendChild(makeBtn("⬇ Bottom","#334155",()=>scrollToY(document.body.scrollHeight)));
+    document.body.appendChild(wrap);
+  }
+
+  function addPanelArrows(panel, id){
+    if(!panel || panel.querySelector("[data-rp-panel-nav='"+id+"']")) return;
+    const bar=document.createElement("div");
+    bar.setAttribute("data-rp-panel-nav",id);
+    bar.style.cssText="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin:8px 0";
+    bar.appendChild(makeBtn("⬆","#2563eb",()=>scrollByAmount(-520)));
+    bar.appendChild(makeBtn("⬇","#334155",()=>scrollByAmount(520)));
+    bar.appendChild(makeBtn("Top","#0f766e",()=>scrollToY(0)));
+    bar.appendChild(makeBtn("Bottom","#7c3aed",()=>scrollToY(document.body.scrollHeight)));
+    panel.insertBefore(bar, panel.firstChild);
+  }
+
+  function locateLowerPanel(){
+    const cards=[...document.querySelectorAll("div")];
+    return cards.find(el=>{
+      const t=(el.innerText||"");
+      return t.includes("Tasks") && t.includes("Edit") && t.includes("Delete") && t.includes("Create Reading Task");
+    }) || cards.find(el=>{
+      const t=(el.innerText||"");
+      return t.includes("Tasks") && t.includes("Pending / Recent Recordings");
+    });
+  }
+
+  function initNav(){
+    addFixedTopBottom();
+    const topPanel=document.getElementById("rp-v11-panel");
+    if(topPanel) addPanelArrows(topPanel,"top");
+    const lower=locateLowerPanel();
+    if(lower) addPanelArrows(lower,"lower");
+  }
+
+  setTimeout(initNav,700);
+  setInterval(initNav,1600);
+})();
+</script>
+
+
+<!-- BUILD_TOP_BOTTOM_NAVIGATION_ARROWS -->
 </body>
 </html>
