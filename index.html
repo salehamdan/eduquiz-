@@ -2448,17 +2448,26 @@ function ReadingProgressStudent({user,data,reload}){
   function rpLocalAttemptsForTask(taskId){
     let out=[];
     try{
-      ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"].forEach(k=>{
+      ["rp_student_attempts","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"].forEach(k=>{
         const arr=JSON.parse(localStorage.getItem(k)||"[]");
         if(Array.isArray(arr)) out=out.concat(arr);
       });
     }catch(e){}
     return out.filter(r=>{
       if(!r || r.deleted===true || r.status==="deleted") return false;
-      const sameTask=r.taskId===taskId;
-      const sameStudent=String(r.studentId||"")===String(user.id||"") || String(r.studentId||"")===String(user.studentId||"");
+      const sameTask=String(r.taskId||"")===String(taskId||"");
+      const sid=String(r.studentId||r.studentNumber||"");
+      const sameStudent=sid===String(user.id||"") || sid===String(user.studentId||"");
       return sameTask && sameStudent;
     });
+  }
+  function saveStudentAttemptMarker(r){
+    try{
+      const arr=JSON.parse(localStorage.getItem("rp_student_attempts")||"[]");
+      const clean=arr.filter(x=>x&&x.id!==r.id);
+      clean.push(r);
+      localStorage.setItem("rp_student_attempts", JSON.stringify(clean));
+    }catch(e){}
   }
   function attemptsForTask(t){
     const cloud=subs.filter(s=>s.taskId===t.id && s.deleted!==true && s.status!=="deleted");
@@ -2475,7 +2484,7 @@ function ReadingProgressStudent({user,data,reload}){
     return 1 + retakes;
   }
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null);
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
   function stopModelAudio(){try{window.speechSynthesis.cancel();}catch(e){} setModelPlaying(false);}
   function playModel(t){
     if(recording){setMsg("Stop recording before playing model audio.");return;}
@@ -2492,22 +2501,53 @@ function ReadingProgressStudent({user,data,reload}){
   async function startRec(){
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
-    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];
+    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      const ctx=new AC(); audioCtxRef.current=ctx;
+      const src=ctx.createMediaStreamSource(stream);
+      const analyser=ctx.createAnalyser(); analyser.fftSize=1024; analyserRef.current=analyser; src.connect(analyser);
+    }catch(e){}
     const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"");
     const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:undefined); mediaRef.current=mr;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
-    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b));};
+    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b));};
     recRef.current=rpStartRecognition(setTranscript);
-    mr.start(1000); setRecording(true); tRef.current=setInterval(()=>setSeconds(x=>x+1),1000);
+    mr.start(1000); setRecording(true);
+    let elapsed=0;
+    tRef.current=setInterval(()=>{
+      elapsed++;
+      setSeconds(elapsed);
+      try{
+        const an=analyserRef.current;
+        if(an){
+          const dataArr=new Uint8Array(an.fftSize);
+          an.getByteTimeDomainData(dataArr);
+          let sum=0;
+          for(let i=0;i<dataArr.length;i++){const v=(dataArr[i]-128)/128;sum+=v*v;}
+          const rms=Math.sqrt(sum/dataArr.length);
+          if(rms>0.035) voiceRef.current=true;
+        }
+      }catch(e){}
+      if(elapsed>=20 && !voiceRef.current){
+        setMsg("Recording stopped because no clear voice was detected.");
+        stopRec();
+      }else if(elapsed>=90){
+        setMsg("Recording stopped automatically after the maximum time.");
+        stopRec();
+      }
+    },1000);
   }
-  function stopRec(){try{mediaRef.current&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
+  function stopRec(){try{mediaRef.current&&mediaRef.current.state!=="inactive"&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
   async function submit(){
     if(!task||!blob){setMsg("Record your reading first.");return;}
     setMsg("Uploading…");
     const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
     let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setMsg("Upload failed. Check Firebase Storage permissions.");return;}
-    await fsSet("readingSubmissions",id,{id,taskId:task.id,studentId:user.id,classId:user.classId,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"});
+    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"};
+    await fsSet("readingSubmissions",id,submission);
+    saveStudentAttemptMarker(submission);
     setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
   }
   if(task)return <div>
@@ -2602,6 +2642,132 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
   </div>;
 }
+
+
+function ReadingPerformanceReport({user,data,myClasses,myStudents}){
+  const [search,setSearch]=useState("");
+  const [selectedClasses,setSelectedClasses]=useState([]);
+  const [selectedStudents,setSelectedStudents]=useState([]);
+  const [refreshTick,setRefreshTick]=useState(0);
+
+  function localRecords(){
+    let out=[];
+    try{
+      ["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"].forEach(k=>{
+        const arr=JSON.parse(localStorage.getItem(k)||"[]");
+        if(Array.isArray(arr)) out=out.concat(arr);
+      });
+    }catch(e){}
+    return out;
+  }
+  function isDeleted(r){return !!(r&&(r.deleted===true||r.status==="deleted"));}
+  function isRejected(r){return !!(r&&r.status==="rejected");}
+  function isApproved(r){const t=Number(r&&r.teacherScore);return !!(r&&!isDeleted(r)&&!isRejected(r)&&(r.status==="accepted"||(!Number.isNaN(t)&&t>0)));}
+  function score(r){
+    const t=Number(r&&r.teacherScore); if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t)));
+    const f=Number(r&&r.finalScore); if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f)));
+    const ai=Number(r&&r.aiScore); if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai)));
+    const acc=Number(r&&r.accuracy); if(!Number.isNaN(acc)&&acc>0)return Math.round(Math.max(0,Math.min(100,acc)));
+    if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy));
+    return null;
+  }
+  function acc(r){const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(a); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return score(r);}
+  function wcpm(r){if(Number.isFinite(Number(r&&r.wcpm)))return Math.round(Number(r.wcpm)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm)))return Math.round(Number(r.analysis.wcpm)); return null;}
+  function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
+  function sid(r){return String(r.studentId||r.studentNumber||"").trim();}
+  function sname(r){return String(r.studentName||r.name||"Student").trim();}
+  function cls(r){return String(r.className||r.classId||"").trim();}
+  function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
+  function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
+
+  const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id || myStudents.some(s=>s.id===r.studentId||s.studentId===r.studentId));
+  const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));
+  const map={}; raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||"")); if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});
+  let all=Object.values(map);
+
+  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(r.classId));
+  if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(sid(r))||selectedStudents.includes(r.studentId));
+  if(search.trim()){
+    const q=search.toLowerCase();
+    all=all.filter(r=>(sname(r)+" "+sid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));
+  }
+
+  const approved=all.filter(isApproved), pending=all.filter(r=>!isApproved(r)&&!isRejected(r)), rejected=all.filter(isRejected);
+  const grouped={};
+  approved.forEach(r=>{
+    const key=sid(r)||sname(r);
+    if(!grouped[key])grouped[key]={name:sname(r),sid:sid(r),cls:cls(r),items:[]};
+    grouped[key].items.push(r);
+  });
+
+  const classNames=[...new Set([...myClasses.map(c=>c.name),...raw.map(cls)].filter(Boolean))].sort();
+  const studentList=myStudents.map(s=>({id:s.studentId||s.id,name:s.name,cls:myClasses.find(c=>c.id===s.classId)?.name||s.className||""}));
+
+  const rows=Object.values(grouped).sort((a,b)=>a.name.localeCompare(b.name));
+  const overall=avg(approved.map(score));
+
+  function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
+  function improvement(items){
+    const sorted=items.slice().sort((a,b)=>timeOf(a)-timeOf(b)).map(score).filter(x=>x!==null);
+    if(sorted.length<2)return "—";
+    const diff=sorted[sorted.length-1]-sorted[0];
+    if(diff>=20)return "Excellent Growth";
+    if(diff>=10)return "Good Growth";
+    if(diff>=1)return "Slight Growth";
+    if(diff===0)return "Stable";
+    return "Needs Support";
+  }
+
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"15px"}}>📊 Reading Performance</strong>
+      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Independent report from accepted Reading Progress results and Teacher Scores.</p>
+    </Card>
+    <Card style={{marginBottom:"11px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student / ID / task" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+        <Btn size="sm" color={C.p} onClick={()=>setRefreshTick(refreshTick+1)}>Refresh</Btn>
+        <Btn size="sm" color={C.mu} onClick={()=>{setSearch("");setSelectedClasses([]);setSelectedStudents([]);}}>All</Btn>
+      </div>
+      <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"10px"}}>Classes</div>
+      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{classNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div>
+      <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"10px"}}>Students</div>
+      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"110px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div>
+    </Card>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"11px"}}>
+      <Stat icon="✅" label="Accepted" value={approved.length} color={C.s}/>
+      <Stat icon="⏳" label="Pending" value={pending.length} color={C.w}/>
+      <Stat icon="❌" label="Rejected" value={rejected.length} color={C.d}/>
+      <Stat icon="📊" label="Average" value={overall!==null?overall+"%":"—"} color={C.p}/>
+    </div>
+    <Card style={{padding:0,overflow:"hidden"}}>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",minWidth:"980px",width:"100%",fontSize:"11px",fontFamily:F}}>
+          <thead><tr>
+            {["Student","Class","Attempts","Final Score for each test","Average Final","Accuracy","WCPM","Fluency","Improvement Level","Teacher Notes"].map(h=><th key={h} style={{padding:"9px",borderBottom:"2px solid "+C.br,textAlign:"left"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{rows.length===0?<tr><td colSpan="10" style={{padding:"14px",textAlign:"center",color:C.mu}}>No accepted results yet. Press Accept or enter Teacher Score in Reading Progress.</td></tr>:rows.map(r=>{
+            const scores=r.items.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x),note:x.teacherNotes||""})).filter(x=>x.score!==null);
+            const notes=r.items.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | ");
+            const av=avg(r.items.map(score)), aa=avg(r.items.map(acc)), aw=avg(r.items.map(wcpm)), af=avg(r.items.map(fluency));
+            return <tr key={r.sid||r.name}>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{r.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {r.sid||"—"}</div></td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.cls||"—"}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.items.length}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{scores.map((s,i)=><div key={i}>{s.task}: <b>{s.score}%</b></div>)}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900,color:av!==null?gc(av):C.mu}}>{av!==null?av+"%":"—"}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aa!==null?aa+"%":"—"}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aw!==null?aw:"—"}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{af!==null?af+"%":"—"}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{improvement(r.items)}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{notes||"—"}</td>
+            </tr>})}</tbody>
+        </table>
+      </div>
+    </Card>
+  </div>;
+}
+
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
@@ -2789,7 +2955,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -2816,6 +2982,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         </div>}
 
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
+        {tab==="readingReport" && <ReadingPerformanceReport user={user} data={data} myClasses={myClasses} myStudents={myStudents}/>}
 
         {tab==="quizzes" && <div>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Quizzes ({myQuizzes.length})</strong><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn></div>
@@ -4072,5 +4239,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_NO_RECORD_WHILE_AUDIO_RETAKE_LIMIT_SAFE -->
 
 <!-- BUILD_LINK_STUDENT_ATTEMPTS_RETAKE_ZERO_INLINE_SAFE -->
+
+<!-- BUILD_FINAL_ATTEMPTS_SMART_RECORDING_READING_REPORT -->
 </body>
 </html>
