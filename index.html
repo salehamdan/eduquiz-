@@ -2461,12 +2461,23 @@ function ReadingProgressStudent({user,data,reload}){
       return sameTask && sameStudent;
     });
   }
+  function attemptCounterKey(taskId){
+    return "rp_attempt_count_"+String(user.id||user.studentId)+"_"+String(taskId);
+  }
+  function getAttemptCounter(taskId){
+    try{return Number(localStorage.getItem(attemptCounterKey(taskId))||0)||0;}catch(e){return 0;}
+  }
+  function setAttemptCounter(taskId,n){
+    try{localStorage.setItem(attemptCounterKey(taskId), String(Math.max(0,Number(n)||0)));}catch(e){}
+  }
   function saveStudentAttemptMarker(r){
     try{
       const arr=JSON.parse(localStorage.getItem("rp_student_attempts")||"[]");
       const clean=arr.filter(x=>x&&x.id!==r.id);
       clean.push(r);
       localStorage.setItem("rp_student_attempts", JSON.stringify(clean));
+      const old=getAttemptCounter(r.taskId);
+      setAttemptCounter(r.taskId, Math.max(old+1, clean.filter(x=>x&&x.taskId===r.taskId&&(x.studentId===user.id||x.studentId===user.studentId)).length));
     }catch(e){}
   }
   function attemptsForTask(t){
@@ -2474,7 +2485,12 @@ function ReadingProgressStudent({user,data,reload}){
     const local=rpLocalAttemptsForTask(t.id);
     const map={};
     [...cloud,...local].forEach(r=>{ if(r&&r.id) map[r.id]=r; });
-    return Object.values(map);
+    const arr=Object.values(map);
+    const counted=getAttemptCounter(t.id);
+    while(arr.length<counted){
+      arr.push({id:"local_counter_"+t.id+"_"+arr.length,taskId:t.id,studentId:user.id,status:"submitted",createdAt:today()});
+    }
+    return arr;
   }
   function extraRetakeAllowed(attempts){
     return attempts.some(a=>a && a.status==="retake_allowed");
@@ -2506,6 +2522,7 @@ function ReadingProgressStudent({user,data,reload}){
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
       const ctx=new AC(); audioCtxRef.current=ctx;
+      if(ctx.state==="suspended") await ctx.resume();
       const src=ctx.createMediaStreamSource(stream);
       const analyser=ctx.createAnalyser(); analyser.fftSize=1024; analyserRef.current=analyser; src.connect(analyser);
     }catch(e){}
@@ -2513,9 +2530,9 @@ function ReadingProgressStudent({user,data,reload}){
     const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:undefined); mediaRef.current=mr;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
     mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b));};
-    recRef.current=rpStartRecognition(setTranscript);
+    recRef.current=rpStartRecognition(t=>{setTranscript(t); if(String(t||"").trim().split(/\s+/).length>=2) voiceRef.current=true;});
     mr.start(1000); setRecording(true);
-    let elapsed=0;
+    let elapsed=0, strongVoiceSeconds=0;
     tRef.current=setInterval(()=>{
       elapsed++;
       setSeconds(elapsed);
@@ -2527,11 +2544,12 @@ function ReadingProgressStudent({user,data,reload}){
           let sum=0;
           for(let i=0;i<dataArr.length;i++){const v=(dataArr[i]-128)/128;sum+=v*v;}
           const rms=Math.sqrt(sum/dataArr.length);
-          if(rms>0.035) voiceRef.current=true;
+          if(rms>0.075){strongVoiceSeconds++;}
+          if(strongVoiceSeconds>=2) voiceRef.current=true;
         }
       }catch(e){}
       if(elapsed>=20 && !voiceRef.current){
-        setMsg("Recording stopped because no clear voice was detected.");
+        setMsg("Recording stopped because no clear student voice was detected.");
         stopRec();
       }else if(elapsed>=90){
         setMsg("Recording stopped automatically after the maximum time.");
@@ -4241,5 +4259,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_LINK_STUDENT_ATTEMPTS_RETAKE_ZERO_INLINE_SAFE -->
 
 <!-- BUILD_FINAL_ATTEMPTS_SMART_RECORDING_READING_REPORT -->
+
+<!-- BUILD_FINAL_FIX_ATTEMPTS_AND_SMART_STOP -->
 </body>
 </html>
