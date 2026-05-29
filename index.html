@@ -2512,7 +2512,8 @@ function ReadingProgressStudent({user,data,reload}){
     return 1 + retakes;
   }
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
+  function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||""):"";}
   function stopModelAudio(){try{window.speechSynthesis.cancel();}catch(e){} setModelPlaying(false);}
   function playModel(t){
     if(recording){setMsg("Stop recording before playing model audio.");return;}
@@ -2530,7 +2531,7 @@ function ReadingProgressStudent({user,data,reload}){
     if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
-    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];voiceRef.current=false;
+    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
@@ -2572,17 +2573,32 @@ function ReadingProgressStudent({user,data,reload}){
   }
   function stopRec(){try{mediaRef.current&&mediaRef.current.state!=="inactive"&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
   async function submit(){
+    if(submitting){setMsg("Uploading already in progress. Please wait.");return;}
     if(!task||!blob){setMsg("Record your reading first.");return;}
+    const key=currentBlobKey();
+    if(sentBlobKey && sentBlobKey===key){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
     if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
+    setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
     setMsg("Uploading…");
     const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
-    let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setAttemptCounter(task.id,beforeCount);setMsg("Upload failed. Check Firebase Storage permissions.");return;}
+    let url="";
+    try{url=await rpUploadAudio(blob,path);}
+    catch(e){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("Upload failed. Check Firebase Storage permissions.");return;}
     const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"};
-    await fsSet("readingSubmissions",id,submission);
-    saveStudentAttemptMarker(submission);
-    setMsg("✅ Submitted. Your teacher will analyze it."); setBlob(null); setAudioUrl(""); setTask(null); await reload();
+    try{
+      await fsSet("readingSubmissions",id,submission);
+      saveStudentAttemptMarker(submission);
+      setSentBlobKey(key);
+      setMsg("✅ Submitted to teacher. This recording cannot be submitted again.");
+      setBlob(null); setAudioUrl(""); setTask(null); await reload();
+    }catch(e){
+      setAttemptCounter(task.id,beforeCount);
+      setMsg("Send failed. Please try again.");
+    }finally{
+      setSubmitting(false);
+    }
   }
   if(task)return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}</div></Card>
@@ -2590,7 +2606,7 @@ function ReadingProgressStudent({user,data,reload}){
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>Stop the model audio before recording.</div>}
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
-      <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
+      <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":(sentBlobKey&&sentBlobKey===currentBlobKey()?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=attemptsForTask(t);const last=done.slice().sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0))[done.length-1];const limit=totalAllowedAttempts(t);const teacherExtra=extraRetakeAllowed(done);const allowed=canAttemptTask(t);return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit} · retakes: {Math.max(0,Number(t.retakeLimit??0)||0)}</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}{!allowed&&<div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}{teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}</div><Btn size="sm" color={allowed?C.p:C.mu} disabled={!allowed} onClick={()=>allowed&&setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
@@ -2682,6 +2698,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [selectedClasses,setSelectedClasses]=useState([]);
   const [selectedStudents,setSelectedStudents]=useState([]);
+  const [filtersOpen,setFiltersOpen]=useState(true);
   const [refreshTick,setRefreshTick]=useState(0);
 
   function localRecords(){
@@ -2701,25 +2718,54 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
     const t=Number(r&&r.teacherScore); if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t)));
     const f=Number(r&&r.finalScore); if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f)));
     const ai=Number(r&&r.aiScore); if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai)));
-    const acc=Number(r&&r.accuracy); if(!Number.isNaN(acc)&&acc>0)return Math.round(Math.max(0,Math.min(100,acc)));
+    const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(Math.max(0,Math.min(100,a)));
     if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy));
     return null;
   }
-  function acc(r){const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(a); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return score(r);}
+  function accuracy(r){const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(a); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return score(r);}
   function wcpm(r){if(Number.isFinite(Number(r&&r.wcpm)))return Math.round(Number(r.wcpm)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm)))return Math.round(Number(r.analysis.wcpm)); return null;}
   function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
   function sid(r){return String(r.studentId||r.studentNumber||"").trim();}
   function sname(r){return String(r.studentName||r.name||"Student").trim();}
   function cls(r){return String(r.className||r.classId||"").trim();}
-  function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
   function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
+  function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
+  function perfLevel(v){
+    if(v===null)return "—";
+    if(v>=90)return "Excellent";
+    if(v>=80)return "Very Good";
+    if(v>=70)return "Good";
+    if(v>=60)return "Needs Practice";
+    return "Needs Support";
+  }
+  function improveText(items){
+    const sorted=items.slice().sort((a,b)=>timeOf(a)-timeOf(b)).map(score).filter(x=>x!==null);
+    if(sorted.length===0)return "—";
+    if(sorted.length===1)return "Baseline: "+sorted[0]+"%";
+    const min=Math.min(...sorted), last=sorted[sorted.length-1], diff=last-min;
+    if(diff>=50)return "+"+diff+"% Excellent Growth";
+    if(diff>=30)return "+"+diff+"% Strong Growth";
+    if(diff>=20)return "+"+diff+"% Good Growth";
+    if(diff>=10)return "+"+diff+"% Growth";
+    if(diff>0)return "+"+diff+"% Slight Growth";
+    return "+0% Stable";
+  }
+  function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
+  function bar(label,value,max,color){
+    const w=max?Math.round((value/max)*100):0;
+    return <div style={{marginBottom:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.mu,fontWeight:800}}><span>{label}</span><span>{value}</span></div><div style={{height:"9px",background:"#e2e8f0",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:w+"%",background:color,borderRadius:"999px"}}/></div></div>;
+  }
 
   const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id || myStudents.some(s=>s.id===r.studentId||s.studentId===r.studentId));
   const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));
   const map={}; raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||"")); if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});
   let all=Object.values(map);
 
-  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(r.classId));
+  const allClassNames=[...new Set([...myClasses.map(c=>c.name),...myClasses.map(c=>c.id),...raw.map(cls)].filter(Boolean))].sort();
+  const classNameById={}; myClasses.forEach(c=>{classNameById[c.id]=c.name;});
+  const studentList=myStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:classNameById[s.classId]||s.className||s.classId||""}));
+
+  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(r.classId)||selectedClasses.includes(classNameById[r.classId]));
   if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(sid(r))||selectedStudents.includes(r.studentId));
   if(search.trim()){
     const q=search.toLowerCase();
@@ -2733,59 +2779,71 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
     if(!grouped[key])grouped[key]={name:sname(r),sid:sid(r),cls:cls(r),items:[]};
     grouped[key].items.push(r);
   });
-
-  const classNames=[...new Set([...myClasses.map(c=>c.name),...raw.map(cls)].filter(Boolean))].sort();
-  const studentList=myStudents.map(s=>({id:s.studentId||s.id,name:s.name,cls:myClasses.find(c=>c.id===s.classId)?.name||s.className||""}));
-
   const rows=Object.values(grouped).sort((a,b)=>a.name.localeCompare(b.name));
-  const overall=avg(approved.map(score));
+  const overall=avg(approved.map(score)), accAvg=avg(approved.map(accuracy)), fluAvg=avg(approved.map(fluency));
+  const highest=approved.map(score).filter(x=>x!==null).length?Math.max(...approved.map(score).filter(x=>x!==null)):null;
 
-  function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
-  function improvement(items){
-    const sorted=items.slice().sort((a,b)=>timeOf(a)-timeOf(b)).map(score).filter(x=>x!==null);
-    if(sorted.length<2)return "—";
-    const diff=sorted[sorted.length-1]-sorted[0];
-    if(diff>=20)return "Excellent Growth";
-    if(diff>=10)return "Good Growth";
-    if(diff>=1)return "Slight Growth";
-    if(diff===0)return "Stable";
-    return "Needs Support";
-  }
+  const dist=[
+    {label:"90-100",count:approved.filter(r=>score(r)>=90).length,color:C.s},
+    {label:"80-89",count:approved.filter(r=>score(r)>=80&&score(r)<90).length,color:C.p},
+    {label:"70-79",count:approved.filter(r=>score(r)>=70&&score(r)<80).length,color:C.w},
+    {label:"<70",count:approved.filter(r=>score(r)!==null&&score(r)<70).length,color:C.d}
+  ];
+  const classGroups={};
+  approved.forEach(r=>{const k=cls(r)||"—"; if(!classGroups[k])classGroups[k]=[]; classGroups[k].push(score(r));});
+  const classBars=Object.entries(classGroups).map(([k,v])=>({label:k,value:avg(v)||0})).sort((a,b)=>b.value-a.value).slice(0,6);
+  const studentBars=rows.map(r=>({label:r.name,value:avg(r.items.map(score))||0})).sort((a,b)=>b.value-a.value).slice(0,8);
 
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-      <strong style={{color:"#fff",fontSize:"15px"}}>📊 Reading Performance</strong>
-      <p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Independent report from accepted Reading Progress results and Teacher Scores.</p>
-    </Card>
-    <Card style={{marginBottom:"11px"}}>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student / ID / task" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
-        <Btn size="sm" color={C.p} onClick={()=>setRefreshTick(refreshTick+1)}>Refresh</Btn>
-        <Btn size="sm" color={C.mu} onClick={()=>{setSearch("");setSelectedClasses([]);setSelectedStudents([]);}}>All</Btn>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
+        <div><strong style={{color:"#fff",fontSize:"16px"}}>📊 Reading Performance</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Professional report linked to accepted Reading Progress results and Teacher Scores.</p></div>
+        <Btn size="sm" color={C.s} onClick={()=>setRefreshTick(refreshTick+1)}>Refresh</Btn>
       </div>
-      <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"10px"}}>Classes</div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{classNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div>
-      <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"10px"}}>Students</div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"110px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div>
     </Card>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"11px"}}>
+
+    <Card style={{marginBottom:"11px"}}>
+      <button onClick={()=>setFiltersOpen(!filtersOpen)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#f8fafc",fontWeight:900,color:C.tx,textAlign:"left"}}>🔎 Filters {filtersOpen?"▴":"▾"}</button>
+      {filtersOpen&&<div style={{marginTop:"10px"}}>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name / ID / task" style={{flex:1,minWidth:"190px",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/>
+          <Btn size="sm" color={C.mu} onClick={()=>{setSearch("");setSelectedClasses([]);setSelectedStudents([]);}}>Reset</Btn>
+        </div>
+        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Classes / مجموعة الفصول</div>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{allClassNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div>
+        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Students / مجموعة الطلاب</div>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"115px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div>
+      </div>}
+    </Card>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"8px",marginBottom:"11px"}}>
+      <Stat icon="👥" label="Students" value={rows.length} color={C.pu}/>
       <Stat icon="✅" label="Accepted" value={approved.length} color={C.s}/>
-      <Stat icon="⏳" label="Pending" value={pending.length} color={C.w}/>
-      <Stat icon="❌" label="Rejected" value={rejected.length} color={C.d}/>
-      <Stat icon="📊" label="Average" value={overall!==null?overall+"%":"—"} color={C.p}/>
+      <Stat icon="📊" label="Average Final" value={overall!==null?overall+"%":"—"} color={C.p}/>
+      <Stat icon="🎯" label="Accuracy" value={accAvg!==null?accAvg+"%":"—"} color={C.p}/>
+      <Stat icon="🏆" label="Highest" value={highest!==null?highest+"%":"—"} color={C.w}/>
+      <Stat icon="⏳" label="Pending" value={pending.length} color={C.d}/>
     </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"11px",marginBottom:"11px"}}>
+      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Score Distribution</strong>{dist.map(d=>bar(d.label,d.count,Math.max(1,approved.length),d.color))}</Card>
+      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Class Average</strong>{classBars.length?classBars.map(d=>bar(d.label,d.value,100,C.p)):bar("No data",0,1,C.mu)}</Card>
+      <Card><strong style={{fontSize:"12px",display:"block",marginBottom:"8px"}}>Top Student Averages</strong>{studentBars.length?studentBars.map(d=>bar(d.label,d.value,100,C.s)):bar("No data",0,1,C.mu)}</Card>
+    </div>
+
     <Card style={{padding:0,overflow:"hidden"}}>
       <div style={{overflowX:"auto"}}>
-        <table style={{borderCollapse:"collapse",minWidth:"980px",width:"100%",fontSize:"11px",fontFamily:F}}>
-          <thead><tr>
-            {["Student","Class","Attempts","Final Score for each test","Average Final","Accuracy","WCPM","Fluency","Improvement Level","Teacher Notes"].map(h=><th key={h} style={{padding:"9px",borderBottom:"2px solid "+C.br,textAlign:"left"}}>{h}</th>)}
+        <table style={{borderCollapse:"collapse",minWidth:"1120px",width:"100%",fontSize:"11px",fontFamily:F}}>
+          <thead><tr style={{background:"#f8fafc"}}>
+            {["Student","Class","Attempts","Final Score for each test","Average Final","Accuracy","WCPM","Fluency","Improvement %","Performance Level","Teacher Notes"].map(h=><th key={h} style={{padding:"9px",borderBottom:"2px solid "+C.br,textAlign:"left"}}>{h}</th>)}
           </tr></thead>
-          <tbody>{rows.length===0?<tr><td colSpan="10" style={{padding:"14px",textAlign:"center",color:C.mu}}>No accepted results yet. Press Accept or enter Teacher Score in Reading Progress.</td></tr>:rows.map(r=>{
-            const scores=r.items.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x),note:x.teacherNotes||""})).filter(x=>x.score!==null);
-            const notes=r.items.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | ");
-            const av=avg(r.items.map(score)), aa=avg(r.items.map(acc)), aw=avg(r.items.map(wcpm)), af=avg(r.items.map(fluency));
+          <tbody>{rows.length===0?<tr><td colSpan="11" style={{padding:"16px",textAlign:"center",color:C.mu}}>No accepted results yet. Press Accept or enter Teacher Score in Reading Progress.</td></tr>:rows.map(r=>{
+            const sorted=r.items.slice().sort((a,b)=>timeOf(a)-timeOf(b));
+            const scores=sorted.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x),note:x.teacherNotes||""})).filter(x=>x.score!==null);
+            const notes=sorted.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | ");
+            const av=avg(sorted.map(score)), aa=avg(sorted.map(accuracy)), aw=avg(sorted.map(wcpm)), af=avg(sorted.map(fluency));
             return <tr key={r.sid||r.name}>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{r.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {r.sid||"—"}</div></td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900}}>{r.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {r.sid||"—"}</div></td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.cls||"—"}</td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{r.items.length}</td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{scores.map((s,i)=><div key={i}>{s.task}: <b>{s.score}%</b></div>)}</td>
@@ -2793,7 +2851,8 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aa!==null?aa+"%":"—"}</td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{aw!==null?aw:"—"}</td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{af!==null?af+"%":"—"}</td>
-              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{improvement(r.items)}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900,color:C.p}}>{improveText(sorted)}</td>
+              <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:900}}>{perfLevel(av)}</td>
               <td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{notes||"—"}</td>
             </tr>})}</tbody>
         </table>
@@ -2801,7 +2860,6 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
     </Card>
   </div>;
 }
-
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
@@ -4279,5 +4337,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_FIX_ATTEMPTS_AND_SMART_STOP -->
 
 <!-- BUILD_FINAL_STRICT_RETAKE_GATE -->
+
+<!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
 </body>
 </html>
