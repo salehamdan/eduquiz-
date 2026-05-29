@@ -242,6 +242,20 @@ function rpGenerateText(level, lines){
   };
   const arr=bank[level]||bank.beginner; let out=[]; for(let i=0;i<Number(lines||3);i++)out.push(arr[i%arr.length]); return out.join(" ");
 }
+
+function rpGenerateTextWords(level, words, topic){
+  const target=Math.max(5,Math.min(180,Number(words)||30));
+  const cleanTopic=String(topic||"reading").trim()||"reading";
+  const bank={
+    beginner:[`I like ${cleanTopic}. It is easy and fun.`,`I read about ${cleanTopic} with my teacher.`,`I learn new words every day.`],
+    intermediate:[`${cleanTopic} helps students learn new ideas and useful words.`,`Good readers slow down, think carefully, and read again when a sentence is difficult.`,`Practice helps students improve accuracy, fluency, and confidence.`],
+    advanced:[`${cleanTopic} encourages learners to connect information, monitor understanding, and explain ideas with confidence.`,`Fluent readers balance accuracy, expression, and speed while paying close attention to meaning.`,`Regular practice helps students notice details, correct mistakes, and build stronger comprehension.`]
+  };
+  const arr=bank[level]||bank.beginner;
+  let out=[];
+  while(out.join(" ").split(/\s+/).filter(Boolean).length<target) out.push(arr[out.length%arr.length]);
+  return out.join(" ").split(/\s+/).slice(0,target).join(" ").replace(/\s+([.,!?])/g,"$1")+".";
+}
 async function rpBlobToDataUrl(blob){ return new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(blob);}); }
 async function rpUploadAudio(blob, path){
   if(FIREBASE_OK && storage && storage.ref){
@@ -2424,7 +2438,12 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 // ── TEACHER APP ───────────────────────────────────────────────
 
 function ReadingProgressStudent({user,data,reload}){
-  const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed"&&(!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId)));
+  const tasks=(data.readingTasks||[]).filter(t=>{
+    if(t.status==="closed") return false;
+    const classOk=!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId);
+    const studentOk=!t.studentIds||t.studentIds.length===0||t.studentIds.includes(user.id)||t.studentIds.includes(user.studentId);
+    return classOk && studentOk;
+  });
   const subs=(data.readingSubmissions||[]).filter(x=>x.studentId===user.id);
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null);
@@ -2462,24 +2481,44 @@ function ReadingProgressStudent({user,data,reload}){
 }
 
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
-  const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [lines,setLines]=useState(3); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]);
+  const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null);
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
   const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id); const subs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id);
-  function gen(){setText(rpGenerateText(level,lines));}
+  async function gen(){
+    const topic=title.trim()||"Reading";
+    const fallback=rpGenerateTextWords(level,wordCount,topic);
+    const key=localStorage.getItem("rp_openai_api_key")||"";
+    if(!key){setText(fallback);setMsg("✅ Text generated locally. Add OpenAI key for AI generation.");return;}
+    setMsg("Generating AI reading text...");
+    try{
+      const prompt=`Create ONE short English reading passage for Saudi secondary EFL students. Topic: ${topic}. Level: ${level}. Target word count: about ${wordCount} words. Return only the passage text. No title, no bullets.`;
+      const resp=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"system",content:"You write leveled oral reading passages for EFL assessment."},{role:"user",content:prompt}],temperature:0.7,max_tokens:280})});
+      if(!resp.ok) throw new Error("AI error "+resp.status);
+      const data=await resp.json();
+      setText(String(data.choices?.[0]?.message?.content||fallback).trim());
+      setMsg("✅ AI text generated.");
+    }catch(e){setText(fallback);setMsg("⚠️ AI failed; local text generated.");}
+  }
   function play(){if(!text.trim())return; const u=new SpeechSynthesisUtterance(text); u.lang="en-US"; u.rate=level==="beginner"?0.82:level==="advanced"?0.98:0.9; speechSynthesis.cancel(); speechSynthesis.speak(u);}
-  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=uid(); await fsSet("readingTasks",id,{id,teacherId:user.id,title:title.trim(),level,lines:Number(lines),text:text.trim(),classIds,status:"open",createdAt:today()}); setMsg("✅ Reading task created."); setText(""); await reload();}
+  function resetTaskForm(){setEditingTaskId(null);setTitle("Reading Progress Task");setLevel("beginner");setWordCount(30);setText("");setClassIds([]);setStudentIds([]);}
+  function editTask(t){setEditingTaskId(t.id);setTitle(t.title||"Reading Progress Task");setLevel(t.level||"beginner");setWordCount(Number(t.wordCount||t.words||30));setText(t.text||"");setClassIds(t.classIds||[]);setStudentIds(t.studentIds||[]);setMsg("Editing task: "+(t.title||"Reading Task"));}
+  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); await fsSet("readingTasks",id,{id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}); setMsg(editingTaskId?"✅ Reading task updated.":"✅ Reading task created."); resetTaskForm(); await reload();}
   async function analyze(sub){const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId); if(!task){alert("Task not found");return;} const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0); await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"}); await reload();}
   async function delTask(t){if(!confirm("Delete this Reading Progress task?"))return; await fsDel("readingTasks",t.id); await reload();}
+  const targetStudents=myStudents.filter(s=>!classIds.length||classIds.includes(s.classId));
   const filteredStudents=myStudents.filter(s=>(filter==="all"||s.classId===filter)&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search)));
   const studentStats=filteredStudents.map(st=>{const ss=subs.filter(x=>x.studentId===st.id&&x.analysis); const avg=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.accuracy,0)/ss.length):null; const w=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.wcpm,0)/ss.length):null; const f=ss.length?Math.round(ss.reduce((a,x)=>a+x.analysis.fluency,0)/ss.length):null; return {st,ss,avg,w,f};});
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p></Card>
-    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx}}>Create Reading Task</strong><div style={{display:"grid",gridTemplateColumns:"1fr 120px 100px",gap:"8px",marginTop:"9px"}}><input value={title} onChange={e=>setTitle(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select><select value={lines} onChange={e=>setLines(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="3">3 lines</option><option value="5">5 lines</option><option value="7">7 lines</option></select></div>
+    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx}}>{editingTaskId?"Edit Reading Task":"Create Reading Task"}</strong><div style={{display:"grid",gridTemplateColumns:"1fr 130px 120px",gap:"8px",marginTop:"9px"}}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Topic / Title" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select><input type="number" min="5" max="180" value={wordCount} onChange={e=>setWordCount(e.target.value)} placeholder="Words" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div>
       <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Generate or paste reading text…" style={{width:"100%",minHeight:"90px",marginTop:"8px",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontFamily:F}}/>
-      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>{myClasses.map(c=>{const on=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(on?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.p:C.br),background:on?C.p:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"11px"}}>{c.name}</button>})}</div>
-      <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>Save Task</Btn></div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",fontWeight:800}}>Select Classes</div>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"6px"}}>{myClasses.map(c=>{const on=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(on?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.p:C.br),background:on?C.p:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"11px"}}>{c.name}</button>})}</div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",fontWeight:800}}>Select Students (optional)</div>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"6px",maxHeight:"130px",overflowY:"auto",padding:"4px",border:"1px solid "+C.br,borderRadius:"8px"}}>{targetStudents.length===0?<span style={{fontSize:"11px",color:C.mu}}>No students in selected classes.</span>:targetStudents.map(s=>{const on=studentIds.includes(s.id);const cls=myClasses.find(c=>c.id===s.classId);return <button key={s.id} onClick={()=>setStudentIds(on?studentIds.filter(x=>x!==s.id):[...studentIds,s.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.s:C.br),background:on?C.s:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"10px"}}>{s.name} · {s.studentId||s.id} · {cls?.name||""}</button>})}</div>
+      <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate AI Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editingTaskId?"Update Task":"Save Task"}</Btn>{editingTaskId&&<Btn color={C.mu} onClick={resetTaskForm}>Cancel Edit</Btn>}</div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.w:C.d)}}>{msg}</p>}
     </Card>
-    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {t.lines} lines · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"}</div></div><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div>)}</Card>
+    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}</Card>
     <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
     <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
@@ -3822,235 +3861,6 @@ document.addEventListener("click", function(e){
 
 <!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
 
-<script id="rp-filter-suggestions-ai-generator-safe">
-(function(){
-  const API_KEY_NAME = "rp_openai_api_key";
-  const RP_RECORDS_KEY = "rp_attempt_records_v11";
-
-  function safeJSON(v, fallback){
-    try{return JSON.parse(v || JSON.stringify(fallback));}catch(e){return fallback;}
-  }
-  function getSession(){
-    return safeJSON(localStorage.getItem("eq_session"), null) || {};
-  }
-  function getRecords(){
-    return safeJSON(localStorage.getItem(RP_RECORDS_KEY), []);
-  }
-  function uniq(arr){
-    return [...new Set(arr.filter(Boolean).map(x=>String(x).trim()).filter(Boolean))];
-  }
-  function studentLabel(r){
-    const name=String(r.studentName||"Student").trim();
-    const sid=String(r.studentId||"").trim();
-    const cls=String(r.className||r.classId||"").trim();
-    return `${name}${sid?` · ${sid}`:""}${cls?` · ${cls}`:""}`;
-  }
-
-  function attachFilterSuggestions(){
-    const classInput=document.getElementById("rp-v11-class");
-    const studentInput=document.getElementById("rp-v11-student");
-    if(!classInput || !studentInput) return;
-
-    let classList=document.getElementById("rp-v11-class-suggestions");
-    if(!classList){
-      classList=document.createElement("datalist");
-      classList.id="rp-v11-class-suggestions";
-      document.body.appendChild(classList);
-    }
-    let studentList=document.getElementById("rp-v11-student-suggestions");
-    if(!studentList){
-      studentList=document.createElement("datalist");
-      studentList.id="rp-v11-student-suggestions";
-      document.body.appendChild(studentList);
-    }
-
-    classInput.setAttribute("list","rp-v11-class-suggestions");
-    studentInput.setAttribute("list","rp-v11-student-suggestions");
-
-    const records=getRecords().filter(r=>!(r.deleted===true || r.status==="deleted"));
-    const classes=uniq(records.map(r=>r.className||r.classId)).sort();
-    classList.innerHTML = `<option value="">All Classes</option>` + classes.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}"></option>`).join("");
-
-    const classQ=String(classInput.value||"").toLowerCase().trim();
-    const students=new Map();
-    records.forEach(r=>{
-      const cls=String(r.className||r.classId||"").toLowerCase();
-      if(classQ && !cls.includes(classQ)) return;
-      if(r.studentId && !students.has(r.studentId)) students.set(r.studentId, studentLabel(r));
-    });
-    studentList.innerHTML = `<option value="">All Students</option>` + [...students.values()].map(label=>`<option value="${String(label).replace(/"/g,'&quot;')}"></option>`).join("");
-  }
-
-  function fallbackText(topic, level, words){
-    const cleanTopic=(topic||"reading").trim() || "reading";
-    const n=Math.max(5, Math.min(160, Number(words)||30));
-    const banks={
-      beginner:[
-        `I like ${cleanTopic}. It is good for me.`,
-        `I learn about ${cleanTopic} every day.`,
-        `My teacher helps me read simple words.`
-      ],
-      intermediate:[
-        `${cleanTopic} can help students learn new ideas and useful words.`,
-        `Good readers slow down, think carefully, and read the sentence again when needed.`,
-        `Practice helps students improve their confidence and fluency.`
-      ],
-      advanced:[
-        `${cleanTopic} encourages learners to connect information, monitor understanding, and explain ideas with confidence.`,
-        `Fluent readers balance accuracy, expression, and speed while paying attention to meaning.`,
-        `Regular practice allows students to notice details, correct mistakes, and build stronger comprehension.`
-      ]
-    };
-    const arr=banks[level]||banks.beginner;
-    let out=[];
-    while(out.join(" ").split(/\s+/).filter(Boolean).length<n){ out.push(arr[out.length%arr.length]); }
-    return out.join(" ").split(/\s+/).slice(0,n).join(" ").replace(/\s+([.,!?])/g,"$1") + ".";
-  }
-
-  async function generateWithAI(topic, level, words){
-    const key=localStorage.getItem(API_KEY_NAME)||"";
-    if(!key) return fallbackText(topic,level,words);
-
-    const prompt = `Create ONE short English reading passage for Saudi secondary EFL students.
-Topic/title: ${topic || "general school life"}
-Level: ${level}
-Target word count: about ${words} words.
-Rules:
-- Return only the passage text.
-- Use clear school-appropriate English.
-- No title, no bullet points, no numbering.
-- Avoid difficult names.
-- Make it suitable for oral reading assessment.`;
-
-    const resp=await fetch("https://api.openai.com/v1/chat/completions",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({
-        model:"gpt-4o-mini",
-        messages:[
-          {role:"system",content:"You write short leveled English reading passages for EFL oral reading assessment."},
-          {role:"user",content:prompt}
-        ],
-        temperature:0.7,
-        max_tokens:260
-      })
-    });
-    if(!resp.ok){
-      const t=await resp.text();
-      throw new Error("AI generation failed: "+resp.status+" "+t.slice(0,120));
-    }
-    const data=await resp.json();
-    return String(data.choices?.[0]?.message?.content||"").trim();
-  }
-
-  async function saveReadingTask(task){
-    if(typeof fsSet==="function"){
-      await fsSet("readingTasks", task.id, task);
-      return true;
-    }
-    const arr=safeJSON(localStorage.getItem("eq_readingTasks"), []);
-    arr.push(task);
-    localStorage.setItem("eq_readingTasks", JSON.stringify(arr));
-    return true;
-  }
-
-  function makeId(){
-    if(typeof uid==="function") return uid();
-    return "rp_task_"+Date.now()+"_"+Math.random().toString(36).slice(2);
-  }
-
-  function todaySafe(){
-    if(typeof today==="function") return today();
-    return new Date().toISOString();
-  }
-
-  function addAIGenerator(){
-    const panel=document.getElementById("rp-v11-panel");
-    if(!panel || document.getElementById("rp-ai-text-generator-safe")) return;
-
-    const aiSettings=[...panel.querySelectorAll("div")].find(d=>(d.innerText||"").includes("AI Settings"));
-    const box=document.createElement("div");
-    box.id="rp-ai-text-generator-safe";
-    box.style.cssText="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #dbeafe";
-    box.innerHTML=`
-      <b style="color:#1e293b">🤖 AI Reading Text Generator</b>
-      <div style="display:grid;grid-template-columns:1fr 120px 130px;gap:8px;margin-top:8px">
-        <input id="rp-ai-topic" type="text" placeholder="Topic / Title مثل: Travel, School" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-        <input id="rp-ai-words" type="number" min="5" max="160" value="30" placeholder="Words" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-        <select id="rp-ai-level" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px">
-          <option value="beginner">Beginner</option>
-          <option value="intermediate">Intermediate</option>
-          <option value="advanced">Advanced</option>
-        </select>
-      </div>
-      <textarea id="rp-ai-output" placeholder="Generated reading text will appear here..." style="width:100%;min-height:90px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-family:system-ui;line-height:1.6"></textarea>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-        <button id="rp-ai-generate" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Generate Text</button>
-        <button id="rp-ai-use-task" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Use as Reading Task</button>
-        <span id="rp-ai-msg" style="font-size:12px;color:#64748b;align-self:center"></span>
-      </div>
-    `;
-    if(aiSettings && aiSettings.parentNode) aiSettings.parentNode.insertBefore(box, aiSettings.nextSibling);
-    else panel.insertBefore(box, panel.children[1]||null);
-
-    box.querySelector("#rp-ai-generate").addEventListener("click", async ()=>{
-      const msg=box.querySelector("#rp-ai-msg");
-      const output=box.querySelector("#rp-ai-output");
-      const topic=box.querySelector("#rp-ai-topic").value.trim();
-      const words=Number(box.querySelector("#rp-ai-words").value||30);
-      const level=box.querySelector("#rp-ai-level").value;
-      msg.textContent="Generating...";
-      try{
-        const text=await generateWithAI(topic,level,words);
-        output.value=text;
-        msg.textContent="✅ Text generated.";
-      }catch(e){
-        output.value=fallbackText(topic,level,words);
-        msg.textContent="⚠️ AI failed; fallback text generated.";
-        console.warn(e);
-      }
-    });
-
-    box.querySelector("#rp-ai-use-task").addEventListener("click", async ()=>{
-      const msg=box.querySelector("#rp-ai-msg");
-      const topic=box.querySelector("#rp-ai-topic").value.trim() || "AI Reading Task";
-      const words=Number(box.querySelector("#rp-ai-words").value||30);
-      const level=box.querySelector("#rp-ai-level").value;
-      const text=box.querySelector("#rp-ai-output").value.trim();
-      if(!text){ msg.textContent="Write or generate text first."; return; }
-
-      const u=getSession();
-      const id=makeId();
-      const task={
-        id,
-        teacherId:u.id || u.uid || u.email || "teacher",
-        title:topic,
-        level,
-        lines:Math.max(1, Math.ceil(text.split(/\s+/).filter(Boolean).length/8)),
-        wordCount:words,
-        text,
-        classIds:[],
-        status:"open",
-        createdAt:todaySafe(),
-        source:"ai_text_generator_safe"
-      };
-      msg.textContent="Saving...";
-      try{
-        await saveReadingTask(task);
-        msg.textContent="✅ Saved as Reading Task. Refreshing...";
-        setTimeout(()=>location.reload(),700);
-      }catch(e){
-        msg.textContent="❌ Save failed: "+e.message;
-      }
-    });
-  }
-
-  setInterval(()=>{attachFilterSuggestions();addAIGenerator();},1200);
-  setTimeout(()=>{attachFilterSuggestions();addAIGenerator();},700);
-})();
-</script>
-
-
-<!-- BUILD_FILTER_NAMES_AI_TEXT_GENERATOR_SAFE -->
+<!-- BUILD_EDIT_TASKS_STUDENT_TARGETING_AI_IN_ORIGINAL_FORM -->
 </body>
 </html>
