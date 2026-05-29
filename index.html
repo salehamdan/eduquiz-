@@ -4006,213 +4006,24 @@ document.addEventListener("click", function(e){
 
 <!-- BUILD_TOP_BOTTOM_NAVIGATION_ARROWS -->
 
-<script id="rp-new-performance-dashboard-safe">
+<script id="rp-no-performance-dashboard-safety">
 (function(){
-  const RECORD_KEYS=["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
-
-  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
-  function allRecords(){
-    let out=[];
-    RECORD_KEYS.forEach(k=>{
-      const arr=readJSON(k,[]);
-      if(Array.isArray(arr)) out=out.concat(arr);
-    });
-    const map=new Map();
-    out.forEach(r=>{
-      if(!r||!r.id) return;
-      const old=map.get(r.id);
-      const rt=Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;
-      const ot=old?(Date.parse(old.updatedAt||old.reviewedAt||old.analyzedAt||old.submittedAt||old.createdAt||"")||0):-1;
-      if(!old||rt>=ot) map.set(r.id,r);
-    });
-    return [...map.values()];
-  }
-  function isDeleted(r){return !!(r&&(r.deleted===true||r.status==="deleted"));}
-  function isRejected(r){return !!(r&&r.status==="rejected");}
-  function isApproved(r){
-    const ts=Number(r&&r.teacherScore);
-    return !!(r&&!isDeleted(r)&&!isRejected(r)&&(r.status==="accepted"||(!Number.isNaN(ts)&&ts>0)));
-  }
-  function finalScore(r){
-    const ts=Number(r&&r.teacherScore);
-    if(!Number.isNaN(ts)&&ts>0) return Math.max(0,Math.min(100,Math.round(ts)));
-    const fs=Number(r&&r.finalScore);
-    if(!Number.isNaN(fs)&&fs>0) return Math.max(0,Math.min(100,Math.round(fs)));
-    const ai=Number(r&&r.aiScore);
-    if(!Number.isNaN(ai)&&ai>0) return Math.max(0,Math.min(100,Math.round(ai)));
-    const acc=Number(r&&r.accuracy);
-    if(!Number.isNaN(acc)&&acc>0) return Math.max(0,Math.min(100,Math.round(acc)));
-    if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy))) return Math.round(Number(r.analysis.accuracy));
-    return null;
-  }
-  function wcpm(r){
-    if(Number.isFinite(Number(r&&r.wcpm))) return Math.round(Number(r.wcpm));
-    if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm))) return Math.round(Number(r.analysis.wcpm));
-    return null;
-  }
-  function fluency(r){
-    if(Number.isFinite(Number(r&&r.fluency))) return Math.round(Number(r.fluency));
-    if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency))) return Math.round(Number(r.analysis.fluency));
-    return null;
-  }
-  function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));}
-  function studentName(r){return String(r.studentName||r.name||"Student").trim();}
-  function studentId(r){return String(r.studentId||r.studentNumber||"").trim();}
-  function className(r){return String(r.className||r.classId||"").trim();}
-  function avg(arr){arr=arr.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x))); return arr.length?Math.round(arr.reduce((a,b)=>a+Number(b),0)/arr.length):null;}
-
-  function hideOldPerformanceOnly(){
-    document.querySelectorAll("table").forEach(tbl=>{
-      const t=tbl.innerText||"";
-      if(t.includes("Student")&&t.includes("Accuracy")&&t.includes("WCPM")&&t.includes("Submissions")){
-        let p=tbl;
-        for(let i=0;i<6&&p&&p.parentElement;i++){
-          const txt=p.innerText||"";
-          if(txt.includes("Student")&&txt.includes("Submissions")){
-            p=p.parentElement;
-          }
-        }
-        if(p&&p!==document.body) p.style.display="none";
+  function removeDashboardsOnly(){
+    try{
+      document.querySelectorAll("#rp-new-performance-dashboard,#rp-linked-performance-dashboard").forEach(el=>el.remove());
+      const panel=document.getElementById("rp-v11-panel");
+      if(panel){
+        panel.style.display="block";
+        panel.removeAttribute("data-hidden-by-lower-dashboard");
       }
-    });
-    document.querySelectorAll("div").forEach(div=>{
-      const t=(div.innerText||"").trim();
-      if(t.startsWith("Pending / Recent Recordings") || (t.includes("Old deleted/orphan recordings")&&t.includes("No submissions yet"))){
-        div.style.display="none";
-      }
-    });
+    }catch(e){}
   }
-
-  function locateInsertAfter(){
-    const candidates=[...document.querySelectorAll("div")].filter(el=>{
-      const t=el.innerText||"";
-      return t.includes("Tasks")&&t.includes("Edit")&&t.includes("Delete");
-    });
-    if(candidates.length) return candidates[candidates.length-1];
-    return document.getElementById("root")||document.body;
-  }
-
-  function renderDashboard(){
-    hideOldPerformanceOnly();
-
-    let box=document.getElementById("rp-new-performance-dashboard");
-    if(!box){
-      box=document.createElement("div");
-      box.id="rp-new-performance-dashboard";
-      box.style.cssText="margin:16px 26px;padding:14px;border-radius:18px;background:#fff;border:1px solid #e2e8f0;box-shadow:0 8px 24px rgba(15,23,42,.12);font-family:system-ui;direction:ltr";
-      const anchor=locateInsertAfter();
-      if(anchor&&anchor.parentElement) anchor.parentElement.insertBefore(box, anchor.nextSibling);
-      else document.body.appendChild(box);
-    }
-
-    const classFilter=(document.getElementById("rp-perf-class")?.value||"").toLowerCase().trim();
-    const search=(document.getElementById("rp-perf-search")?.value||"").toLowerCase().trim();
-
-    const recs=allRecords().filter(r=>!isDeleted(r));
-    const approved=recs.filter(isApproved);
-    const pending=recs.filter(r=>!isApproved(r)&&!isRejected(r)&&!isDeleted(r));
-    const rejected=recs.filter(isRejected);
-
-    const classes=[...new Set(recs.map(className).filter(Boolean))].sort();
-
-    const grouped=new Map();
-    approved.forEach(r=>{
-      const key=studentId(r)||studentName(r);
-      if(!key) return;
-      const label=(studentName(r)+" "+studentId(r)+" "+className(r)).toLowerCase();
-      if(classFilter && !className(r).toLowerCase().includes(classFilter)) return;
-      if(search && !label.includes(search)) return;
-      if(!grouped.has(key)) grouped.set(key,{name:studentName(r),sid:studentId(r),cls:className(r),items:[]});
-      grouped.get(key).items.push(r);
-    });
-
-    const rows=[...grouped.values()].sort((a,b)=>a.name.localeCompare(b.name)).map(s=>{
-      const scores=s.items.map(finalScore).filter(x=>x!==null);
-      const last=s.items.slice().sort((a,b)=>(Date.parse(b.updatedAt||b.reviewedAt||b.createdAt||"")||0)-(Date.parse(a.updatedAt||a.reviewedAt||a.createdAt||"")||0))[0];
-      const lastScore=last?finalScore(last):null;
-      const best=scores.length?Math.max(...scores):null;
-      const av=avg(scores);
-      const w=avg(s.items.map(wcpm));
-      const f=avg(s.items.map(fluency));
-      const note=(last&&last.teacherNotes)?`<div style="font-size:10px;color:#64748b;margin-top:2px">Note: ${esc(last.teacherNotes)}</div>`:"";
-      return `<tr>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0;font-weight:900">${esc(s.name)}<div style="font-size:10px;color:#64748b">ID: ${esc(s.sid||"—")}</div>${note}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0">${esc(s.cls||"—")}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0;color:#2563eb;font-weight:900">${lastScore??"—"}${lastScore!==null?"%":""}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0;color:#16a34a;font-weight:900">${best??"—"}${best!==null?"%":""}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0;color:#9a3412;font-weight:900">${av??"—"}${av!==null?"%":""}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0">${w??"—"}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0">${f??"—"}${f!==null?"%":""}</td>
-        <td style="padding:9px;border-bottom:1px solid #e2e8f0">${s.items.length}</td>
-      </tr>`;
-    }).join("");
-
-    const overallScores=approved.map(finalScore).filter(x=>x!==null);
-    const overallAvg=avg(overallScores);
-
-    const pendingRows=pending.slice().reverse().slice(0,6).map(r=>`
-      <div style="padding:9px 0;border-top:1px solid #e2e8f0">
-        <div style="font-weight:900;color:#1e293b">${esc(studentName(r))}</div>
-        <div style="font-size:11px;color:#64748b">${esc(className(r)||"—")} · ${esc(r.taskTitle||r.title||"Reading task")} · ${esc(r.status||"submitted")}</div>
-        ${r.audioDataUrl||r.audioUrl?`<audio controls src="${esc(r.audioDataUrl||r.audioUrl)}" style="width:100%;margin-top:6px"></audio>`:""}
-      </div>`).join("");
-
-    box.innerHTML=`
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <h3 style="margin:0;color:#1e293b;font-size:18px">📊 Reading Performance Dashboard</h3>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button id="rp-perf-refresh" type="button" style="padding:8px 11px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:800">Refresh</button>
-          <button type="button" onclick="window.scrollTo({top:0,behavior:'smooth'})" style="padding:8px 11px;border:0;border-radius:10px;background:#0f766e;color:#fff;font-weight:800">Top</button>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
-        <span style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:900">Approved: ${approved.length}</span>
-        <span style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:900">Average: ${overallAvg??"—"}${overallAvg!==null?"%":""}</span>
-        <span style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:900">Pending: ${pending.length}</span>
-        <span style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:900">Rejected: ${rejected.length}</span>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
-        <input id="rp-perf-class" list="rp-perf-class-list" value="${esc(classFilter)}" placeholder="Filter class / الفصل" style="padding:9px;border:1px solid #cbd5e1;border-radius:10px;min-width:160px">
-        <datalist id="rp-perf-class-list">${classes.map(c=>`<option value="${esc(c)}"></option>`).join("")}</datalist>
-        <input id="rp-perf-search" value="${esc(search)}" placeholder="Search student / ID" style="padding:9px;border:1px solid #cbd5e1;border-radius:10px;min-width:190px">
-      </div>
-
-      <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:14px">
-        <table style="border-collapse:collapse;width:100%;min-width:760px;font-size:12px">
-          <thead><tr style="background:#f8fafc">
-            <th style="text-align:left;padding:9px;border-bottom:2px solid #e2e8f0">Student</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Class</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Last</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Best</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Average</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">WCPM</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Fluency</th>
-            <th style="padding:9px;border-bottom:2px solid #e2e8f0">Count</th>
-          </tr></thead>
-          <tbody>${rows||`<tr><td colspan="8" style="padding:14px;text-align:center;color:#64748b">No approved results yet. Press Accept or add Teacher Score in the upper grading panel.</td></tr>`}</tbody>
-        </table>
-      </div>
-
-      <div style="margin-top:14px">
-        <strong style="color:#1e293b">Pending recordings</strong>
-        <div style="font-size:11px;color:#64748b;margin:3px 0 6px">Only accepted attempts or Teacher Score are counted in the table.</div>
-        ${pendingRows||`<p style="color:#64748b">No pending recordings.</p>`}
-      </div>
-    `;
-
-    document.getElementById("rp-perf-refresh").onclick=renderDashboard;
-    document.getElementById("rp-perf-class").oninput=()=>setTimeout(renderDashboard,150);
-    document.getElementById("rp-perf-search").oninput=()=>setTimeout(renderDashboard,150);
-  }
-
-  setTimeout(renderDashboard,900);
-  setInterval(renderDashboard,3500);
+  setTimeout(removeDashboardsOnly,300);
+  setInterval(removeDashboardsOnly,2000);
 })();
 </script>
 
 
-<!-- BUILD_NEW_PERFORMANCE_DASHBOARD_LINKED_TO_ACCEPTED_RESULTS -->
+<!-- BUILD_ROLLBACK_NO_PERFORMANCE_DASHBOARD -->
 </body>
 </html>
