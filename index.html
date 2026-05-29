@@ -2461,14 +2461,19 @@ function ReadingProgressStudent({user,data,reload}){
       return sameTask && sameStudent;
     });
   }
-  function attemptCounterKey(taskId){
-    return "rp_attempt_count_"+String(user.id||user.studentId)+"_"+String(taskId);
+  function studentKeys(){
+    return [...new Set([String(user.id||""),String(user.studentId||""),String(user.email||"")].filter(Boolean))];
+  }
+  function attemptCounterKeys(taskId){
+    return studentKeys().map(s=>"rp_attempt_count_"+s+"_"+String(taskId));
   }
   function getAttemptCounter(taskId){
-    try{return Number(localStorage.getItem(attemptCounterKey(taskId))||0)||0;}catch(e){return 0;}
+    try{
+      return Math.max(0,...attemptCounterKeys(taskId).map(k=>Number(localStorage.getItem(k)||0)||0));
+    }catch(e){return 0;}
   }
   function setAttemptCounter(taskId,n){
-    try{localStorage.setItem(attemptCounterKey(taskId), String(Math.max(0,Number(n)||0)));}catch(e){}
+    try{attemptCounterKeys(taskId).forEach(k=>localStorage.setItem(k, String(Math.max(0,Number(n)||0))));}catch(e){}
   }
   function saveStudentAttemptMarker(r){
     try{
@@ -2476,9 +2481,16 @@ function ReadingProgressStudent({user,data,reload}){
       const clean=arr.filter(x=>x&&x.id!==r.id);
       clean.push(r);
       localStorage.setItem("rp_student_attempts", JSON.stringify(clean));
+      const same=clean.filter(x=>x&&String(x.taskId||"")===String(r.taskId||"")&&studentKeys().includes(String(x.studentId||x.studentNumber||"")));
       const old=getAttemptCounter(r.taskId);
-      setAttemptCounter(r.taskId, Math.max(old+1, clean.filter(x=>x&&x.taskId===r.taskId&&(x.studentId===user.id||x.studentId===user.studentId)).length));
+      setAttemptCounter(r.taskId, Math.max(old+1, same.length));
     }catch(e){}
+  }
+  function canAttemptTask(t){
+    if(!t) return false;
+    const done=attemptsForTask(t);
+    const limit=totalAllowedAttempts(t);
+    return done.length < limit || extraRetakeAllowed(done);
   }
   function attemptsForTask(t){
     const cloud=subs.filter(s=>s.taskId===t.id && s.deleted!==true && s.status!=="deleted");
@@ -2515,6 +2527,7 @@ function ReadingProgressStudent({user,data,reload}){
     window.speechSynthesis.speak(u);
   }
   async function startRec(){
+    if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
     setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);chunksRef.current=[];voiceRef.current=false;
@@ -2560,9 +2573,12 @@ function ReadingProgressStudent({user,data,reload}){
   function stopRec(){try{mediaRef.current&&mediaRef.current.state!=="inactive"&&mediaRef.current.stop();}catch(e){} try{recRef.current&&recRef.current.stop();}catch(e){} clearInterval(tRef.current);setRecording(false);}
   async function submit(){
     if(!task||!blob){setMsg("Record your reading first.");return;}
+    if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
+    const beforeCount=attemptsForTask(task).length;
+    setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
     setMsg("Uploading…");
     const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
-    let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setMsg("Upload failed. Check Firebase Storage permissions.");return;}
+    let url=""; try{url=await rpUploadAudio(blob,path);}catch(e){setAttemptCounter(task.id,beforeCount);setMsg("Upload failed. Check Firebase Storage permissions.");return;}
     const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"};
     await fsSet("readingSubmissions",id,submission);
     saveStudentAttemptMarker(submission);
@@ -2577,7 +2593,7 @@ function ReadingProgressStudent({user,data,reload}){
       <Btn color={C.p} disabled={!blob} onClick={submit} style={{width:"100%",marginTop:"10px"}}>Submit to Teacher</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
-    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=attemptsForTask(t);const last=done.slice().sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0))[done.length-1];const limit=totalAllowedAttempts(t);const teacherExtra=extraRetakeAllowed(done);const allowed=done.length<limit||teacherExtra;return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit} · retakes: {Math.max(0,Number(t.retakeLimit??0)||0)}</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}{!allowed&&<div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}{teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}</div><Btn size="sm" color={allowed?C.p:C.mu} disabled={!allowed} onClick={()=>allowed&&setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
+    {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=attemptsForTask(t);const last=done.slice().sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0))[done.length-1];const limit=totalAllowedAttempts(t);const teacherExtra=extraRetakeAllowed(done);const allowed=canAttemptTask(t);return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit} · retakes: {Math.max(0,Number(t.retakeLimit??0)||0)}</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}{!allowed&&<div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}{teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}</div><Btn size="sm" color={allowed?C.p:C.mu} disabled={!allowed} onClick={()=>allowed&&setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
 }
 
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
@@ -4261,5 +4277,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_ATTEMPTS_SMART_RECORDING_READING_REPORT -->
 
 <!-- BUILD_FINAL_FIX_ATTEMPTS_AND_SMART_STOP -->
+
+<!-- BUILD_FINAL_STRICT_RETAKE_GATE -->
 </body>
 </html>
