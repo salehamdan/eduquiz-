@@ -1138,6 +1138,9 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const [listenCount,setListenCount] = useState(0);
   const [audioCompleted,setAudioCompleted] = useState(false);
   const [listenStarted,setListenStarted] = useState(false);
+  const [listenedRanges,setListenedRanges] = useState([]);
+  const listenStartRef = useRef(null);
+  const listenCountedRef = useRef(false);
   const [isPlaying,setIsPlaying] = useState(false);
   const [playSpeed,setPlaySpeed] = useState(1);
   const [audioPos,setAudioPos] = useState(0);
@@ -1148,8 +1151,9 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const ttsIndexRef = useRef(0);
   const listenLimit = quiz.type==="Listening" ? 3 : (quiz.listenLimit||0);
   const listensLeft = listenLimit>0 ? Math.max(0,listenLimit-listenCount) : null;
-  const canListen = listenLimit===0 || listenCount<listenLimit;
-  const AC = quiz.audioControls || {seek:true,speed:true,pause:true,restart:true};
+  const canListen = listenLimit===0 || listenCount<listenLimit || isPlaying;
+  const AC = quiz.audioControls || {seek:true,speed:true,pause:true,restart:true,skip10:true};
+  const skip10Enabled = AC.skip10!==false && AC.seek!==false;
   const thresh = quiz.masteryThreshold ?? MASTERY_DEFAULT;
   const total = quiz.questions.length;
   const prev = allResponses.filter(r=>r.studentId===student.id&&r.quizId===quiz.id).length;
@@ -1157,11 +1161,41 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const totalAllowedQuizAttempts = 1+maxQuizRetakes;
   const attemptBlocked = prev >= totalAllowedQuizAttempts;
   const fmt = s=>Math.floor(s/60)+":"+String(Math.max(0,Math.floor(s))%60).padStart(2,"0");
-  function markAudioComplete(){
+  function mergeRanges(ranges){
+    const clean=(ranges||[]).filter(r=>r&&isFinite(r[0])&&isFinite(r[1])&&r[1]>r[0]).sort((a,b)=>a[0]-b[0]);
+    const out=[];
+    clean.forEach(r=>{
+      if(!out.length || r[0]>out[out.length-1][1]+0.15) out.push([r[0],r[1]]);
+      else out[out.length-1][1]=Math.max(out[out.length-1][1],r[1]);
+    });
+    return out;
+  }
+  function coverageRatio(ranges,dur){
+    if(!dur||!isFinite(dur)||dur<=0) return 0;
+    return Math.min(1,mergeRanges(ranges).reduce((s,r)=>s+(r[1]-r[0]),0)/dur);
+  }
+  function fullCoverageReached(ranges,dur){ return !!(dur && coverageRatio(ranges,dur)>=0.92); }
+  function recordListenedSegment(toTime){
+    const start=listenStartRef.current;
+    if(start===null || start===undefined || !isFinite(start) || !isFinite(toTime)) return listenedRanges;
+    if(toTime<=start+0.25) return listenedRanges;
+    const next=mergeRanges([...listenedRanges,[start,toTime]]);
+    setListenedRanges(next);
+    listenStartRef.current=toTime;
+    const dur=audioDur || (audioElRef.current&&audioElRef.current.duration);
+    if(fullCoverageReached(next,dur)) markAudioComplete(next);
+    return next;
+  }
+  function markAudioComplete(rangesArg){
     const a=audioElRef.current;
-    if(a && a.duration && isFinite(a.duration)){ setAudioPos(a.duration); setAudioDur(a.duration); }
+    const dur=(a && a.duration && isFinite(a.duration)) ? a.duration : audioDur;
+    if(a && dur){ setAudioPos(Math.min(a.currentTime||dur,dur)); setAudioDur(dur); }
     setAudioCompleted(true);
     setIsPlaying(false);
+    if(!listenCountedRef.current){
+      listenCountedRef.current=true;
+      setListenCount(c=>Math.min(listenLimit||3,c+1));
+    }
   }
   function hasCompletedListening(){
     if(quiz.type!=="Listening") return true;
@@ -1169,8 +1203,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     const a=audioElRef.current;
     if(quiz.audioFile){
       const dur=(a&&a.duration&&isFinite(a.duration))?a.duration:audioDur;
-      const pos=(a&&isFinite(a.currentTime))?a.currentTime:audioPos;
-      return !!(dur && pos>=Math.max(0,dur-0.75));
+      return fullCoverageReached(listenedRanges,dur);
     }
     return !!audioCompleted;
   }
@@ -1179,7 +1212,10 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     if(a){
       if(a.duration && isFinite(a.duration)) setAudioDur(a.duration);
       if(isFinite(a.currentTime)) setAudioPos(a.currentTime);
-      if(a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) markAudioComplete();
+      if(isPlaying && listenStartRef.current!==null && isFinite(a.currentTime)){
+        if(a.currentTime >= listenStartRef.current - 0.2) recordListenedSegment(a.currentTime);
+        else listenStartRef.current=a.currentTime;
+      }
     }
   }
   function estimateListeningMs(){
@@ -1245,7 +1281,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       a.playbackRate=playSpeed;
       const pr=a.play();
       if(pr&&pr.then){
-        pr.then(()=>{ const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);audioTimeUpdate();setIsPlaying(true); setMErr(""); scheduleListeningComplete(); })
+        pr.then(()=>{ const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);if(a&&isFinite(a.currentTime))listenStartRef.current=a.currentTime;audioTimeUpdate();setIsPlaying(true); setMErr(""); scheduleListeningComplete(); })
           .catch(()=>{ setIsPlaying(false); setMErr("Could not play the audio. Check the audio link, or your internet connection."); });
       } else { setIsPlaying(true); scheduleListeningComplete(); }
     } else {
@@ -1261,12 +1297,10 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           const startSpeak=()=>speakTTSFrom(start);
           if(window.speechSynthesis.getVoices().length===0){ window.speechSynthesis.onvoiceschanged=()=>{startSpeak();window.speechSynthesis.onvoiceschanged=null;}; setTimeout(startSpeak,300); }
           else startSpeak();
-          setListenCount(c=>c+1);
         }
       }catch(e){ setMErr("Your device could not play the voice. Try a different browser."); }
       return;
     }
-    setListenCount(c=>c+1);
   };
   const pauseAudio=()=>{
     if(quiz.audioFile){ if(audioElRef.current)audioElRef.current.pause(); }
@@ -1277,14 +1311,23 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     if(!canListen) return;
     setListenStarted(true);
     setAudioCompleted(false);
+    listenCountedRef.current=false;
+    setListenedRanges([]);
+    listenStartRef.current=0;
     setAudioPos(0);
-    if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;a.play();setIsPlaying(true);scheduleListeningComplete();} }
+    if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;listenStartRef.current=0;a.play();setIsPlaying(true);} }
     else { ttsIndexRef.current=0; setTtsIndex(0); scheduleListeningComplete(); speakTTSFrom(0); }
-    setListenCount(c=>c+1);
   };
   const cycleSpeed=()=>{ const speeds=[0.5,0.75,1,1.25,1.5]; const i=speeds.indexOf(playSpeed); const next=speeds[(i+1)%speeds.length]; setPlaySpeed(next); if(quiz.audioFile&&audioElRef.current)audioElRef.current.playbackRate=next; if(!quiz.audioFile && isPlaying){ speakTTSFrom(ttsIndexRef.current); } };
   const seekAudio=(sec)=>{
-    if(quiz.audioFile && audioElRef.current){ audioElRef.current.currentTime=Math.max(0,audioElRef.current.currentTime+sec); return; }
+    if(quiz.audioFile && audioElRef.current){
+      const a=audioElRef.current;
+      if(isPlaying) recordListenedSegment(a.currentTime);
+      a.currentTime=Math.max(0,Math.min((a.duration&&isFinite(a.duration)?a.duration:999999),a.currentTime+sec));
+      setAudioPos(a.currentTime);
+      listenStartRef.current=isPlaying?a.currentTime:null;
+      return;
+    }
     if(!quiz.audioFile && quiz.passage){
       const chunks=getTTSChunks(); if(!chunks.length) return;
       const step=sec<0?-1:1;
@@ -1395,13 +1438,13 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
             {quiz.type==="Listening"
               ? <div style={{background:"#f0f9ff",borderRadius:"9px",padding:"20px",textAlign:"center"}}>
                   <div style={{fontSize:"36px",marginBottom:"7px"}}>🎧</div>
-                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onLoadedMetadata={()=>{const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);}} onTimeUpdate={audioTimeUpdate} onEnded={markAudioComplete} onPause={()=>{audioTimeUpdate();if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
+                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onLoadedMetadata={()=>{const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);}} onTimeUpdate={audioTimeUpdate} onEnded={()=>{const a=audioElRef.current;const dur=(a&&a.duration&&isFinite(a.duration))?a.duration:audioDur;const next=recordListenedSegment(dur||audioPos);if(fullCoverageReached(next,dur))markAudioComplete(next);else setIsPlaying(false);listenStartRef.current=null;}} onPause={()=>{audioTimeUpdate();listenStartRef.current=null;if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
                   <p style={{color:C.mu,fontSize:"12px",margin:"0 0 13px",fontFamily:F}}>{canListen?"Use the controls to listen.":"You have used all your listens."}</p>
                   <div style={{display:"flex",gap:"7px",justifyContent:"center",flexWrap:"wrap",marginBottom:"10px"}}>
-                    {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
+                    {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
                     {(!isPlaying || !AC.pause) ? <Btn onClick={playAudio} disabled={!canListen||(isPlaying&&!AC.pause)}>▶ Play</Btn> : <Btn color={C.w} onClick={pauseAudio}>⏸ Pause</Btn>}
                     {AC.restart && <Btn size="sm" color={C.p} onClick={restartAudio} disabled={!canListen}>🔁 Restart</Btn>}
-                    {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>10s ⏩</Btn>}
+                    {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>10s ⏩</Btn>}
                     {AC.speed && <Btn size="sm" color={C.pu} onClick={cycleSpeed}>⚡ {playSpeed}x</Btn>}
                   </div>
                   {!quiz.audioFile && getTTSChunks().length>1 && <p style={{color:C.mu,fontSize:"11px",margin:"0 0 6px",fontFamily:F}}>Sentence {ttsIndex+1} / {getTTSChunks().length}</p>}
@@ -1433,13 +1476,20 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
             <p style={{fontSize:"11px",color:C.mu,margin:"5px 0 0",fontFamily:F}}>{quiz.labelAnswerMode==="number"?"Look at the numbered parts on the image, then write the correct number next to each word in the table below.":"Look at the numbered parts on the image and identify each one below."}</p>
           </div>}
           {quiz.type==="Listening" && (quiz.passage||quiz.audioFile) && <div style={{marginBottom:"12px",position:"sticky",top:0,zIndex:5,background:"#f0f9ff",borderRadius:"9px",padding:"10px 12px",border:"1px solid #bae6fd"}}>
-            {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onEnded={()=>setIsPlaying(false)} preload="auto" playsInline style={{display:"none"}}/>}
+            {quiz.audioFile && <div style={{margin:"0 auto 8px",maxWidth:"360px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"4px"}}>
+                <span>⏱ {fmt(audioPos)}</span><span>{audioDur?fmt(audioDur):"--:--"}</span>
+              </div>
+              <div style={{height:"8px",background:"#dbeafe",borderRadius:"999px",overflow:"hidden"}}>
+                <div style={{height:"100%",width:(audioDur?Math.min(100,(audioPos/audioDur)*100):0)+"%",background:hasCompletedListening()?C.s:C.p,borderRadius:"999px"}}/>
+              </div>
+            </div>}
             <div style={{display:"flex",gap:"6px",justifyContent:"center",flexWrap:"wrap",alignItems:"center"}}>
               <span style={{fontSize:"16px"}}>🎧</span>
-              {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪</Btn>}
+              {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪</Btn>}
               {(!isPlaying || !AC.pause) ? <Btn size="sm" onClick={playAudio} disabled={!canListen||(isPlaying&&!AC.pause)}>▶ Play</Btn> : <Btn size="sm" color={C.w} onClick={pauseAudio}>⏸</Btn>}
               {AC.restart && <Btn size="sm" color={C.p} onClick={restartAudio} disabled={!canListen}>🔁</Btn>}
-              {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>⏩</Btn>}
+              {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>⏩</Btn>}
               {AC.speed && <Btn size="sm" color={C.pu} onClick={cycleSpeed}>⚡ {playSpeed}x</Btn>}
               {listensLeft!==null && <span style={{color:listensLeft>0?C.s:C.d,fontSize:"11px",fontWeight:"700",fontFamily:F}}>({listensLeft} left)</span>}
               {!quiz.audioFile && getTTSChunks().length>1 && <span style={{color:C.mu,fontSize:"11px",fontWeight:"700",fontFamily:F}}>Sentence {ttsIndex+1}/{getTTSChunks().length}</span>}
@@ -1818,7 +1868,8 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
                   <div style={{width:"32px",height:"32px",borderRadius:"50%",background:gc(p)+"20",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:"800",color:gc(p),fontFamily:F}}>{p}%</span></div>
                   <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"12px",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz?.type} · {r.completedAt} · #{r.attempt}</div></div>
                   {r.selfRating>0&&<span style={{fontSize:"11px"}}>{Array(r.selfRating).fill("⭐").join("")}</span>}
-                  {quiz&&<span style={{fontSize:"11px",color:C.p,fontWeight:"700",fontFamily:F}}>Review →</span>}
+                  {quiz&&canReviewQuizResponse(quiz)&&<span style={{fontSize:"11px",color:C.p,fontWeight:"700",fontFamily:F}}>Review →</span>}
+                  {quiz&&!canReviewQuizResponse(quiz)&&<span style={{fontSize:"10px",color:C.w,fontWeight:"700",fontFamily:F}}>Locked</span>}
                 </div>
               );})}
             </Card>
@@ -1907,13 +1958,13 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const addMatchAnswer=()=>setMatchAnswers(a=>[...a,""]);
   const updMatchAnswer=(i,v)=>setMatchAnswers(a=>a.map((x,j)=>j===i?v:x));
   const remMatchAnswer=(i)=>setMatchAnswers(a=>a.filter((_,j)=>j!==i));
-  const [audioControls,setAudioControls]=useState(E.audioControls||{seek:true,speed:true,pause:true,restart:true});
+  const [audioControls,setAudioControls]=useState(E.audioControls||{seek:true,speed:true,pause:true,restart:true,skip10:true});
   const audioFileRef = useRef();
   const tPreviewRef = useRef();
   const [tSpeed,setTSpeed]=useState(1);
   const setAC=(k,v)=>setAudioControls(c=>({...c,[k]:v}));
-  function applyEasyMode(){ setAudioControls({seek:true,speed:true,pause:true,restart:true}); }
-  function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false}); }
+  function applyEasyMode(){ setAudioControls({seek:true,speed:true,pause:true,restart:true,skip10:true}); }
+  function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false,skip10:false}); }
   const [err,setErr]=useState(""),[preview,setPreview]=useState(null),[showImport,setShowImport]=useState(false),[showPaste,setShowPaste]=useState(false),[csvPaste,setCsvPaste]=useState("");
   const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
   const [aiLength,setAiLength]=useState("medium");
@@ -4346,5 +4397,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_STRICT_COMPLETE_HIDE_NATIVE_REVIEW_GATE -->
 
 <!-- BUILD_FINAL_LISTENING_ONE_PLAYER_COUNTER_SUBMIT_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_COVERAGE_SKIP_CONTROL_REVIEW_FIX -->
 </body>
 </html>
