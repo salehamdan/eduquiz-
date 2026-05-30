@@ -1166,6 +1166,22 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     const a=audioElRef.current;
     if(a && a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) markAudioComplete();
   }
+  function estimateListeningMs(){
+    const text=String(quiz.passage||"").replace(/\s+/g," ").trim();
+    const words=text?text.split(/\s+/).filter(Boolean).length:0;
+    if(quiz.audioFile && audioElRef.current){
+      const a=audioElRef.current;
+      if(a.duration && isFinite(a.duration)){
+        return Math.max(2500,(a.duration-(a.currentTime||0))*1000+700);
+      }
+    }
+    return Math.min(180000,Math.max(4500,words*520+1200));
+  }
+  function scheduleListeningComplete(){
+    const ms=estimateListeningMs();
+    clearTimeout(window.__eqListeningDoneTimer);
+    window.__eqListeningDoneTimer=setTimeout(()=>{markAudioComplete();},ms);
+  }
 
   useEffect(()=>{
     if(timeLeft===null||submitted) return;
@@ -1212,9 +1228,9 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       a.playbackRate=playSpeed;
       const pr=a.play();
       if(pr&&pr.then){
-        pr.then(()=>{ setIsPlaying(true); setMErr(""); })
+        pr.then(()=>{ setIsPlaying(true); setMErr(""); scheduleListeningComplete(); })
           .catch(()=>{ setIsPlaying(false); setMErr("Could not play the audio. Check the audio link, or your internet connection."); });
-      } else { setIsPlaying(true); }
+      } else { setIsPlaying(true); scheduleListeningComplete(); }
     } else {
       if(!quiz.passage)return;
       try{
@@ -1224,9 +1240,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         } else {
           const start=ttsIndexRef.current||0;
           setAudioCompleted(false);
-          const textForEstimate=String(quiz.passage||"").trim();
-          const estimatedMs=Math.min(180000,Math.max(5000, textForEstimate.split(/\s+/).filter(Boolean).length*520));
-          setTimeout(()=>{try{ if(!quiz.audioFile){ setAudioCompleted(true); setIsPlaying(false); }}catch(e){}}, estimatedMs+1200);
+          scheduleListeningComplete();
           const startSpeak=()=>speakTTSFrom(start);
           if(window.speechSynthesis.getVoices().length===0){ window.speechSynthesis.onvoiceschanged=()=>{startSpeak();window.speechSynthesis.onvoiceschanged=null;}; setTimeout(startSpeak,300); }
           else startSpeak();
@@ -1245,8 +1259,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const restartAudio=()=>{
     if(!canListen) return;
     setAudioCompleted(false);
-    if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;a.play();setIsPlaying(true);} }
-    else { ttsIndexRef.current=0; setTtsIndex(0); speakTTSFrom(0); }
+    if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;a.play();setIsPlaying(true);scheduleListeningComplete();} }
+    else { ttsIndexRef.current=0; setTtsIndex(0); scheduleListeningComplete(); speakTTSFrom(0); }
     setListenCount(c=>c+1);
   };
   const cycleSpeed=()=>{ const speeds=[0.5,0.75,1,1.25,1.5]; const i=speeds.indexOf(playSpeed); const next=speeds[(i+1)%speeds.length]; setPlaySpeed(next); if(quiz.audioFile&&audioElRef.current)audioElRef.current.playbackRate=next; if(!quiz.audioFile && isPlaying){ speakTTSFrom(ttsIndexRef.current); } };
@@ -1312,7 +1326,10 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
   }
   async function handleSubmit(){
-    if(quiz.type==="Listening" && !hasCompletedListening()){setMErr("Please listen to the full audio track before submitting.");setTab("passage");return;}
+    if(quiz.type==="Listening" && !hasCompletedListening()){
+      if(listenCount>0){ markAudioComplete(); }
+      else { setMErr("Please listen to the full audio track before submitting.");setTab("passage");return; }
+    }
     if(Object.keys(answers).length<total){setMErr("Please answer all "+total+" questions.");return;}
     const sc=quiz.questions.filter(q=>isCorrect(q)).length;
     if(pct(sc,total)<thresh){setMErr("You scored "+pct(sc,total)+"% — need "+thresh+"% to submit. Review and try again! 💪");setScore(sc);return;}
@@ -4291,5 +4308,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_QUIZ_SHOW_ALL_CLASSES -->
 
 <!-- BUILD_FINAL_LISTENING_SUBMIT_COMPLETION_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_MOBILE_FALLBACK -->
 </body>
 </html>
