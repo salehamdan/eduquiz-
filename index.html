@@ -1140,6 +1140,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const [listenStarted,setListenStarted] = useState(false);
   const [isPlaying,setIsPlaying] = useState(false);
   const [playSpeed,setPlaySpeed] = useState(1);
+  const [audioPos,setAudioPos] = useState(0);
+  const [audioDur,setAudioDur] = useState(0);
   const [ttsPaused,setTtsPaused] = useState(false);
   const [ttsIndex,setTtsIndex] = useState(0);
   const ttsChunksRef = useRef([]);
@@ -1154,19 +1156,31 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const maxQuizRetakes = quiz.allowRetake ? Math.max(0, Number(quiz.maxRetakes ?? 2)||0) : 0;
   const totalAllowedQuizAttempts = 1+maxQuizRetakes;
   const attemptBlocked = prev >= totalAllowedQuizAttempts;
-  const fmt = s=>Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
-  function markAudioComplete(){ setAudioCompleted(true); setIsPlaying(false); }
+  const fmt = s=>Math.floor(s/60)+":"+String(Math.max(0,Math.floor(s))%60).padStart(2,"0");
+  function markAudioComplete(){
+    const a=audioElRef.current;
+    if(a && a.duration && isFinite(a.duration)){ setAudioPos(a.duration); setAudioDur(a.duration); }
+    setAudioCompleted(true);
+    setIsPlaying(false);
+  }
   function hasCompletedListening(){
     if(quiz.type!=="Listening") return true;
+    if(audioCompleted) return true;
     const a=audioElRef.current;
     if(quiz.audioFile){
-      return !!(a && a.duration && isFinite(a.duration) && (a.ended || a.currentTime>=Math.max(0,a.duration-0.75)));
+      const dur=(a&&a.duration&&isFinite(a.duration))?a.duration:audioDur;
+      const pos=(a&&isFinite(a.currentTime))?a.currentTime:audioPos;
+      return !!(dur && pos>=Math.max(0,dur-0.75));
     }
     return !!audioCompleted;
   }
   function audioTimeUpdate(){
     const a=audioElRef.current;
-    if(a && a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) markAudioComplete();
+    if(a){
+      if(a.duration && isFinite(a.duration)) setAudioDur(a.duration);
+      if(isFinite(a.currentTime)) setAudioPos(a.currentTime);
+      if(a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) markAudioComplete();
+    }
   }
   function estimateListeningMs(){
     const text=String(quiz.passage||"").replace(/\s+/g," ").trim();
@@ -1231,7 +1245,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       a.playbackRate=playSpeed;
       const pr=a.play();
       if(pr&&pr.then){
-        pr.then(()=>{ setIsPlaying(true); setMErr(""); scheduleListeningComplete(); })
+        pr.then(()=>{ const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);audioTimeUpdate();setIsPlaying(true); setMErr(""); scheduleListeningComplete(); })
           .catch(()=>{ setIsPlaying(false); setMErr("Could not play the audio. Check the audio link, or your internet connection."); });
       } else { setIsPlaying(true); scheduleListeningComplete(); }
     } else {
@@ -1263,6 +1277,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     if(!canListen) return;
     setListenStarted(true);
     setAudioCompleted(false);
+    setAudioPos(0);
     if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;a.play();setIsPlaying(true);scheduleListeningComplete();} }
     else { ttsIndexRef.current=0; setTtsIndex(0); scheduleListeningComplete(); speakTTSFrom(0); }
     setListenCount(c=>c+1);
@@ -1330,6 +1345,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
   }
   async function handleSubmit(){
+    if(quiz.type==="Listening") audioTimeUpdate();
     if(quiz.type==="Listening" && !hasCompletedListening()){
       setMErr("Please listen to the full audio track before submitting.");
       setTab("passage");
@@ -1379,7 +1395,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
             {quiz.type==="Listening"
               ? <div style={{background:"#f0f9ff",borderRadius:"9px",padding:"20px",textAlign:"center"}}>
                   <div style={{fontSize:"36px",marginBottom:"7px"}}>🎧</div>
-                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onTimeUpdate={audioTimeUpdate} onEnded={markAudioComplete} onPause={()=>{if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
+                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onLoadedMetadata={()=>{const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);}} onTimeUpdate={audioTimeUpdate} onEnded={markAudioComplete} onPause={()=>{audioTimeUpdate();if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
                   <p style={{color:C.mu,fontSize:"12px",margin:"0 0 13px",fontFamily:F}}>{canListen?"Use the controls to listen.":"You have used all your listens."}</p>
                   <div style={{display:"flex",gap:"7px",justifyContent:"center",flexWrap:"wrap",marginBottom:"10px"}}>
                     {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
@@ -1389,6 +1405,14 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                     {AC.speed && <Btn size="sm" color={C.pu} onClick={cycleSpeed}>⚡ {playSpeed}x</Btn>}
                   </div>
                   {!quiz.audioFile && getTTSChunks().length>1 && <p style={{color:C.mu,fontSize:"11px",margin:"0 0 6px",fontFamily:F}}>Sentence {ttsIndex+1} / {getTTSChunks().length}</p>}
+                  {quiz.audioFile && <div style={{margin:"8px auto 6px",maxWidth:"360px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"4px"}}>
+                      <span>⏱ {fmt(audioPos)}</span><span>{audioDur?fmt(audioDur):"--:--"}</span>
+                    </div>
+                    <div style={{height:"8px",background:"#dbeafe",borderRadius:"999px",overflow:"hidden"}}>
+                      <div style={{height:"100%",width:(audioDur?Math.min(100,(audioPos/audioDur)*100):0)+"%",background:hasCompletedListening()?C.s:C.p,borderRadius:"999px"}}/>
+                    </div>
+                  </div>}
                   {listensLeft!==null && <p style={{color:listensLeft>0?C.s:C.d,fontSize:"12px",fontWeight:"700",margin:0,fontFamily:F}}>🎧 Listens left: {listensLeft} / {listenLimit}</p>}
                   <p style={{color:hasCompletedListening()?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{hasCompletedListening()?"✅ Full audio completed — answer all questions before submitting":"⚠️ Listen to the full audio before submitting"}</p>
                 </div>
@@ -4320,5 +4344,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_SUBMIT_PLAY_STARTED_FIX -->
 
 <!-- BUILD_FINAL_LISTENING_STRICT_COMPLETE_HIDE_NATIVE_REVIEW_GATE -->
+
+<!-- BUILD_FINAL_LISTENING_ONE_PLAYER_COUNTER_SUBMIT_FIX -->
 </body>
 </html>
