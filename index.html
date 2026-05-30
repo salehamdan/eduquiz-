@@ -1137,6 +1137,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const audioElRef = useRef();
   const [listenCount,setListenCount] = useState(0);
   const [audioCompleted,setAudioCompleted] = useState(false);
+  const [listenStarted,setListenStarted] = useState(false);
   const [isPlaying,setIsPlaying] = useState(false);
   const [playSpeed,setPlaySpeed] = useState(1);
   const [ttsPaused,setTtsPaused] = useState(false);
@@ -1185,7 +1186,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
 
   useEffect(()=>{
     if(timeLeft===null||submitted) return;
-    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !hasCompletedListening())){doSave();} else {onDone();} return; }
+    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !(listenStarted||listenCount>0||hasCompletedListening()))){doSave();} else {onDone();} return; }
     tRef.current=setTimeout(()=>setTimeLeft(t=>t-1),1000);
     return ()=>clearTimeout(tRef.current);
   },[timeLeft,submitted]);
@@ -1221,6 +1222,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   }
   const playAudio=()=>{
     if(!canListen) return;
+    setListenStarted(true);
     setMErr("");
     if(quiz.audioFile){
       const a=audioElRef.current; if(!a){setMErr("Audio is loading… tap Play again in a second.");return;}
@@ -1258,6 +1260,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   };
   const restartAudio=()=>{
     if(!canListen) return;
+    setListenStarted(true);
     setAudioCompleted(false);
     if(quiz.audioFile){ const a=audioElRef.current; if(a){a.currentTime=0;a.playbackRate=playSpeed;a.play();setIsPlaying(true);scheduleListeningComplete();} }
     else { ttsIndexRef.current=0; setTtsIndex(0); scheduleListeningComplete(); speakTTSFrom(0); }
@@ -1326,9 +1329,10 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
   }
   async function handleSubmit(){
-    if(quiz.type==="Listening" && !hasCompletedListening()){
-      if(listenCount>0){ markAudioComplete(); }
-      else { setMErr("Please listen to the full audio track before submitting.");setTab("passage");return; }
+    if(quiz.type==="Listening" && !(listenStarted || listenCount>0 || hasCompletedListening())){
+      setMErr("Please press Play and listen before submitting.");
+      setTab("passage");
+      return;
     }
     if(Object.keys(answers).length<total){setMErr("Please answer all "+total+" questions.");return;}
     const sc=quiz.questions.filter(q=>isCorrect(q)).length;
@@ -1384,7 +1388,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                   </div>
                   {!quiz.audioFile && getTTSChunks().length>1 && <p style={{color:C.mu,fontSize:"11px",margin:"0 0 6px",fontFamily:F}}>Sentence {ttsIndex+1} / {getTTSChunks().length}</p>}
                   {listensLeft!==null && <p style={{color:listensLeft>0?C.s:C.d,fontSize:"12px",fontWeight:"700",margin:0,fontFamily:F}}>🎧 Listens left: {listensLeft} / {listenLimit}</p>}
-                  <p style={{color:hasCompletedListening()?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{hasCompletedListening()?"✅ Full audio completed":"⚠️ Listen to the full audio before submitting"}</p>
+                  <p style={{color:(listenStarted||listenCount>0||hasCompletedListening())?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{(listenStarted||listenCount>0||hasCompletedListening())?"✅ Listening started — answer all questions before submitting":"⚠️ Press Play before submitting"}</p>
                 </div>
               : <div style={{background:"#f8fafc",borderRadius:"9px",padding:"16px",border:"1px solid "+C.br}}>
                   {quiz.passage.split("\n\n").map((p,i)=><p key={i} style={{color:C.tx,fontSize:"14px",lineHeight:"1.9",margin:"0 0 11px",textAlign:"justify",fontFamily:F}}>{p}</p>)}
@@ -4310,5 +4314,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_SUBMIT_COMPLETION_FIX -->
 
 <!-- BUILD_FINAL_LISTENING_SUBMIT_MOBILE_FALLBACK -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_PLAY_STARTED_FIX -->
 </body>
 </html>
