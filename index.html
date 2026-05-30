@@ -1866,7 +1866,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   async function handleAiImage(e){ const file=e.target.files[0]; if(e.target)e.target.value=""; if(!file)return; if(file.size>4000000){setAiMsg("Image too large (max ~4MB).");return;} const r=new FileReader(); r.onload=()=>setAiImage(r.result); r.readAsDataURL(file); }
   async function handleAiAudio(e){ const file=e.target.files[0]; if(e.target)e.target.value=""; if(!file)return; if(file.size>700000){setAiMsg("⚠️ Audio too big to upload (max ~700KB). Use a shorter clip, or attach audio via a link in the Listening Script box instead.");return;} const r=new FileReader(); r.onload=()=>setAiAudioFile(r.result); r.readAsDataURL(file); }
   const aiFileRef = useRef();
-  const myClasses=classes.filter(c=>c.teacherIds&&c.teacherIds.includes(teacher.id));
+  const allQuizClasses=(classes||[]).filter(c=>!c.deleted);
+  const myClasses=allQuizClasses;
   function defaultSkillForType(t){
     if(t==="Grammar") return "Grammar";
     if(t==="Vocabulary") return "Vocabulary";
@@ -2144,7 +2145,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
             </div>
             {visibility==="classes" && <div>
               {myClasses.length>0 ? <>
-                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 6px",fontFamily:F}}>Pick classes (or leave empty = all students see it):</p>
+                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 6px",fontFamily:F}}>Pick classes (or leave empty = all students see it) — all platform classes shown:</p>
                 <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
                   {myClasses.map(c=>{const sel=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(sel?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"4px 11px",borderRadius:"7px",border:"2px solid "+(sel?C.p:C.br),background:sel?"#eff6ff":"#f8fafc",color:sel?C.p:C.mu,fontWeight:"600",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{c.name}</button>;})}
                 </div>
@@ -4271,5 +4272,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_QUIZ_LISTENING_RULES_RETAKE_LIMIT -->
 
 <!-- BUILD_FINAL_TEACHER_RETAKE_CONTROL_REVIEW_AFTER_FINAL -->
+
+<!-- BUILD_FINAL_QUIZ_SHOW_ALL_CLASSES -->
 </body>
 </html>
