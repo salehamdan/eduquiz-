@@ -1158,10 +1158,11 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   function markAudioComplete(){ setAudioCompleted(true); setIsPlaying(false); }
   function hasCompletedListening(){
     if(quiz.type!=="Listening") return true;
-    if(audioCompleted) return true;
     const a=audioElRef.current;
-    if(quiz.audioFile && a && a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) return true;
-    return false;
+    if(quiz.audioFile){
+      return !!(a && a.duration && isFinite(a.duration) && (a.ended || a.currentTime>=Math.max(0,a.duration-0.75)));
+    }
+    return !!audioCompleted;
   }
   function audioTimeUpdate(){
     const a=audioElRef.current;
@@ -1181,12 +1182,12 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   function scheduleListeningComplete(){
     const ms=estimateListeningMs();
     clearTimeout(window.__eqListeningDoneTimer);
-    window.__eqListeningDoneTimer=setTimeout(()=>{markAudioComplete();},ms);
+    window.__eqListeningDoneTimer=setTimeout(()=>{ if(!quiz.audioFile) markAudioComplete(); },ms);
   }
 
   useEffect(()=>{
     if(timeLeft===null||submitted) return;
-    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !(listenStarted||listenCount>0||hasCompletedListening()))){doSave();} else {onDone();} return; }
+    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !hasCompletedListening())){doSave();} else {onDone();} return; }
     tRef.current=setTimeout(()=>setTimeLeft(t=>t-1),1000);
     return ()=>clearTimeout(tRef.current);
   },[timeLeft,submitted]);
@@ -1329,8 +1330,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
   }
   async function handleSubmit(){
-    if(quiz.type==="Listening" && !(listenStarted || listenCount>0 || hasCompletedListening())){
-      setMErr("Please press Play and listen before submitting.");
+    if(quiz.type==="Listening" && !hasCompletedListening()){
+      setMErr("Please listen to the full audio track before submitting.");
       setTab("passage");
       return;
     }
@@ -1341,7 +1342,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   }
 
   const skillData = submitted?calcSkills([{quizId:quiz.id,answers,score,totalQ:total}],[quiz]):[];
-  const tabs=[...(quiz.passage?[{id:"passage",icon:"📄",label:"Passage"}]:[]),{id:"questions",icon:"❓",label:"Questions"},...(submitted?[{id:"results",icon:"📊",label:"Results"}]:[])];
+  const reviewUnlocked = !submitted || ((prev+1)>=totalAllowedQuizAttempts);
+  const tabs=[...(quiz.passage?[{id:"passage",icon:"📄",label:"Passage"}]:[]),...(reviewUnlocked?[{id:"questions",icon:"❓",label:"Questions"}]:[]),...(submitted?[{id:"results",icon:"📊",label:"Results"}]:[])];
 
   if(attemptBlocked && !submitted) return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -1388,7 +1390,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                   </div>
                   {!quiz.audioFile && getTTSChunks().length>1 && <p style={{color:C.mu,fontSize:"11px",margin:"0 0 6px",fontFamily:F}}>Sentence {ttsIndex+1} / {getTTSChunks().length}</p>}
                   {listensLeft!==null && <p style={{color:listensLeft>0?C.s:C.d,fontSize:"12px",fontWeight:"700",margin:0,fontFamily:F}}>🎧 Listens left: {listensLeft} / {listenLimit}</p>}
-                  <p style={{color:(listenStarted||listenCount>0||hasCompletedListening())?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{(listenStarted||listenCount>0||hasCompletedListening())?"✅ Listening started — answer all questions before submitting":"⚠️ Press Play before submitting"}</p>
+                  <p style={{color:hasCompletedListening()?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{hasCompletedListening()?"✅ Full audio completed — answer all questions before submitting":"⚠️ Listen to the full audio before submitting"}</p>
                 </div>
               : <div style={{background:"#f8fafc",borderRadius:"9px",padding:"16px",border:"1px solid "+C.br}}>
                   {quiz.passage.split("\n\n").map((p,i)=><p key={i} style={{color:C.tx,fontSize:"14px",lineHeight:"1.9",margin:"0 0 11px",textAlign:"justify",fontFamily:F}}>{p}</p>)}
@@ -1419,8 +1421,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
               {!quiz.audioFile && getTTSChunks().length>1 && <span style={{color:C.mu,fontSize:"11px",fontWeight:"700",fontFamily:F}}>Sentence {ttsIndex+1}/{getTTSChunks().length}</span>}
             </div>
             {quiz.audioFile && <div style={{marginTop:"8px"}}>
-              <p style={{fontSize:"10px",color:C.mu,margin:"0 0 4px",fontFamily:F,textAlign:"center"}}>If the button above doesn't play, use this player:</p>
-              <audio controls src={quiz.audioFile} preload="auto" playsInline style={{width:"100%"}}/>
+              <p style={{fontSize:"10px",color:C.mu,margin:"0 0 4px",fontFamily:F,textAlign:"center"}}></p>
+              <audio controls src={quiz.audioFile} preload="auto" playsInline style={{display:"none"}}/>
             </div>}
           </div>}
           {mErr && <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:"8px",padding:"9px 12px",color:"#991b1b",fontSize:"12px",marginBottom:"11px",fontFamily:F}}>⚠️ {mErr}</div>}
@@ -1528,13 +1530,13 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
               </div>
             </Card>
             {skillData.length>0 && <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📚 Skill Breakdown</strong>{skillData.map(s=><SBar key={s.skill} {...s}/>)}</Card>}
-            {prev+1>=totalAllowedQuizAttempts
+            {(prev+1)>=totalAllowedQuizAttempts
               ? <Card style={{marginBottom:"11px",background:"#eff6ff",border:"1px solid #93c5fd",textAlign:"center"}}>
                   <p style={{margin:"0 0 9px",fontSize:"13px",color:"#1e40af",fontWeight:"600",fontFamily:F}}>👀 All attempts finished. You can now review your answers.</p>
                   <Btn onClick={()=>setTab("questions")} style={{width:"100%"}} color={C.p}>🔍 Review My Answers</Btn>
                 </Card>
               : <Card style={{marginBottom:"11px",background:"#fff7ed",border:"1px solid #fdba74",textAlign:"center"}}>
-                  <p style={{margin:0,fontSize:"13px",color:"#9a3412",fontWeight:"600",fontFamily:F}}>🔒 Answer review will open after your final allowed attempt.</p>
+                  <p style={{margin:0,fontSize:"13px",color:"#9a3412",fontWeight:"600",fontFamily:F}}>🔒 Answer review will open after your final allowed attempt. Attempts used: {prev+1}/{totalAllowedQuizAttempts}</p>
                 </Card>}
             <Btn onClick={onDone} size="lg" style={{width:"100%"}} color={C.mu}>← Back to Quizzes</Btn>
           </div>;
@@ -2238,7 +2240,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <input value={audioFile.startsWith("data:")?"":audioFile} onChange={e=>setAudioFile(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"8px"}}/>
               <label htmlFor="audioUp" style={{display:"block",padding:"10px",background:audioFile.startsWith("data:")?"#f0fdf4":"#f3e8ff",color:audioFile.startsWith("data:")?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,marginBottom:"7px"}}>{audioFile.startsWith("data:")?"✅ Small audio uploaded — tap to replace":"📤 Or upload a small clip (under ~700KB)"}</label>
               <input id="audioUp" type="file" accept="audio/*" ref={audioFileRef} onChange={handleAudioUpload} style={{display:"none"}}/>
-              {audioFile && <div style={{marginBottom:"8px"}}><audio ref={tPreviewRef} controls src={audioFile} style={{width:"100%"}}/><div><Btn size="sm" color={C.d} onClick={()=>setAudioFile("")}>Remove audio</Btn></div></div>}
+              {audioFile && <div style={{marginBottom:"8px"}}><audio ref={tPreviewRef} controls src={audioFile} style={{display:"none"}}/><div><Btn size="sm" color={C.d} onClick={()=>setAudioFile("")}>Remove audio</Btn></div></div>}
               <Label text="How many times can a student listen? (0 = unlimited)"/>
               <input type="number" min="0" value={listenLimit} onChange={e=>setListenLimit(Math.max(0,Number(e.target.value)))} style={{...inp,marginBottom:"11px"}}/>
               <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px"}}>
@@ -2325,7 +2327,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                 <input value={aiAudioUrl} onChange={e=>setAiAudioUrl(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"7px"}}/>
                 <label htmlFor="aiAudioUp2" style={{display:"block",padding:"10px",background:aiAudioFile?"#f0fdf4":"#f3e8ff",color:aiAudioFile?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F}}>{aiAudioFile?"✅ Audio uploaded — tap to replace":"📤 Or upload small clip (under ~700KB)"}</label>
                 <input id="aiAudioUp2" type="file" accept="audio/*" onChange={handleAiAudio} style={{display:"none"}}/>
-                {(aiAudioUrl.trim()||aiAudioFile) && <audio controls src={aiAudioUrl.trim()||aiAudioFile} style={{width:"100%",marginTop:"7px"}}/>}
+                {(aiAudioUrl.trim()||aiAudioFile) && <audio controls src={aiAudioUrl.trim()||aiAudioFile} style={{display:"none"}}/>}
               </div>}
               <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={4} placeholder={type==="Listening"?"Paste the audio script (what is said) here. AI will make listening questions from it.":"Paste a reading passage or any text. AI will make questions from it."} style={{...inp,resize:"vertical",lineHeight:"1.6"}}/>
             </div>}
@@ -2337,7 +2339,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                 <input value={aiAudioUrl} onChange={e=>setAiAudioUrl(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"7px"}}/>
                 <label htmlFor="aiAudioUp" style={{display:"block",padding:"10px",background:aiAudioFile?"#f0fdf4":"#f3e8ff",color:aiAudioFile?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F}}>{aiAudioFile?"✅ Audio uploaded — tap to replace":"📤 Or upload small clip (under ~700KB)"}</label>
                 <input id="aiAudioUp" type="file" accept="audio/*" ref={aiAudioRef} onChange={handleAiAudio} style={{display:"none"}}/>
-                {(aiAudioUrl.trim()||aiAudioFile) && <audio controls src={aiAudioUrl.trim()||aiAudioFile} style={{width:"100%",marginTop:"7px"}}/>}
+                {(aiAudioUrl.trim()||aiAudioFile) && <audio controls src={aiAudioUrl.trim()||aiAudioFile} style={{display:"none"}}/>}
               </div>}
               <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={6} placeholder={type==="Listening"?"Paste your listening questions here. Example:\n\n1. Where is the speaker?\nA. ...\nB. ...\nC. ...\nD. ...\n\n2. ...":"Paste your passage and questions here. Example:\n\n[Passage text...]\n\n1. What is the main idea?\nA. ...\nB. ...\nC. ...\nD. ...\n\n2. ..."} style={{...inp,resize:"vertical",lineHeight:"1.6"}}/>
             </div>}
@@ -2677,7 +2679,7 @@ function ReadingProgressStudent({user,data,reload}){
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}</div></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>Stop the model audio before recording.</div>}
-      {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
+      {audioUrl&&<audio controls src={audioUrl} style={{display:"none"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
       <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":((sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
@@ -2762,7 +2764,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · retakes: {t.retakeLimit??0} · total attempts: {1+(Number(t.retakeLimit??0)||0)} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Retakes: {t.retakeLimit??0}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}</Card>
     <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
     <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
-    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"32px"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
+    <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{display:"none"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
   </div>;
 }
 
@@ -4316,5 +4318,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_SUBMIT_MOBILE_FALLBACK -->
 
 <!-- BUILD_FINAL_LISTENING_SUBMIT_PLAY_STARTED_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_STRICT_COMPLETE_HIDE_NATIVE_REVIEW_GATE -->
 </body>
 </html>
