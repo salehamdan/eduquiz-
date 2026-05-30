@@ -1150,8 +1150,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const thresh = quiz.masteryThreshold ?? MASTERY_DEFAULT;
   const total = quiz.questions.length;
   const prev = allResponses.filter(r=>r.studentId===student.id&&r.quizId===quiz.id).length;
-  const maxQuizRetakes = 2;
-  const totalAllowedQuizAttempts = quiz.allowRetake ? (1+maxQuizRetakes) : 1;
+  const maxQuizRetakes = quiz.allowRetake ? Math.max(0, Number(quiz.maxRetakes ?? 2)||0) : 0;
+  const totalAllowedQuizAttempts = 1+maxQuizRetakes;
   const attemptBlocked = prev >= totalAllowedQuizAttempts;
   const fmt = s=>Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
 
@@ -1314,7 +1314,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         <Card>
           <div style={{fontSize:"28px",textAlign:"center"}}>🔒</div>
           <strong style={{display:"block",textAlign:"center",fontSize:"16px",color:C.tx,fontFamily:F}}>Maximum attempts reached</strong>
-          <p style={{textAlign:"center",fontSize:"13px",color:C.mu,fontFamily:F}}>This quiz allows one original attempt plus up to 2 retakes only.</p>
+          <p style={{textAlign:"center",fontSize:"13px",color:C.mu,fontFamily:F}}>This quiz allows one original attempt plus the teacher-defined retakes only.</p>
           <Btn onClick={onDone} style={{width:"100%"}}>Back</Btn>
         </Card>
       </div>
@@ -1492,10 +1492,14 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
               </div>
             </Card>
             {skillData.length>0 && <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📚 Skill Breakdown</strong>{skillData.map(s=><SBar key={s.skill} {...s}/>)}</Card>}
-            <Card style={{marginBottom:"11px",background:"#eff6ff",border:"1px solid #93c5fd",textAlign:"center"}}>
-              <p style={{margin:"0 0 9px",fontSize:"13px",color:"#1e40af",fontWeight:"600",fontFamily:F}}>👀 See which answers were right or wrong</p>
-              <Btn onClick={()=>setTab("questions")} style={{width:"100%"}} color={C.p}>🔍 Review My Answers</Btn>
-            </Card>
+            {prev+1>=totalAllowedQuizAttempts
+              ? <Card style={{marginBottom:"11px",background:"#eff6ff",border:"1px solid #93c5fd",textAlign:"center"}}>
+                  <p style={{margin:"0 0 9px",fontSize:"13px",color:"#1e40af",fontWeight:"600",fontFamily:F}}>👀 All attempts finished. You can now review your answers.</p>
+                  <Btn onClick={()=>setTab("questions")} style={{width:"100%"}} color={C.p}>🔍 Review My Answers</Btn>
+                </Card>
+              : <Card style={{marginBottom:"11px",background:"#fff7ed",border:"1px solid #fdba74",textAlign:"center"}}>
+                  <p style={{margin:0,fontSize:"13px",color:"#9a3412",fontWeight:"600",fontFamily:F}}>🔒 Answer review will open after your final allowed attempt.</p>
+                </Card>}
             <Btn onClick={onDone} size="lg" style={{width:"100%"}} color={C.mu}>← Back to Quizzes</Btn>
           </div>;
         })()}
@@ -1667,6 +1671,8 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     const rs=data.responses.filter(r=>r.studentId===s.id);
     return {...s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):0,total:rs.length};
   }).filter(s=>s.total>0).sort((a,b)=>b.avg-a.avg||(b.total-a.total));
+  const allowedAttemptsForQuiz = q => 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0);
+  const canReviewQuizResponse = (q) => myResps.filter(r=>r.quizId===q.id).length >= allowedAttemptsForQuiz(q);
 
   if(taking){
     const TakeComponent = taking.mode==="game" ? GameQuiz : TakeQuiz;
@@ -1706,8 +1712,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
           :available.map((quiz,i)=>{
             const done=myResps.filter(r=>r.quizId===quiz.id);
             const last=done.length?pct(done[done.length-1].score,done[done.length-1].totalQ):null;
-            const maxRetakes=2;
-            const totalAllowedAttempts=quiz.allowRetake ? (1+maxRetakes) : 1;
+            const totalAllowedAttempts=allowedAttemptsForQuiz(quiz);
             const locked=done.length>=totalAllowedAttempts;
             const col=COLORS[i%COLORS.length];
             const icon=quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
@@ -1716,7 +1721,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
                 <div style={{width:"38px",height:"38px",borderRadius:"9px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"17px",flexShrink:0}}>{icon}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{quiz.mode==="game"&&<span style={{marginRight:"4px"}}>🎮</span>}{quiz.title}{done.length===0&&<span style={{marginLeft:"6px",fontSize:"9px",background:C.d,color:"#fff",padding:"1px 7px",borderRadius:"999px",fontWeight:"800",verticalAlign:"middle"}}>NEW</span>}</div>
-                  <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.mode==="game"?"🎮 Game · ":""}{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · Pass:{quiz.masteryThreshold??MASTERY_DEFAULT}%</div>
+                  <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.mode==="game"?"🎮 Game · ":""}{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · Pass:{quiz.masteryThreshold??MASTERY_DEFAULT}% · Retakes:{quiz.allowRetake?(quiz.maxRetakes??2):0}</div>
                   {last!==null && <div style={{fontSize:"10px",fontWeight:"600",color:gc(last),fontFamily:F}}>Last: {last}%{done.length>1?" · "+done.length+" attempts":""} · Attempts: {done.length}/{totalAllowedAttempts}</div>}
                 </div>
                 <Btn size="sm" onClick={()=>!locked&&setTaking(quiz)} color={locked?"#94a3b8":col} disabled={locked}>{locked?"Done":done.length?"Retry":"Start"}</Btn>
@@ -1747,7 +1752,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
             </Card>
             <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📋 All Attempts</strong>
               {[...myResps].reverse().map((r,i)=>{const quiz=data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
-                <div key={r.id} onClick={()=>quiz&&setReviewResp({response:r,quiz})} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
+                <div key={r.id} onClick={()=>{if(!quiz)return;if(canReviewQuizResponse(quiz))setReviewResp({response:r,quiz});else alert("Answer review will open after your final allowed attempt.");}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
                   <div style={{width:"32px",height:"32px",borderRadius:"50%",background:gc(p)+"20",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:"800",color:gc(p),fontFamily:F}}>{p}%</span></div>
                   <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"12px",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz?.type} · {r.completedAt} · #{r.attempt}</div></div>
                   {r.selfRating>0&&<span style={{fontSize:"11px"}}>{Array(r.selfRating).fill("⭐").join("")}</span>}
@@ -1820,7 +1825,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
 function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const E = editQuiz || {};
   const [title,setTitle]=useState(E.title||""),[type,setType]=useState(E.type||"Reading"),[diff,setDiff]=useState(E.difficulty||"Easy"),[subject,setSubject]=useState(E.subject||"");
-  const [classIds,setClassIds]=useState(E.classIds||[]),[timer,setTimer]=useState(E.timer||0),[thresh,setThresh]=useState(E.masteryThreshold??MASTERY_DEFAULT),[retake,setRetake]=useState(E.allowRetake!==false),[shuffle,setShuffle]=useState(E.shuffle!==false),[closeDate,setCloseDate]=useState(E.closeDate||""),[passage,setPassage]=useState(E.passage||"");
+  const [classIds,setClassIds]=useState(E.classIds||[]),[timer,setTimer]=useState(E.timer||0),[thresh,setThresh]=useState(E.masteryThreshold??MASTERY_DEFAULT),[retake,setRetake]=useState(E.allowRetake!==false),[maxRetakes,setMaxRetakes]=useState(E.maxRetakes??2),[shuffle,setShuffle]=useState(E.shuffle!==false),[closeDate,setCloseDate]=useState(E.closeDate||""),[passage,setPassage]=useState(E.passage||"");
   const [questions,setQuestions]=useState(E.questions&&E.questions.length?E.questions.map((q,i)=>({...q,id:i+1})):[{id:1,text:"",options:["","","",""],correct:0,skill:SKILLS[0],difficulty:"Easy"}]);
   const [mode,setMode]=useState(E.mode||"normal");
   const [instantFeedback,setInstantFeedback]=useState(E.instantFeedback!==false);
@@ -2084,7 +2089,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>850000){
       setErr("⚠️ The uploaded audio is too large to save. Please use a shorter clip, or upload the audio to a website and paste its LINK instead.");window.scrollTo(0,0);return;
     }
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,shuffle,mode,instantFeedback,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -2106,6 +2111,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
             <div><Label text="Pass Mark (%)"/><input type="number" value={thresh} onChange={e=>setThresh(Number(e.target.value))} style={inp}/></div>
             <div><Label text="Close Date"/><input type="date" value={closeDate} onChange={e=>setCloseDate(e.target.value)} style={inp}/></div>
             <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={retake} onChange={e=>setRetake(e.target.checked)} id="rt"/><label htmlFor="rt" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Allow retakes</label></div>
+            <div><Label text="Max retakes"/><input type="number" min="0" max="10" value={maxRetakes} onChange={e=>setMaxRetakes(Math.max(0,Number(e.target.value)||0))} disabled={!retake} style={{...inp,opacity:retake?1:.55}}/></div>
             <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} id="sh"/><label htmlFor="sh" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>🔀 Shuffle for students</label></div>
           </div>
           <div style={{marginTop:"11px"}}>
@@ -4263,5 +4269,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_EMERGENCY_NO_WHITE_SAFE_RESTORE -->
 
 <!-- BUILD_FINAL_QUIZ_LISTENING_RULES_RETAKE_LIMIT -->
+
+<!-- BUILD_FINAL_TEACHER_RETAKE_CONTROL_REVIEW_AFTER_FINAL -->
 </body>
 </html>
