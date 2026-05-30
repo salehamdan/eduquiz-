@@ -1154,10 +1154,22 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const totalAllowedQuizAttempts = 1+maxQuizRetakes;
   const attemptBlocked = prev >= totalAllowedQuizAttempts;
   const fmt = s=>Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
+  function markAudioComplete(){ setAudioCompleted(true); setIsPlaying(false); }
+  function hasCompletedListening(){
+    if(quiz.type!=="Listening") return true;
+    if(audioCompleted) return true;
+    const a=audioElRef.current;
+    if(quiz.audioFile && a && a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) return true;
+    return false;
+  }
+  function audioTimeUpdate(){
+    const a=audioElRef.current;
+    if(a && a.duration && isFinite(a.duration) && a.currentTime>=Math.max(0,a.duration-0.35)) markAudioComplete();
+  }
 
   useEffect(()=>{
     if(timeLeft===null||submitted) return;
-    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !audioCompleted)){doSave();} else {onDone();} return; }
+    if(timeLeft<=0){ if(Object.keys(answers).length>0 && !(quiz.type==="Listening" && !hasCompletedListening())){doSave();} else {onDone();} return; }
     tRef.current=setTimeout(()=>setTimeLeft(t=>t-1),1000);
     return ()=>clearTimeout(tRef.current);
   },[timeLeft,submitted]);
@@ -1212,6 +1224,9 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         } else {
           const start=ttsIndexRef.current||0;
           setAudioCompleted(false);
+          const textForEstimate=String(quiz.passage||"").trim();
+          const estimatedMs=Math.min(180000,Math.max(5000, textForEstimate.split(/\s+/).filter(Boolean).length*520));
+          setTimeout(()=>{try{ if(!quiz.audioFile){ setAudioCompleted(true); setIsPlaying(false); }}catch(e){}}, estimatedMs+1200);
           const startSpeak=()=>speakTTSFrom(start);
           if(window.speechSynthesis.getVoices().length===0){ window.speechSynthesis.onvoiceschanged=()=>{startSpeak();window.speechSynthesis.onvoiceschanged=null;}; setTimeout(startSpeak,300); }
           else startSpeak();
@@ -1297,7 +1312,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
   }
   async function handleSubmit(){
-    if(quiz.type==="Listening" && !audioCompleted){setMErr("Please listen to the full audio track before submitting.");setTab("passage");return;}
+    if(quiz.type==="Listening" && !hasCompletedListening()){setMErr("Please listen to the full audio track before submitting.");setTab("passage");return;}
     if(Object.keys(answers).length<total){setMErr("Please answer all "+total+" questions.");return;}
     const sc=quiz.questions.filter(q=>isCorrect(q)).length;
     if(pct(sc,total)<thresh){setMErr("You scored "+pct(sc,total)+"% — need "+thresh+"% to submit. Review and try again! 💪");setScore(sc);return;}
@@ -1341,7 +1356,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
             {quiz.type==="Listening"
               ? <div style={{background:"#f0f9ff",borderRadius:"9px",padding:"20px",textAlign:"center"}}>
                   <div style={{fontSize:"36px",marginBottom:"7px"}}>🎧</div>
-                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onEnded={()=>{setIsPlaying(false);setAudioCompleted(true);}} preload="auto" playsInline style={{display:"none"}}/>}
+                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onTimeUpdate={audioTimeUpdate} onEnded={markAudioComplete} onPause={()=>{if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
                   <p style={{color:C.mu,fontSize:"12px",margin:"0 0 13px",fontFamily:F}}>{canListen?"Use the controls to listen.":"You have used all your listens."}</p>
                   <div style={{display:"flex",gap:"7px",justifyContent:"center",flexWrap:"wrap",marginBottom:"10px"}}>
                     {AC.seek && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
@@ -1352,7 +1367,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                   </div>
                   {!quiz.audioFile && getTTSChunks().length>1 && <p style={{color:C.mu,fontSize:"11px",margin:"0 0 6px",fontFamily:F}}>Sentence {ttsIndex+1} / {getTTSChunks().length}</p>}
                   {listensLeft!==null && <p style={{color:listensLeft>0?C.s:C.d,fontSize:"12px",fontWeight:"700",margin:0,fontFamily:F}}>🎧 Listens left: {listensLeft} / {listenLimit}</p>}
-                  <p style={{color:audioCompleted?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{audioCompleted?"✅ Full audio completed":"⚠️ Listen to the full audio before submitting"}</p>
+                  <p style={{color:hasCompletedListening()?C.s:C.w,fontSize:"12px",fontWeight:"700",margin:"6px 0 0",fontFamily:F}}>{hasCompletedListening()?"✅ Full audio completed":"⚠️ Listen to the full audio before submitting"}</p>
                 </div>
               : <div style={{background:"#f8fafc",borderRadius:"9px",padding:"16px",border:"1px solid "+C.br}}>
                   {quiz.passage.split("\n\n").map((p,i)=><p key={i} style={{color:C.tx,fontSize:"14px",lineHeight:"1.9",margin:"0 0 11px",textAlign:"justify",fontFamily:F}}>{p}</p>)}
@@ -4274,5 +4289,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_TEACHER_RETAKE_CONTROL_REVIEW_AFTER_FINAL -->
 
 <!-- BUILD_FINAL_QUIZ_SHOW_ALL_CLASSES -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_COMPLETION_FIX -->
 </body>
 </html>
