@@ -1277,6 +1277,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     setMErr("");
     if(quiz.audioFile){
       const a=audioElRef.current; if(!a){setMErr("Audio is loading… tap Play again in a second.");return;}
+      try{ if(a.readyState===0) a.load(); }catch(e){}
       if(a.currentTime<0.5 || a.ended) setAudioCompleted(false);
       a.playbackRate=playSpeed;
       const pr=a.play();
@@ -1430,6 +1431,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           </div>
         </>}/>
       <TabBar tabs={tabs} active={tab} onChange={setTab}/>
+      {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onLoadedMetadata={()=>{const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);}} onTimeUpdate={audioTimeUpdate} onEnded={()=>{const a=audioElRef.current;const dur=(a&&a.duration&&isFinite(a.duration))?a.duration:audioDur;const next=recordListenedSegment(dur||audioPos);if(fullCoverageReached(next,dur))markAudioComplete(next);else setIsPlaying(false);listenStartRef.current=null;}} onPause={()=>{audioTimeUpdate();listenStartRef.current=null;if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"700px",margin:"0 auto",padding:"14px",paddingBottom:"120px"}}>
         {tab==="passage" && (quiz.passage||quiz.audioFile) && <div>
@@ -1438,7 +1440,6 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
             {quiz.type==="Listening"
               ? <div style={{background:"#f0f9ff",borderRadius:"9px",padding:"20px",textAlign:"center"}}>
                   <div style={{fontSize:"36px",marginBottom:"7px"}}>🎧</div>
-                  {quiz.audioFile && <audio ref={audioElRef} src={quiz.audioFile} onLoadedMetadata={()=>{const a=audioElRef.current;if(a&&a.duration&&isFinite(a.duration))setAudioDur(a.duration);}} onTimeUpdate={audioTimeUpdate} onEnded={()=>{const a=audioElRef.current;const dur=(a&&a.duration&&isFinite(a.duration))?a.duration:audioDur;const next=recordListenedSegment(dur||audioPos);if(fullCoverageReached(next,dur))markAudioComplete(next);else setIsPlaying(false);listenStartRef.current=null;}} onPause={()=>{audioTimeUpdate();listenStartRef.current=null;if(hasCompletedListening())markAudioComplete();else setIsPlaying(false);}} preload="auto" playsInline style={{display:"none"}}/>}
                   <p style={{color:C.mu,fontSize:"12px",margin:"0 0 13px",fontFamily:F}}>{canListen?"Use the controls to listen.":"You have used all your listens."}</p>
                   <div style={{display:"flex",gap:"7px",justifyContent:"center",flexWrap:"wrap",marginBottom:"10px"}}>
                     {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
@@ -4399,5 +4400,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_ONE_PLAYER_COUNTER_SUBMIT_FIX -->
 
 <!-- BUILD_FINAL_LISTENING_COVERAGE_SKIP_CONTROL_REVIEW_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_PERSISTENT_AUDIO_NO_RESTART_FIX -->
 </body>
 </html>
