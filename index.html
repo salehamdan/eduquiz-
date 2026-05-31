@@ -2731,20 +2731,35 @@ function ReadingProgressStudent({user,data,reload}){
     const id=uid();
     const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
     let url="";
+    let audioDataUrl="";
     try{
-      url=await rpUploadAudio(blob,path);
-    }catch(e){
-      setSubmitting(false);
-      setMsg("فشل رفع التسجيل. لم تُحسب هذه المحاولة. حاول مرة أخرى.");
-      return;
-    }
-    if(!url){
-      setSubmitting(false);
-      setMsg("فشل رفع التسجيل. لم تُحسب هذه المحاولة. حاول مرة أخرى.");
-      return;
-    }
-    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"};
-    try{
+      try{
+        url=await rpUploadAudio(blob,path);
+      }catch(storageErr){
+        // Fallback: keep audio inside the submission itself when Storage upload fails.
+        audioDataUrl=await rpBlobToDataUrl(blob);
+      }
+      if(!url && !audioDataUrl) throw new Error("No audio URL or audio data created.");
+      const submission={
+        id,
+        taskId:task.id,
+        taskTitle:task.title,
+        studentId:user.id,
+        studentNumber:user.studentId,
+        studentName:user.name,
+        classId:user.classId,
+        className:user.className,
+        teacherId:task.teacherId,
+        audioUrl:url,
+        audioDataUrl,
+        audioSize:blob.size,
+        audioType:blob.type||"audio/webm",
+        transcript,
+        seconds,
+        createdAt:today(),
+        submittedAt:today(),
+        status:"submitted"
+      };
       await fsSet("readingSubmissions",id,submission);
       saveStudentAttemptMarker(submission);
       setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
@@ -2753,9 +2768,7 @@ function ReadingProgressStudent({user,data,reload}){
       setMsg("✅ تم إرسال التسجيل للمعلم بنجاح. تم احتساب المحاولة الآن.");
       setBlob(null); setAudioUrl(""); setTask(null); await reload();
     }catch(e){
-      setSubmitting(false);
       setMsg("فشل الإرسال للمعلم. لم تُحسب هذه المحاولة. التسجيل ما زال موجودًا ويمكنك المحاولة مرة أخرى.");
-      return;
     }finally{
       setSubmitting(false);
     }
@@ -4484,5 +4497,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_RP_STUDENT_SUBMIT_COUNT_AFTER_SUCCESS_FIX -->
 
 <!-- BUILD_FINAL_RP_SEND_RESTORE_NO_SIZE_BLOCK -->
+
+<!-- BUILD_FINAL_RP_SEND_STORAGE_FALLBACK_DATAURL -->
 </body>
 </html>
