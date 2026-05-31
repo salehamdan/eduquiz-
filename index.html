@@ -2868,8 +2868,6 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate AI Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editingTaskId?"Update Task":"Save Task"}</Btn>{editingTaskId&&<Btn color={C.mu} onClick={resetTaskForm}>Cancel Edit</Btn>}</div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.w:C.d)}}>{msg}</p>}
     </Card>
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · status: {t.status==="closed"?"Closed":"Open"} · retakes: {t.retakeLimit??0} · total attempts: {1+(Number(t.retakeLimit??0)||0)} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} onClick={()=>toggleTaskOpen(t)}>{t.status==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Retakes: {t.retakeLimit??0}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
-    <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
-    <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{display:"none"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
   </div>;
 }
@@ -4458,26 +4456,72 @@ document.addEventListener("click", function(e){
 <!-- BUILD_BASE_WORKING_SUBMIT_PLUS_TEACHER_FIXES_ONLY -->
 
 <!-- BUILD_FINAL_RP_STUDENT_DRAFT_PREVIEW_RECORD_AGAIN_NO_SUBMIT_TOUCH -->
+<!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
 
 <script id="eq-remember-login-safe-v1">
 (function(){
-  const KEY="eduquiz_remember_login_v1";
+  const KEY="eduquiz_full_login_memory_v2";
   function visible(el){return !!(el && el.offsetParent!==null);}
-  function fields(){return Array.from(document.querySelectorAll("input,select")).filter(visible);}
-  function likely(el){
-    const p=((el.placeholder||"")+" "+(el.name||"")+" "+(el.id||"")+" "+(el.getAttribute("aria-label")||"")).toLowerCase();
-    return /(name|student|id|password|class|teacher|code|اسم|طالب|رقم|كلمة|صف|معلم)/.test(p);
+  function norm(s){return String(s||"").replace(/\s+/g," ").trim();}
+  function controls(){
+    return Array.from(document.querySelectorAll("input,select,textarea")).filter(visible).filter(el=>{
+      const p=((el.placeholder||"")+" "+(el.name||"")+" "+(el.id||"")+" "+(el.getAttribute("aria-label")||"")).toLowerCase();
+      return /(name|student|id|password|class|teacher|code|اسم|طالب|رقم|كلمة|صف|فصل|معلم)/.test(p) || el.tagName==="SELECT";
+    });
   }
-  function save(){try{const vals=fields().filter(likely).slice(0,8).map(el=>({id:el.id||"",name:el.name||"",placeholder:el.placeholder||"",value:el.value||""})).filter(x=>x.value);if(vals.length)localStorage.setItem(KEY,JSON.stringify({when:Date.now(),vals}));}catch(e){}}
-  function restore(){try{const raw=localStorage.getItem(KEY); if(!raw)return; const vals=JSON.parse(raw).vals||[], fs=fields().filter(likely); vals.forEach(s=>{let el=(s.id&&fs.find(x=>x.id===s.id))||(s.name&&fs.find(x=>x.name===s.name))||(s.placeholder&&fs.find(x=>x.placeholder===s.placeholder)); if(el&&!el.value){el.value=s.value;el.dispatchEvent(new Event("input",{bubbles:true}));el.dispatchEvent(new Event("change",{bubbles:true}));}});}catch(e){}}
-  function note(){if(document.getElementById("eq-remember-login-note"))return; const txt=(document.body&&document.body.innerText)||""; if(!/(login|sign in|دخول|تسجيل)/i.test(txt))return; const btn=Array.from(document.querySelectorAll("button")).find(b=>visible(b)&&/(login|sign in|دخول|تسجيل)/i.test(b.innerText||"")); if(!btn)return; const d=document.createElement("div"); d.id="eq-remember-login-note"; d.style.cssText="font-size:12px;color:#94a3b8;text-align:center;margin-top:8px;font-weight:700"; d.textContent="✅ سيتم تذكر بيانات الدخول على هذا الجهاز"; btn.parentNode.insertBefore(d,btn.nextSibling);}
-  document.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("button"); if(!b)return; const t=(b.innerText||"").toLowerCase(); if(/login|sign in|دخول|تسجيل/.test(t))setTimeout(save,250); if(/logout|خروج/.test(t)){try{localStorage.removeItem(KEY)}catch(e){}}},true);
-  document.addEventListener("input",e=>{if(e.target&&likely(e.target))save();},true);
-  setTimeout(restore,500); setTimeout(note,900); setInterval(()=>{restore();note();},2200);
+  function currentRole(){
+    const buttons=Array.from(document.querySelectorAll("button,[role='button']")).filter(visible);
+    const b=buttons.find(el=>/(طالب|student|معلم|teacher)/i.test(el.innerText||"") && (getComputedStyle(el).backgroundColor||"").includes("37, 99, 235"));
+    return b?norm(b.innerText||b.textContent):"";
+  }
+  function save(){
+    try{
+      const vals=controls().map((el,i)=>({i,tag:el.tagName,id:el.id||"",name:el.name||"",placeholder:el.placeholder||"",value:el.value||"",text:el.tagName==="SELECT"&&el.selectedOptions[0]?el.selectedOptions[0].textContent:""})).filter(x=>x.value||x.text);
+      localStorage.setItem(KEY,JSON.stringify({when:Date.now(),role:currentRole(),vals}));
+    }catch(e){}
+  }
+  function fire(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));el.dispatchEvent(new Event("change",{bubbles:true}));}catch(e){}}
+  function restore(){
+    try{
+      const raw=localStorage.getItem(KEY); if(!raw)return;
+      const saved=JSON.parse(raw), fs=controls();
+      if(saved.role){
+        const rb=Array.from(document.querySelectorAll("button,[role='button']")).filter(visible).find(b=>norm(b.innerText||b.textContent).includes(norm(saved.role)));
+        if(rb) try{rb.click();}catch(e){}
+      }
+      (saved.vals||[]).forEach(v=>{
+        let el=(v.id&&fs.find(x=>x.id===v.id))||(v.name&&fs.find(x=>x.name===v.name))||(v.placeholder&&fs.find(x=>x.placeholder===v.placeholder))||fs[v.i];
+        if(!el)return;
+        if(el.tagName==="SELECT"){
+          const opts=Array.from(el.options||[]);
+          const opt=opts.find(o=>String(o.value)===String(v.value))||opts.find(o=>norm(o.textContent)===norm(v.text))||opts.find(o=>norm(o.textContent).includes(norm(v.text||"")));
+          if(opt){el.value=opt.value;fire(el);}
+        }else{
+          el.value=v.value||"";fire(el);
+        }
+      });
+    }catch(e){}
+  }
+  function note(){
+    if(document.getElementById("eq-remember-login-note"))return;
+    const text=(document.body&&document.body.innerText)||"";
+    if(!/(login|sign in|دخول|تسجيل)/i.test(text))return;
+    const btn=Array.from(document.querySelectorAll("button")).filter(visible).find(b=>/(login|sign in|دخول|تسجيل)/i.test(b.innerText||""));
+    if(!btn)return;
+    const d=document.createElement("div");
+    d.id="eq-remember-login-note";
+    d.style.cssText="font-size:12px;color:#94a3b8;text-align:center;margin-top:8px;font-weight:800";
+    d.textContent="✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز";
+    btn.parentNode.insertBefore(d,btn.nextSibling);
+  }
+  document.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("button,[role='button']");if(!b)return;const t=(b.innerText||"").toLowerCase();if(/طالب|student|معلم|teacher|login|sign in|دخول|تسجيل/.test(t))setTimeout(save,200);if(/logout|خروج/.test(t)){try{localStorage.removeItem(KEY)}catch(e){}}},true);
+  document.addEventListener("input",e=>{if(e.target&&e.target.matches("input,select,textarea"))setTimeout(save,50);},true);
+  document.addEventListener("change",e=>{if(e.target&&e.target.matches("input,select,textarea"))setTimeout(save,50);},true);
+  setTimeout(restore,400);setTimeout(restore,1200);setTimeout(note,900);setInterval(()=>{restore();note();},2500);
 })();
 </script>
 
 
-<!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
+<!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
 </body>
 </html>
