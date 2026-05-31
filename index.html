@@ -736,6 +736,8 @@ function Landing({onLogin, prefillQuiz}) {
   function toggleLang(){ const nl=lang==="ar"?"en":"ar"; setLang(nl); try{localStorage.setItem("eq_lang",nl);}catch(e){} }
   const [mode,setMode] = useState(prefillQuiz ? "quickstart" : "login");
   const [f,sf] = useState({name:"",email:"",password:"",studentId:"",classId:"",code:"",fatherName:""});
+  const [pendingAuth,setPendingAuth] = useState(null);
+  const [linkRole,setLinkRole] = useState("student");
   const [forgotOpen,setForgotOpen] = useState(false);
   const [fgId,setFgId] = useState(""),[fgFather,setFgFather] = useState(""),[fgNew,setFgNew] = useState(""),[fgMsg,setFgMsg] = useState("");
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
@@ -804,38 +806,62 @@ function Landing({onLogin, prefillQuiz}) {
     }
     saveSession(u); onLogin(u); setLoading(false);
   }
-  async function googleLogin() {
-    if(!FIREBASE_OK){setErr("Login requires Firebase setup. Use the link to take quizzes for now.");return;}
+  async function oauthLogin(kind) {
+    if(!FIREBASE_OK || !auth){setErr("Firebase Authentication is not active. Enable Google/Microsoft in Firebase first.");return;}
     setLoading(true); setErr("");
     try {
-      const provider = new firebase.auth.GoogleAuthProvider();
+      const provider = kind==="google" ? new firebase.auth.GoogleAuthProvider() : new firebase.auth.OAuthProvider("microsoft.com");
       const res = await auth.signInWithPopup(provider);
       const g = res.user;
       const users = await fsAll("users");
-      let u = users.find(x=>x.authUid===g.uid || (x.email||"").toLowerCase()===(g.email||"").toLowerCase());
-      if(!u){
-        u={id:uid(),role:"student",name:g.displayName||"Student",email:(g.email||"").toLowerCase(),studentId:"G"+g.uid.slice(0,6),classId:"",password:"",authUid:g.uid,createdAt:today()};
-        await fsSet("users",u.id,u);
-      }
-      saveSession(u); onLogin(u);
-    } catch(e){ setErr("Google login failed: "+e.message); }
+      const linked = users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(g.uid));
+      if(linked){ saveSession(linked); onLogin(linked); setLoading(false); return; }
+      setPendingAuth({uid:g.uid,email:(g.email||"").toLowerCase(),displayName:g.displayName||"",provider:kind});
+      setLinkRole("student");
+      sf(x=>({...x,name:g.displayName||x.name,email:(g.email||x.email||"").toLowerCase(),studentId:"",classId:"",code:""}));
+      setMode("linkAuth");
+      setErr("First time only: verify your Student ID and class to link this account.");
+    } catch(e){ setErr((kind==="google"?"Google":"Microsoft")+" login failed: "+e.message); }
     setLoading(false);
   }
-  async function msLogin() {
-    if(!FIREBASE_OK){setErr("Login requires Firebase setup.");return;}
+  async function googleLogin(){ await oauthLogin("google"); }
+  async function msLogin(){ await oauthLogin("microsoft"); }
+
+  async function linkPendingStudent(){
+    if(!pendingAuth){setErr("No Google/Microsoft account is waiting to be linked.");return;}
+    if(!f.studentId.trim() || !f.classId){setErr("Enter Student ID and select class.");return;}
     setLoading(true); setErr("");
-    try {
-      const provider = new firebase.auth.OAuthProvider("microsoft.com");
-      const res = await auth.signInWithPopup(provider);
-      const g = res.user;
-      const users = await fsAll("users");
-      let u = users.find(x=>x.authUid===g.uid || (x.email||"").toLowerCase()===(g.email||"").toLowerCase());
-      if(!u){
-        u={id:uid(),role:"student",name:g.displayName||"Student",email:(g.email||"").toLowerCase(),studentId:"M"+g.uid.slice(0,6),classId:"",password:"",authUid:g.uid,createdAt:today()};
-        await fsSet("users",u.id,u);
+    try{
+      const d=await loadAllData();
+      const students=d.users.filter(u=>u.role==="student" && !u.deleted);
+      const st=students.find(u=>String(u.studentId||"").trim().toLowerCase()===f.studentId.trim().toLowerCase() && String(u.classId||"")===String(f.classId));
+      if(!st){setErr("This Student ID is not registered in the selected class.");setLoading(false);return;}
+      const existingLink=String(st.authUid||st.linkedAuthUid||"");
+      if(existingLink && existingLink!==pendingAuth.uid){setErr("This student is already linked to another Google/Microsoft account. Ask the teacher to reset the link.");setLoading(false);return;}
+      const updated={...st,authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,email:st.email||pendingAuth.email,authProvider:pendingAuth.provider,updatedAt:today()};
+      await fsSet("users",st.id,updated);
+      saveSession(updated); setPendingAuth(null); onLogin(updated);
+    }catch(e){setErr("Could not link student account: "+e.message);}
+    setLoading(false);
+  }
+
+  async function linkPendingTeacher(){
+    if(!pendingAuth){setErr("No Google/Microsoft account is waiting to be linked.");return;}
+    if(f.code!==TEACHER_CODE){setErr("Wrong teacher code.");return;}
+    setLoading(true); setErr("");
+    try{
+      const users=await fsAll("users");
+      let teacher=users.find(u=>u.role==="teacher" && !u.deleted && ((u.email||"").toLowerCase()===pendingAuth.email || String(u.authUid||u.linkedAuthUid||"")===pendingAuth.uid));
+      if(teacher){
+        const updated={...teacher,authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,email:teacher.email||pendingAuth.email,authProvider:pendingAuth.provider,updatedAt:today()};
+        await fsSet("users",teacher.id,updated);
+        saveSession(updated); setPendingAuth(null); onLogin(updated);
+      }else{
+        const nu={id:uid(),role:"teacher",name:pendingAuth.displayName||f.name||"Teacher",email:pendingAuth.email,password:"",authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,authProvider:pendingAuth.provider,createdAt:today()};
+        await fsSet("users",nu.id,nu);
+        saveSession(nu); setPendingAuth(null); onLogin(nu);
       }
-      saveSession(u); onLogin(u);
-    } catch(e){ setErr("Microsoft login failed: "+e.message); }
+    }catch(e){setErr("Could not link teacher account: "+e.message);}
     setLoading(false);
   }
 
@@ -901,6 +927,32 @@ function Landing({onLogin, prefillQuiz}) {
             <button onClick={doLogin} disabled={loading} style={{width:"100%",padding:"12px",background:C.p,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.loggingIn:T.loginBtn}</button>
             <button onClick={()=>{setForgotOpen(true);setFgMsg("");}} style={{width:"100%",background:"none",border:"none",color:C.p,fontSize:"12px",fontWeight:"600",cursor:"pointer",marginTop:"9px",fontFamily:F,textDecoration:"underline"}}>{T.forgot}</button>
             {FIREBASE_OK && oauthBtns}
+          </>}
+
+
+          {mode==="linkAuth" && pendingAuth && <>
+            <div style={{background:"rgba(59,130,246,0.16)",border:"1px solid rgba(59,130,246,0.35)",borderRadius:"11px",padding:"11px",marginBottom:"12px"}}>
+              <div style={{color:"#bfdbfe",fontSize:"12px",fontWeight:"800",fontFamily:F}}>🔐 Link Google/Microsoft Account</div>
+              <div style={{color:"#fff",fontSize:"12px",marginTop:"4px",fontFamily:F}}>{pendingAuth.email || pendingAuth.displayName}</div>
+              <div style={{color:C.mu,fontSize:"11px",marginTop:"5px",fontFamily:F}}>The Student ID and class are required. Only registered students can enter.</div>
+            </div>
+            <div style={{display:"flex",gap:"7px",marginBottom:"9px"}}>
+              <button onClick={()=>setLinkRole("student")} style={{flex:1,padding:"9px",borderRadius:"9px",border:"none",background:linkRole==="student"?C.s:"rgba(255,255,255,0.12)",color:"#fff",fontWeight:"800",fontFamily:F}}>Student</button>
+              <button onClick={()=>setLinkRole("teacher")} style={{flex:1,padding:"9px",borderRadius:"9px",border:"none",background:linkRole==="teacher"?C.pu:"rgba(255,255,255,0.12)",color:"#fff",fontWeight:"800",fontFamily:F}}>Teacher</button>
+            </div>
+            {linkRole==="student" && <>
+              <input value={f.studentId} onChange={e=>upd("studentId",e.target.value)} placeholder={T.studentId} style={iS}/>
+              <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,color:f.classId?"#fff":"rgba(255,255,255,0.5)"}}>
+                <option value="">{T.selectClass}</option>
+                {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
+              </select>
+              <button onClick={linkPendingStudent} disabled={loading} style={{width:"100%",padding:"12px",background:C.s,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>Link and Enter</button>
+            </>}
+            {linkRole==="teacher" && <>
+              <input value={f.code} onChange={e=>upd("code",e.target.value)} placeholder={T.teacherCode} style={iS}/>
+              <button onClick={linkPendingTeacher} disabled={loading} style={{width:"100%",padding:"12px",background:C.pu,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>Link Teacher Account</button>
+            </>}
+            <button onClick={()=>{setPendingAuth(null);setMode("login");try{auth&&auth.signOut&&auth.signOut();}catch(e){}}} style={{width:"100%",background:"none",border:"none",color:C.mu,fontSize:"12px",fontWeight:"700",cursor:"pointer",marginTop:"9px",fontFamily:F,textDecoration:"underline"}}>Cancel</button>
           </>}
 
           {mode==="student" && <>
@@ -3527,12 +3579,17 @@ function App() {
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
       const sess=loadSession();
       if(sess){const u=d.users.find(x=>x.id===sess.id);if(u)setUser(fixAhmedStudent(u));else if(sess.id)setUser(fixAhmedStudent(sess));}
+      else if(FIREBASE_OK && auth && auth.currentUser){
+        const au=auth.currentUser;
+        const linked=d.users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(au.uid));
+        if(linked){saveSession(linked);setUser(fixAhmedStudent(linked));}
+      }
       setLoading(false);
     })();
   },[]);
 
   function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
-  function handleLogout(){clearSession();setUser(null);}
+  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} setUser(null);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -4523,5 +4580,7 @@ document.addEventListener("click", function(e){
 
 
 <!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
+
+<!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
 </body>
 </html>
