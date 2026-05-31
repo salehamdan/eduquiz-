@@ -2693,7 +2693,7 @@ function ReadingProgressStudent({user,data,reload}){
     const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"");
     const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:undefined); mediaRef.current=mr;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
-    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b)); setMsg("تم إيقاف التسجيل. يمكنك الاستماع للتسجيل أو إعادة التسجيل أو إرساله للمعلم.");};
+    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b)); setMsg("تم إيقاف التسجيل. استمع للتسجيل قبل الإرسال، ثم اضغط إرسال للمعلم عند الاستعداد.");};
     recRef.current=rpStartRecognition(t=>{setTranscript(t); if(String(t||"").trim().split(/\s+/).length>=2) voiceRef.current=true;});
     mr.start(1000); setRecording(true);
     let elapsed=0, strongVoiceSeconds=0;
@@ -2722,28 +2722,41 @@ function ReadingProgressStudent({user,data,reload}){
   async function submit(){
     if(submitting){setMsg("جاري الإرسال. الرجاء الانتظار.");return;}
     if(!task||!blob||!blob.size){setMsg("لم يتم العثور على تسجيل صوتي. الرجاء التسجيل أولًا.");return;}
+    if(blob.size < 800){setMsg("التسجيل غير واضح أو فارغ تقريبًا. الرجاء التسجيل مرة أخرى.");return;}
     const key=currentBlobKey();
     if((sentBlobKey && sentBlobKey===key)||isRecordingSubmitted(recordingId)){setMsg("لا يمكنك إرسال نفس التسجيل أكثر من مرة. سجّل محاولة جديدة إذا كانت متاحة.");return;}
     if(!canAttemptTask(task)){setMsg("انتهى عدد المحاولات. اطلب من معلمك السماح بإعادة المحاولة.");return;}
     setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
-    setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
     setMsg("جاري إرسال التسجيل…");
-    const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
+    const id=uid();
+    const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
     let url="";
-    try{url=await rpUploadAudio(blob,path);}
-    catch(e){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("فشل رفع التسجيل. تحقق من إعدادات التخزين.");return;}
+    try{
+      url=await rpUploadAudio(blob,path);
+    }catch(e){
+      setSubmitting(false);
+      setMsg("فشل رفع التسجيل. لم تُحسب هذه المحاولة. حاول مرة أخرى.");
+      return;
+    }
+    if(!url){
+      setSubmitting(false);
+      setMsg("فشل رفع التسجيل. لم تُحسب هذه المحاولة. حاول مرة أخرى.");
+      return;
+    }
     const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,transcript,seconds,createdAt:today(),status:"submitted"};
     try{
       await fsSet("readingSubmissions",id,submission);
       saveStudentAttemptMarker(submission);
+      setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
       markRecordingSubmitted(recordingId);
       setSentBlobKey(key);
-      setMsg("✅ تم إرسال التسجيل للمعلم بنجاح. لا يمكن إرسال نفس التسجيل مرة أخرى.");
+      setMsg("✅ تم إرسال التسجيل للمعلم بنجاح. تم احتساب المحاولة الآن.");
       setBlob(null); setAudioUrl(""); setTask(null); await reload();
     }catch(e){
-      setAttemptCounter(task.id,beforeCount);
-      setMsg("فشل الإرسال. حاول مرة أخرى.");
+      setSubmitting(false);
+      setMsg("فشل الإرسال للمعلم. لم تُحسب هذه المحاولة. التسجيل ما زال موجودًا ويمكنك المحاولة مرة أخرى.");
+      return;
     }finally{
       setSubmitting(false);
     }
@@ -4468,5 +4481,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_RP_PREVIEW_BACK_SMART_BULK_ANALYZE_ACCEPT -->
 
 <!-- BUILD_FINAL_RP_DELETE_TASK_BUTTON_CLEAR -->
+
+<!-- BUILD_FINAL_RP_STUDENT_SUBMIT_COUNT_AFTER_SUCCESS_FIX -->
 </body>
 </html>
