@@ -211,6 +211,15 @@ function saveSession(u) { try { localStorage.setItem("eq_session", JSON.stringif
 function loadSession() { try { return JSON.parse(localStorage.getItem("eq_session")||"null"); } catch(e){ return null; } }
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 
+const EQ_LOGIN_MEMORY_KEY = "eduquiz_login_memory_react_v1";
+function loadLoginMemory(){
+  try{ const x=JSON.parse(localStorage.getItem(EQ_LOGIN_MEMORY_KEY)||"null"); return x&&typeof x==="object"?x:{}; }catch(e){ return {}; }
+}
+function saveLoginMemory(patch){
+  try{ localStorage.setItem(EQ_LOGIN_MEMORY_KEY, JSON.stringify({...loadLoginMemory(), ...patch, updatedAt:Date.now()})); }catch(e){}
+}
+function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
+
 
 // ── READING PROGRESS STORAGE & ANALYSIS ───────────────────────
 function rpWords(text){ return String(text||"").toLowerCase().replace(/[^a-z\s']/g," ").split(/\s+/).filter(Boolean); }
@@ -734,15 +743,28 @@ function Landing({onLogin, prefillQuiz}) {
   const T = LANG_TEXT[lang];
   const isAr = lang==="ar";
   function toggleLang(){ const nl=lang==="ar"?"en":"ar"; setLang(nl); try{localStorage.setItem("eq_lang",nl);}catch(e){} }
-  const [mode,setMode] = useState(prefillQuiz ? "quickstart" : "login");
-  const [f,sf] = useState({name:"",email:"",password:"",studentId:"",classId:"",code:"",fatherName:""});
+  const savedLogin = loadLoginMemory();
+  const [mode,setMode] = useState(prefillQuiz ? "quickstart" : (savedLogin.mode || "login"));
+  const [f,sf] = useState({
+    name:savedLogin.name||"",
+    email:savedLogin.studentId||savedLogin.email||"",
+    password:savedLogin.password||"",
+    studentId:savedLogin.studentId||"",
+    classId:savedLogin.classId||"",
+    code:savedLogin.code||"",
+    fatherName:savedLogin.fatherName||""
+  });
   const [pendingAuth,setPendingAuth] = useState(null);
   const [linkRole,setLinkRole] = useState("student");
   const [forgotOpen,setForgotOpen] = useState(false);
   const [fgId,setFgId] = useState(""),[fgFather,setFgFather] = useState(""),[fgNew,setFgNew] = useState(""),[fgMsg,setFgMsg] = useState("");
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
-  const upd = (k,v) => sf(x=>({...x,[k]:v}));
+  const upd = (k,v) => sf(x=>{
+    const nx={...x,[k]:v};
+    saveLoginMemory({mode,name:nx.name||"",classId:nx.classId||"",studentId:nx.email||nx.studentId||"",email:nx.email||"",password:nx.password||"",code:nx.code||"",fatherName:nx.fatherName||""});
+    return nx;
+  });
 
   useEffect(()=>{ loadAllData().then(d=>setClasses(d.classes)); },[]);
 
@@ -765,7 +787,10 @@ function Landing({onLogin, prefillQuiz}) {
     const id = f.email.trim().toLowerCase();
     // Teachers log in by email + password
     const teacher = users.find(u=>u.role==="teacher" && (u.email||"").toLowerCase()===id && u.password===f.password);
-    if(teacher){ saveSession(teacher); onLogin(teacher); setLoading(false); return; }
+    if(teacher){
+      saveLoginMemory({mode:"login",email:f.email.trim().toLowerCase(),studentId:"",password:f.password,name:teacher.name||f.name||"",classId:"",code:f.code||"",role:"teacher"});
+      saveSession(teacher); onLogin(teacher); setLoading(false); return;
+    }
     // Students must enter: name + class + ID + password. Email is optional.
     if(!f.name.trim()){setErr("Enter your name. Full name or first two names are accepted.");setLoading(false);return;}
     if(!f.classId){setErr("Select your class.");setLoading(false);return;}
@@ -775,6 +800,7 @@ function Landing({onLogin, prefillQuiz}) {
     if(u.classId !== f.classId){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
     if(!studentNameMatches(u, f.name)){setErr("Name does not match this Student ID. You may enter your full name or first two names.");setLoading(false);return;}
     if(String(u.password||"") !== String(f.password)){setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
+    saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
     saveSession(u); onLogin(u); setLoading(false);
   }
   async function doStudentReg() {
@@ -784,7 +810,9 @@ function Landing({onLogin, prefillQuiz}) {
     const users = await fsAll("users");
     if(users.find(u=>u.studentId===f.studentId.trim())){setErr("Student ID already registered.");setLoading(false);return;}
     const nu={id:uid(),role:"student",name:f.name.trim(),email:(f.email||"").trim().toLowerCase(),studentId:f.studentId.trim(),classId:f.classId,password:f.password,fatherName:f.fatherName.trim(),createdAt:today()};
-    await fsSet("users",nu.id,nu); saveSession(nu); onLogin(nu); setLoading(false);
+    await fsSet("users",nu.id,nu);
+    saveLoginMemory({mode:"login",name:nu.name,classId:nu.classId,studentId:nu.studentId,email:nu.studentId,password:nu.password,role:"student",fatherName:nu.fatherName||""});
+    saveSession(nu); onLogin(nu); setLoading(false);
   }
   async function doTeacherReg() {
     if(!f.name||!f.email||!f.password){setErr("Fill all fields.");return;}
@@ -793,7 +821,9 @@ function Landing({onLogin, prefillQuiz}) {
     const users = await fsAll("users");
     if(users.find(u=>(u.email||"").toLowerCase()===f.email.trim().toLowerCase())){setErr("Email already registered.");setLoading(false);return;}
     const nu={id:uid(),role:"teacher",name:f.name.trim(),email:f.email.trim().toLowerCase(),password:f.password,createdAt:today()};
-    await fsSet("users",nu.id,nu); saveSession(nu); onLogin(nu); setLoading(false);
+    await fsSet("users",nu.id,nu);
+    saveLoginMemory({mode:"login",email:nu.email,password:nu.password,name:nu.name,role:"teacher",code:f.code||""});
+    saveSession(nu); onLogin(nu); setLoading(false);
   }
   async function doQuickStart() {
     if(!f.name||!f.studentId){setErr("Enter your name and ID.");return;}
@@ -815,7 +845,10 @@ function Landing({onLogin, prefillQuiz}) {
       const g = res.user;
       const users = await fsAll("users");
       const linked = users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(g.uid));
-      if(linked){ saveSession(linked); onLogin(linked); setLoading(false); return; }
+      if(linked){
+        saveLoginMemory({mode:"login",name:linked.name||"",classId:linked.classId||"",studentId:linked.studentId||"",email:linked.studentId||linked.email||"",password:linked.password||"",role:linked.role||"student"});
+        saveSession(linked); onLogin(linked); setLoading(false); return;
+      }
       setPendingAuth({uid:g.uid,email:(g.email||"").toLowerCase(),displayName:g.displayName||"",provider:kind});
       setLinkRole("student");
       sf(x=>({...x,name:g.displayName||x.name,email:(g.email||x.email||"").toLowerCase(),studentId:"",classId:"",code:""}));
@@ -840,6 +873,7 @@ function Landing({onLogin, prefillQuiz}) {
       if(existingLink && existingLink!==pendingAuth.uid){setErr("This student is already linked to another Google/Microsoft account. Ask the teacher to reset the link.");setLoading(false);return;}
       const updated={...st,authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,email:st.email||pendingAuth.email,authProvider:pendingAuth.provider,updatedAt:today()};
       await fsSet("users",st.id,updated);
+      saveLoginMemory({mode:"login",name:updated.name||"",classId:updated.classId||"",studentId:updated.studentId||"",email:updated.studentId||"",password:updated.password||"",role:"student"});
       saveSession(updated); setPendingAuth(null); onLogin(updated);
     }catch(e){setErr("Could not link student account: "+e.message);}
     setLoading(false);
@@ -855,10 +889,12 @@ function Landing({onLogin, prefillQuiz}) {
       if(teacher){
         const updated={...teacher,authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,email:teacher.email||pendingAuth.email,authProvider:pendingAuth.provider,updatedAt:today()};
         await fsSet("users",teacher.id,updated);
+        saveLoginMemory({mode:"login",email:updated.email||"",password:updated.password||"",name:updated.name||"",role:"teacher",code:f.code||""});
         saveSession(updated); setPendingAuth(null); onLogin(updated);
       }else{
         const nu={id:uid(),role:"teacher",name:pendingAuth.displayName||f.name||"Teacher",email:pendingAuth.email,password:"",authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,authProvider:pendingAuth.provider,createdAt:today()};
         await fsSet("users",nu.id,nu);
+        saveLoginMemory({mode:"login",email:nu.email||"",password:"",name:nu.name||"",role:"teacher",code:f.code||""});
         saveSession(nu); setPendingAuth(null); onLogin(nu);
       }
     }catch(e){setErr("Could not link teacher account: "+e.message);}
@@ -898,7 +934,7 @@ function Landing({onLogin, prefillQuiz}) {
         {!prefillQuiz && (
           <div style={{display:"flex",gap:"4px",marginBottom:"13px",background:"rgba(255,255,255,0.08)",borderRadius:"11px",padding:"4px"}}>
             {[{id:"login",l:"🔑 "+T.login},{id:"student",l:"👤 "+T.student},{id:"teacher",l:"👩‍🏫 "+T.teacher}].map(m=>(
-              <button key={m.id} onClick={()=>{setMode(m.id);setErr("");}}
+              <button key={m.id} onClick={()=>{setMode(m.id);saveLoginMemory({mode:m.id});setErr("");}}
                 style={{flex:1,padding:"8px 4px",borderRadius:"8px",border:"none",background:mode===m.id?"#fff":"transparent",color:mode===m.id?C.dk:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{m.l}</button>
             ))}
           </div>
@@ -926,6 +962,8 @@ function Landing({onLogin, prefillQuiz}) {
             <input type="password" value={f.password} onChange={e=>upd("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder={T.password} style={iS}/>
             <button onClick={doLogin} disabled={loading} style={{width:"100%",padding:"12px",background:C.p,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.loggingIn:T.loginBtn}</button>
             <button onClick={()=>{setForgotOpen(true);setFgMsg("");}} style={{width:"100%",background:"none",border:"none",color:C.p,fontSize:"12px",fontWeight:"600",cursor:"pointer",marginTop:"9px",fontFamily:F,textDecoration:"underline"}}>{T.forgot}</button>
+            <div style={{fontSize:"11px",color:C.mu,textAlign:"center",marginTop:"8px",fontWeight:"700",fontFamily:F}}>✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز</div>
+            <button onClick={()=>{clearLoginMemory();sf({name:"",email:"",password:"",studentId:"",classId:"",code:"",fatherName:""});setErr("Saved login data cleared from this device.");}} style={{width:"100%",background:"none",border:"none",color:C.mu,fontSize:"11px",fontWeight:"700",cursor:"pointer",marginTop:"6px",fontFamily:F,textDecoration:"underline"}}>Clear saved login</button>
             {FIREBASE_OK && oauthBtns}
           </>}
 
@@ -4514,73 +4552,10 @@ document.addEventListener("click", function(e){
 
 <!-- BUILD_FINAL_RP_STUDENT_DRAFT_PREVIEW_RECORD_AGAIN_NO_SUBMIT_TOUCH -->
 <!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
-
-<script id="eq-remember-login-safe-v1">
-(function(){
-  const KEY="eduquiz_full_login_memory_v2";
-  function visible(el){return !!(el && el.offsetParent!==null);}
-  function norm(s){return String(s||"").replace(/\s+/g," ").trim();}
-  function controls(){
-    return Array.from(document.querySelectorAll("input,select,textarea")).filter(visible).filter(el=>{
-      const p=((el.placeholder||"")+" "+(el.name||"")+" "+(el.id||"")+" "+(el.getAttribute("aria-label")||"")).toLowerCase();
-      return /(name|student|id|password|class|teacher|code|اسم|طالب|رقم|كلمة|صف|فصل|معلم)/.test(p) || el.tagName==="SELECT";
-    });
-  }
-  function currentRole(){
-    const buttons=Array.from(document.querySelectorAll("button,[role='button']")).filter(visible);
-    const b=buttons.find(el=>/(طالب|student|معلم|teacher)/i.test(el.innerText||"") && (getComputedStyle(el).backgroundColor||"").includes("37, 99, 235"));
-    return b?norm(b.innerText||b.textContent):"";
-  }
-  function save(){
-    try{
-      const vals=controls().map((el,i)=>({i,tag:el.tagName,id:el.id||"",name:el.name||"",placeholder:el.placeholder||"",value:el.value||"",text:el.tagName==="SELECT"&&el.selectedOptions[0]?el.selectedOptions[0].textContent:""})).filter(x=>x.value||x.text);
-      localStorage.setItem(KEY,JSON.stringify({when:Date.now(),role:currentRole(),vals}));
-    }catch(e){}
-  }
-  function fire(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));el.dispatchEvent(new Event("change",{bubbles:true}));}catch(e){}}
-  function restore(){
-    try{
-      const raw=localStorage.getItem(KEY); if(!raw)return;
-      const saved=JSON.parse(raw), fs=controls();
-      if(saved.role){
-        const rb=Array.from(document.querySelectorAll("button,[role='button']")).filter(visible).find(b=>norm(b.innerText||b.textContent).includes(norm(saved.role)));
-        if(rb) try{rb.click();}catch(e){}
-      }
-      (saved.vals||[]).forEach(v=>{
-        let el=(v.id&&fs.find(x=>x.id===v.id))||(v.name&&fs.find(x=>x.name===v.name))||(v.placeholder&&fs.find(x=>x.placeholder===v.placeholder))||fs[v.i];
-        if(!el)return;
-        if(el.tagName==="SELECT"){
-          const opts=Array.from(el.options||[]);
-          const opt=opts.find(o=>String(o.value)===String(v.value))||opts.find(o=>norm(o.textContent)===norm(v.text))||opts.find(o=>norm(o.textContent).includes(norm(v.text||"")));
-          if(opt){el.value=opt.value;fire(el);}
-        }else{
-          el.value=v.value||"";fire(el);
-        }
-      });
-    }catch(e){}
-  }
-  function note(){
-    if(document.getElementById("eq-remember-login-note"))return;
-    const text=(document.body&&document.body.innerText)||"";
-    if(!/(login|sign in|دخول|تسجيل)/i.test(text))return;
-    const btn=Array.from(document.querySelectorAll("button")).filter(visible).find(b=>/(login|sign in|دخول|تسجيل)/i.test(b.innerText||""));
-    if(!btn)return;
-    const d=document.createElement("div");
-    d.id="eq-remember-login-note";
-    d.style.cssText="font-size:12px;color:#94a3b8;text-align:center;margin-top:8px;font-weight:800";
-    d.textContent="✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز";
-    btn.parentNode.insertBefore(d,btn.nextSibling);
-  }
-  document.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("button,[role='button']");if(!b)return;const t=(b.innerText||"").toLowerCase();if(/طالب|student|معلم|teacher|login|sign in|دخول|تسجيل/.test(t))setTimeout(save,200);if(/logout|خروج/.test(t)){try{localStorage.removeItem(KEY)}catch(e){}}},true);
-  document.addEventListener("input",e=>{if(e.target&&e.target.matches("input,select,textarea"))setTimeout(save,50);},true);
-  document.addEventListener("change",e=>{if(e.target&&e.target.matches("input,select,textarea"))setTimeout(save,50);},true);
-  setTimeout(restore,400);setTimeout(restore,1200);setTimeout(note,900);setInterval(()=>{restore();note();},2500);
-})();
-</script>
-
-
 <!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
 
 <!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
+
+<!-- BUILD_FINAL_REACT_LOGIN_MEMORY_STABLE_WITH_GMAIL_LINK -->
 </body>
 </html>
