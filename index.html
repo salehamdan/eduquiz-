@@ -2678,9 +2678,9 @@ function ReadingProgressStudent({user,data,reload}){
     window.speechSynthesis.speak(u);
   }
   async function startRec(){
-    if(task && !canAttemptTask(task)){setMsg("انتهى عدد المحاولات. اطلب من معلمك السماح بإعادة المحاولة.");return;}
-    if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("أوقف صوت النموذج أولًا، ثم ابدأ التسجيل.");return;}
-    if(!rpCanRecord()){setMsg("التسجيل غير مدعوم في هذا المتصفح. استخدم Chrome على Android إن أمكن.");return;}
+    if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
+    if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
+    if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
     setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId("rec_"+Date.now()+"_"+Math.random().toString(36).slice(2));chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
     try{
@@ -2693,7 +2693,7 @@ function ReadingProgressStudent({user,data,reload}){
     const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"");
     const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:undefined); mediaRef.current=mr;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
-    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b)); setMsg("تم إيقاف التسجيل. استمع للتسجيل قبل الإرسال، ثم اضغط إرسال للمعلم عند الاستعداد.");};
+    mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b));};
     recRef.current=rpStartRecognition(t=>{setTranscript(t); if(String(t||"").trim().split(/\s+/).length>=2) voiceRef.current=true;});
     mr.start(1000); setRecording(true);
     let elapsed=0, strongVoiceSeconds=0;
@@ -2712,8 +2712,11 @@ function ReadingProgressStudent({user,data,reload}){
           if(strongVoiceSeconds>=2) voiceRef.current=true;
         }
       }catch(e){}
-      if(elapsed>=120){
-        setMsg("تم إيقاف التسجيل تلقائيًا لأن الحد الأقصى دقيقتان. يمكنك الاستماع للتسجيل أو إرساله للمعلم.");
+      if(elapsed>=20 && !voiceRef.current){
+        setMsg("Recording stopped because no clear student voice was detected.");
+        stopRec();
+      }else if(elapsed>=90){
+        setMsg("Recording stopped automatically after the maximum time.");
         stopRec();
       }
     },1000);
@@ -2729,8 +2732,7 @@ function ReadingProgressStudent({user,data,reload}){
     const beforeCount=attemptsForTask(task).length;
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
     setMsg("Uploading…");
-    const id=uid();
-    const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
+    const id=uid(); const path=`reading-progress/${user.classId||"class"}/${user.studentId||user.id}/${task.id}-${Date.now()}.webm`;
     let url="";
     try{url=await rpUploadAudio(blob,path);}
     catch(e){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("Upload failed. Check Firebase Storage permissions.");return;}
@@ -2751,11 +2753,11 @@ function ReadingProgressStudent({user,data,reload}){
   }
   if(task)return <div>
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}</div></Card>
-    <Card><strong style={{fontSize:"13px"}}>🎙️ تسجيل القراءة</strong><p style={{fontSize:"11px",color:C.mu}}>استخدم مايكروفون الجوال. بعد الإيقاف استمع للتسجيل ثم أرسله للمعلم.</p>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>بدء التسجيل</Btn>:<Btn color={C.d} onClick={stopRec}>إيقاف</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>رجوع</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>أوقف صوت النموذج قبل التسجيل.</div>}
-      {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
+    <Card><strong style={{fontSize:"13px"}}>🎙️ Record your reading</strong><p style={{fontSize:"11px",color:C.mu}}>Use your phone microphone. The file is compressed automatically.</p>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>Start Recording</Btn>:<Btn color={C.d} onClick={stopRec}>Stop</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>Stop the model audio before recording.</div>}
+      {audioUrl&&<audio controls src={audioUrl} style={{display:"none"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
-      <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"جاري الإرسال…":((sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)?"تم الإرسال":"إرسال للمعلم")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
+      <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":((sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(t=>{const done=attemptsForTask(t);const last=done.slice().sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0))[done.length-1];const limit=totalAllowedAttempts(t);const teacherExtra=extraRetakeAllowed(done);const allowed=canAttemptTask(t);return <Card key={t.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"10px",alignItems:"center"}}><div style={{fontSize:"24px"}}>📘</div><div style={{flex:1}}><strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit} · retakes: {Math.max(0,Number(t.retakeLimit??0)||0)}</div>{last&&last.analysis&&<div style={{fontSize:"11px",fontWeight:800,color:gc(last.analysis.accuracy)}}>Last analyzed: {last.analysis.accuracy}% · {last.analysis.wcpm} WCPM</div>}{!allowed&&<div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}{teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}</div><Btn size="sm" color={allowed?C.p:C.mu} disabled={!allowed} onClick={()=>allowed&&setTask(t)}>{done.length?"Try Again":"Start"}</Btn></div></Card>})}</div>;
@@ -2812,14 +2814,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function cycleTaskRetake(t){const current=Math.max(0,Math.min(3,Number(t.retakeLimit??0)||0)); const n=(current+1)%4; await fsSet("readingTasks",t.id,{...t,retakeLimit:n,updatedAt:today()}); setMsg("✅ Retake limit set to "+n); await reload();}
   async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(10,Number(retakeLimit)||0)); await fsSet("readingTasks",id,{id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),retakeLimit:safeLimit,lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}); setMsg(editingTaskId?"✅ Reading task updated.":"✅ Reading task created."); resetTaskForm(); await reload();}
   async function analyze(sub){const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId); if(!task){alert("Task not found");return;} const analysis=rpAnalyze(task.text,sub.transcript||"",sub.seconds||0); await fsSet("readingSubmissions",sub.id,{...sub,analysis,status:"analyzed"}); await reload();}
-  async function delTask(t){
-    const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id && s.deleted!==true && s.status!=="deleted").length;
-    const msg="Delete this Reading Progress task?\n\nTask: "+(t.title||"Reading Task")+"\nStudent recordings/results linked to this task will be kept, but the task will no longer appear for students."+ (related?"\n\nLinked submissions kept: "+related:"");
-    if(!confirm(msg))return;
-    await fsDel("readingTasks",t.id);
-    setMsg("✅ Reading task deleted. Existing student submissions were kept.");
-    await reload();
-  }
+  async function delTask(t){if(!confirm("Delete this Reading Progress task?"))return; await fsDel("readingTasks",t.id); await reload();}
   const targetStudents=myStudents.filter(s=>!classIds.length||classIds.includes(s.classId));
   const filteredStudents=myStudents.filter(s=>(filter==="all"||s.classId===filter)&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search)));
   const studentStats=filteredStudents.map(st=>{
@@ -2842,7 +2837,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"6px",maxHeight:"130px",overflowY:"auto",padding:"4px",border:"1px solid "+C.br,borderRadius:"8px"}}>{targetStudents.length===0?<span style={{fontSize:"11px",color:C.mu}}>No students in selected classes.</span>:targetStudents.map(s=>{const on=studentIds.includes(s.id);const cls=myClasses.find(c=>c.id===s.classId);return <button key={s.id} onClick={()=>setStudentIds(on?studentIds.filter(x=>x!==s.id):[...studentIds,s.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.s:C.br),background:on?C.s:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"10px"}}>{s.name} · {s.studentId||s.id} · {cls?.name||""}</button>})}</div>
       <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate AI Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editingTaskId?"Update Task":"Save Task"}</Btn>{editingTaskId&&<Btn color={C.mu} onClick={resetTaskForm}>Cancel Edit</Btn>}</div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.w:C.d)}}>{msg}</p>}
     </Card>
-    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Use 🗑 Delete Task to remove a Reading Progress task from students. Existing submissions are kept for records.</div>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · retakes: {t.retakeLimit??0} · total attempts: {1+(Number(t.retakeLimit??0)||0)} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Retakes: {t.retakeLimit??0}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
+    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · retakes: {t.retakeLimit??0} · total attempts: {1+(Number(t.retakeLimit??0)||0)} · {(t.classIds||[]).length? (t.classIds||[]).map(id=>myClasses.find(c=>c.id===id)?.name).filter(Boolean).join(", ") : "All classes"} · {(t.studentIds||[]).length? ((t.studentIds||[]).length+" selected student(s)") : "All students"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Retakes: {t.retakeLimit??0}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>Delete</Btn></div></div>)}</Card>
     <Card style={{marginBottom:"11px"}}><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><select value={filter} onChange={e=>setFilter(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student" style={{flex:1,minWidth:"180px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></Card>
     <Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:"11px",fontFamily:F}}><thead><tr><th style={{textAlign:"left",padding:"9px",borderBottom:"2px solid "+C.br}}>Student</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Class</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Accuracy</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>WCPM</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Fluency</th><th style={{padding:"9px",borderBottom:"2px solid "+C.br}}>Submissions</th></tr></thead><tbody>{studentStats.map(x=>{const cls=myClasses.find(c=>c.id===x.st.classId);return <tr key={x.st.id}><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:700}}>{x.st.name}<div style={{fontSize:"9px",color:C.mu}}>ID: {x.st.studentId}</div></td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{cls?.name||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.avg!==null?gc(x.avg):C.mu,fontWeight:800}}>{x.avg!==null?x.avg+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:800}}>{x.w||"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:x.f!==null?gc(x.f):C.mu,fontWeight:800}}>{x.f!==null?x.f+"%":"—"}</td><td style={{padding:"8px",borderBottom:"1px solid "+C.br}}>{x.ss.length}</td></tr>})}</tbody></table></div></Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(s=>{const st=myStudents.find(x=>x.id===s.studentId);const t=(data.readingTasks||[]).find(x=>x.id===s.taskId);return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"12px"}}>{st?.name||"Student"}</strong><div style={{fontSize:"10px",color:C.mu}}>{t?.title||"Task"} · {s.createdAt} · {s.seconds||0}s · {s.status}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{s.audioUrl&&<audio controls src={s.audioUrl} style={{display:"none"}}/>}<Btn size="sm" color={C.p} onClick={()=>analyze(s)}>Analyze</Btn></div></div>{s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}</div>})}</Card>
@@ -4096,9 +4091,9 @@ document.addEventListener("click", function(e){
         <input id="rp-v11-student" type="text" placeholder="All Students / اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:240px">
         <button id="rp-v11-clear-filters" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#64748b;color:white">All Classes / All Students</button>
         <button id="rp-v11-refresh" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white">Refresh</button>
-        <button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze New Visible</button>
-        <button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All New</button>
-        <button id="rp-v11-accept-visible" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">Accept Analyzed Visible</button>
+        <button id="rp-v11-analyze-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white">Analyze Visible</button>
+        <button id="rp-v11-analyze-all" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#9333ea;color:white">Analyze All</button>
+        <button id="rp-v11-accept-visible" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">Accept Visible Attempts</button>
         <button id="rp-v11-retake-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white">Retake Visible</button>
         <button id="rp-v11-reject-class" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white">Reject Visible</button>
       </div>
@@ -4120,35 +4115,26 @@ document.addEventListener("click", function(e){
       }
       if(id==="rp-v11-analyze-class"){
         const arr=await currentVisibleRecords();
-        const ids=arr.filter(needsAnalysisRecord).map(r=>r.id);
-        if(!ids.length)return alert("No new visible attempts need analysis.");
-        if(!confirm("Analyze "+ids.length+" new visible attempt(s) only?")) return;
+        const ids=arr.filter(r=>!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id);
+        if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة في النطاق الظاهر.");
         for(const x of ids)await analyzeOne(x,true);
         await renderCards();
         return;
       }
       if(id==="rp-v11-analyze-all"){
-        const ids=records().filter(needsAnalysisRecord).map(r=>r.id);
-        if(!ids.length)return alert("No new attempts need analysis.");
-        if(!confirm("Analyze "+ids.length+" new attempt(s) only?")) return;
+        const ids=records().filter(r=>!isDeleted(r)&&(r.audioId||r.audioDataUrl||r.audioUrl)&&r.status!=="rejected").map(r=>r.id);
+        if(!ids.length)return alert("لا يوجد تسجيلات صوتية محفوظة للتحليل.");
         for(const x of ids)await analyzeOne(x,true);
         await renderCards();
         return;
       }
       if(id==="rp-v11-accept-visible"||id==="rp-v11-retake-class"||id==="rp-v11-reject-class"){
         const arr=await currentVisibleRecords();
-        if(!arr.length)return alert("No attempts in the visible range.");
+        if(!arr.length)return alert("لا توجد محاولات في النطاق الظاهر.");
         const st=(id==="rp-v11-retake-class")?"retake_allowed":(id==="rp-v11-reject-class")?"rejected":"accepted";
-        if(st==="accepted"){
-          const ready=arr.filter(canAcceptRecord);
-          if(!ready.length)return alert("No analyzed visible attempts are ready to accept. Please analyze recordings first.");
-          if(!confirm("Accept "+ready.length+" analyzed visible attempt(s) only?"))return;
-          for(const r of ready){ await updateRecord(r.id,{status:st}); }
-        }else{
-          if(st==="retake_allowed"&&!confirm("Allow retake for visible attempts?"))return;
-          if(st==="rejected"&&!confirm("Reject visible attempts?"))return;
-          for(const r of arr){ if(!isDeleted(r)) await updateRecord(r.id,{status:st}); }
-        }
+        if(st==="retake_allowed"&&!confirm("السماح للمحاولات الظاهرة بإعادة التسجيل؟"))return;
+        if(st==="rejected"&&!confirm("رفض كل المحاولات الظاهرة؟"))return;
+        for(const r of arr){ if(!isDeleted(r)) await updateRecord(r.id,{status:st}); }
         await renderCards();
         return;
       }
@@ -4160,12 +4146,7 @@ document.addEventListener("click", function(e){
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){await analyzeOne(an,false);return;}
-      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){
-        const rec=records().find(x=>x.id===rid);
-        if(st==="accepted" && !canAcceptRecord(rec)) return alert("Please analyze this recording before accepting it.");
-        if(st==="retake_allowed"&&!confirm("Allow this student to record again?"))return;
-        await updateRecord(rid,{status:st}); await renderCards();
-      }
+      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){ if(st==="retake_allowed"&&!confirm("السماح لهذا الطالب بإعادة التسجيل؟"))return; await updateRecord(rid,{status:st}); await renderCards(); }
     });
     panel.addEventListener("input",async e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)await updateRecord(s,{teacherScore:e.target.value}); if(n)await updateRecord(n,{teacherNotes:e.target.value});});
     panel.addEventListener("input",async e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student")await renderCards();});
@@ -4175,10 +4156,6 @@ document.addEventListener("click", function(e){
 
   function searchText(v){ return String(v||"").trim().toLowerCase(); }
   function includesText(v,q){ return !q || String(v||"").toLowerCase().includes(q); }
-  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl)); }
-  function isAnalyzedRecord(r){ return !!(r && (r.analysisStatus==="Completed" || finalScore(r)!=="" || r.aiScore!==undefined || r.finalScore!==undefined)); }
-  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && !isAnalyzedRecord(r)); }
-  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && isAnalyzedRecord(r)); }
   function studentLabel(r){
     return `${r.studentName||"Student"}${r.studentId?` · ${r.studentId}`:""}${r.className?` · ${r.className}`:""}`;
   }
@@ -4207,10 +4184,7 @@ document.addEventListener("click", function(e){
       const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||"");
       const audioSize=item&&item.size?item.size:(r.audioSize||0);
       const audioType=item&&item.type?item.type:(r.audioType||"audio/webm");
-      const acceptReady=canAcceptRecord(r);
-      const acceptBg=acceptReady?"#16a34a":"#94a3b8";
-      const acceptLabel=acceptReady?"Accept":"Analyze first";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Accept</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
     }
     cards.innerHTML=out;
   }
@@ -4355,9 +4329,8 @@ document.addEventListener("click", function(e){
 <style id="safe-smart-scroll-style">
   .safe-smart-scroll-btn{
     position:fixed;
-    left:50%;
-    right:auto;
-    bottom:136px;
+    right:18px;
+    bottom:88px;
     width:52px;
     height:52px;
     border-radius:999px;
@@ -4370,13 +4343,13 @@ document.addEventListener("click", function(e){
     z-index:9999;
     opacity:0;
     pointer-events:none;
-    transform:translate(-50%,10px);
+    transform:translateY(10px);
     transition:opacity .2s ease, transform .2s ease;
   }
   .safe-smart-scroll-btn.show{
     opacity:.94;
     pointer-events:auto;
-    transform:translate(-50%,0);
+    transform:translateY(0);
   }
 </style>
 <script id="safe-smart-scroll-only">
@@ -4429,53 +4402,5 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_LISTENING_COVERAGE_SKIP_CONTROL_REVIEW_FIX -->
 
 <!-- BUILD_FINAL_LISTENING_PERSISTENT_AUDIO_NO_RESTART_FIX -->
-
-<script id="student-reading-progress-back-button-safe">
-(function(){
-  function qsa(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel));}
-  function isStudentReadingProgressVisible(){
-    var text=(document.body&&document.body.innerText)||"";
-    var hasReading=text.indexOf("Reading Progress")>=0 && (text.indexOf("بدء التسجيل")>=0 || text.indexOf("Start")>=0 || text.indexOf("إرسال للمعلم")>=0 || text.indexOf("Submit to Teacher")>=0);
-    var teacher=text.indexOf("Teacher Dashboard")>=0 || text.indexOf("Analyze New Visible")>=0 || text.indexOf("Accept Analyzed Visible")>=0 || text.indexOf("Analyze Saved Recording")>=0;
-    return hasReading && !teacher;
-  }
-  function goBack(){
-    var candidates=qsa("button,a").filter(function(el){
-      var t=(el.innerText||el.textContent||"").trim().toLowerCase();
-      return (t==="رجوع" || t==="back" || t==="←" || t.indexOf("home")>=0 || t.indexOf("الرئيسية")>=0) && el.id!=="student-rp-safe-back-btn";
-    });
-    for(var i=0;i<candidates.length;i++){ if(candidates[i].offsetParent!==null){ candidates[i].click(); return; } }
-    if(history.length>1) history.back(); else window.scrollTo({top:0,behavior:"smooth"});
-  }
-  function ensureBtn(){
-    var btn=document.getElementById("student-rp-safe-back-btn");
-    if(!isStudentReadingProgressVisible()){ if(btn) btn.style.display="none"; return; }
-    if(!btn){
-      btn=document.createElement("button");
-      btn.id="student-rp-safe-back-btn";
-      btn.type="button";
-      btn.textContent="← رجوع";
-      btn.style.cssText="position:fixed;left:14px;bottom:150px;z-index:9998;border:0;border-radius:999px;background:#1e293b;color:#fff;font-weight:900;font-size:14px;padding:11px 15px;box-shadow:0 8px 22px rgba(15,23,42,.25);opacity:.94";
-      btn.onclick=goBack;
-      document.body.appendChild(btn);
-    } else btn.style.display="";
-  }
-  setTimeout(ensureBtn,800);
-  setInterval(ensureBtn,1800);
-})();
-</script>
-
-
-<!-- BUILD_FINAL_RP_PREVIEW_BACK_SMART_BULK_ANALYZE_ACCEPT -->
-
-<!-- BUILD_FINAL_RP_DELETE_TASK_BUTTON_CLEAR -->
-
-<!-- BUILD_FINAL_RP_STUDENT_SUBMIT_COUNT_AFTER_SUCCESS_FIX -->
-
-<!-- BUILD_FINAL_RP_SEND_RESTORE_NO_SIZE_BLOCK -->
-
-<!-- BUILD_FINAL_RP_SEND_STORAGE_FALLBACK_DATAURL -->
-
-<!-- BUILD_EMERGENCY_RESTORE_RP_STUDENT_SUBMIT_WORKING -->
 </body>
 </html>
