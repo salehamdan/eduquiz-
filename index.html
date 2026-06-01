@@ -1492,7 +1492,9 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   }
 
   const skillData = submitted?calcSkills([{quizId:quiz.id,answers,score,totalQ:total}],[quiz]):[];
-  const reviewUnlocked = !submitted || ((prev+1)>=totalAllowedQuizAttempts);
+  const answerReviewAllowed = quiz.allowAnswerReview === true;
+  const finalAttemptReached = (prev+1)>=totalAllowedQuizAttempts;
+  const reviewUnlocked = !submitted || (answerReviewAllowed && finalAttemptReached);
   const tabs=[...(quiz.passage?[{id:"passage",icon:"📄",label:"Passage"}]:[]),...(reviewUnlocked?[{id:"questions",icon:"❓",label:"Questions"}]:[]),...(submitted?[{id:"results",icon:"📊",label:"Results"}]:[])];
 
   if(attemptBlocked && !submitted) return (
@@ -1695,14 +1697,18 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
               </div>
             </Card>
             {skillData.length>0 && <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📚 Skill Breakdown</strong>{skillData.map(s=><SBar key={s.skill} {...s}/>)}</Card>}
-            {(prev+1)>=totalAllowedQuizAttempts
+            {answerReviewAllowed && finalAttemptReached
               ? <Card style={{marginBottom:"11px",background:"#eff6ff",border:"1px solid #93c5fd",textAlign:"center"}}>
-                  <p style={{margin:"0 0 9px",fontSize:"13px",color:"#1e40af",fontWeight:"600",fontFamily:F}}>👀 All attempts finished. You can now review your answers.</p>
+                  <p style={{margin:"0 0 9px",fontSize:"13px",color:"#1e40af",fontWeight:"600",fontFamily:F}}>👀 Answer review is enabled by your teacher.</p>
                   <Btn onClick={()=>setTab("questions")} style={{width:"100%"}} color={C.p}>🔍 Review My Answers</Btn>
                 </Card>
-              : <Card style={{marginBottom:"11px",background:"#fff7ed",border:"1px solid #fdba74",textAlign:"center"}}>
-                  <p style={{margin:0,fontSize:"13px",color:"#9a3412",fontWeight:"600",fontFamily:F}}>🔒 Answer review will open after your final allowed attempt. Attempts used: {prev+1}/{totalAllowedQuizAttempts}</p>
-                </Card>}
+              : !answerReviewAllowed
+                ? <Card style={{marginBottom:"11px",background:"#f8fafc",border:"1px solid #cbd5e1",textAlign:"center"}}>
+                    <p style={{margin:0,fontSize:"13px",color:C.mu,fontWeight:"600",fontFamily:F}}>🔒 Answer review is disabled by your teacher for this quiz.</p>
+                  </Card>
+                : <Card style={{marginBottom:"11px",background:"#fff7ed",border:"1px solid #fdba74",textAlign:"center"}}>
+                    <p style={{margin:0,fontSize:"13px",color:"#9a3412",fontWeight:"600",fontFamily:F}}>🔒 Answer review will open after your final allowed attempt. Attempts used: {prev+1}/{totalAllowedQuizAttempts}</p>
+                  </Card>}
             <Btn onClick={onDone} size="lg" style={{width:"100%"}} color={C.mu}>← Back to Quizzes</Btn>
           </div>;
         })()}
@@ -1875,7 +1881,8 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     return {...s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):0,total:rs.length};
   }).filter(s=>s.total>0).sort((a,b)=>b.avg-a.avg||(b.total-a.total));
   const allowedAttemptsForQuiz = q => 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0);
-  const canReviewQuizResponse = (q) => myResps.filter(r=>r.quizId===q.id).length >= allowedAttemptsForQuiz(q);
+  const canReviewQuizResponse = (q) => q && q.allowAnswerReview===true && myResps.filter(r=>r.quizId===q.id).length >= allowedAttemptsForQuiz(q);
+  const reviewLockMessage = (q) => q && q.allowAnswerReview===true ? "Answer review will open after your final allowed attempt." : "Answer review is disabled by your teacher for this quiz.";
 
   if(taking){
     const TakeComponent = taking.mode==="game" ? GameQuiz : TakeQuiz;
@@ -1924,7 +1931,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
                 <div style={{width:"38px",height:"38px",borderRadius:"9px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"17px",flexShrink:0}}>{icon}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{quiz.mode==="game"&&<span style={{marginRight:"4px"}}>🎮</span>}{quiz.title}{done.length===0&&<span style={{marginLeft:"6px",fontSize:"9px",background:C.d,color:"#fff",padding:"1px 7px",borderRadius:"999px",fontWeight:"800",verticalAlign:"middle"}}>NEW</span>}</div>
-                  <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.mode==="game"?"🎮 Game · ":""}{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · Pass:{quiz.masteryThreshold??MASTERY_DEFAULT}% · Retakes:{quiz.allowRetake?(quiz.maxRetakes??2):0}</div>
+                  <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.mode==="game"?"🎮 Game · ":""}{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · Pass:{quiz.masteryThreshold??MASTERY_DEFAULT}% · Retakes:{quiz.allowRetake?(quiz.maxRetakes??2):0} · Review:{quiz.allowAnswerReview===true?"On":"Off"}</div>
                   {last!==null && <div style={{fontSize:"10px",fontWeight:"600",color:gc(last),fontFamily:F}}>Last: {last}%{done.length>1?" · "+done.length+" attempts":""} · Attempts: {done.length}/{totalAllowedAttempts}</div>}
                 </div>
                 <Btn size="sm" onClick={()=>!locked&&setTaking(quiz)} color={locked?"#94a3b8":col} disabled={locked}>{locked?"Done":done.length?"Retry":"Start"}</Btn>
@@ -1955,12 +1962,12 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
             </Card>
             <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📋 All Attempts</strong>
               {[...myResps].reverse().map((r,i)=>{const quiz=data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
-                <div key={r.id} onClick={()=>{if(!quiz)return;if(canReviewQuizResponse(quiz))setReviewResp({response:r,quiz});else alert("Answer review will open after your final allowed attempt.");}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
+                <div key={r.id} onClick={()=>{if(!quiz)return;if(canReviewQuizResponse(quiz))setReviewResp({response:r,quiz});else alert(reviewLockMessage(quiz));}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
                   <div style={{width:"32px",height:"32px",borderRadius:"50%",background:gc(p)+"20",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:"800",color:gc(p),fontFamily:F}}>{p}%</span></div>
                   <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"12px",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz?.type} · {r.completedAt} · #{r.attempt}</div></div>
                   {r.selfRating>0&&<span style={{fontSize:"11px"}}>{Array(r.selfRating).fill("⭐").join("")}</span>}
                   {quiz&&canReviewQuizResponse(quiz)&&<span style={{fontSize:"11px",color:C.p,fontWeight:"700",fontFamily:F}}>Review →</span>}
-                  {quiz&&!canReviewQuizResponse(quiz)&&<span style={{fontSize:"10px",color:C.w,fontWeight:"700",fontFamily:F}}>Locked</span>}
+                  {quiz&&!canReviewQuizResponse(quiz)&&<span style={{fontSize:"10px",color:C.w,fontWeight:"700",fontFamily:F}}>{quiz.allowAnswerReview===true?"Locked":"Review Off"}</span>}
                 </div>
               );})}
             </Card>
@@ -2029,7 +2036,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
 function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const E = editQuiz || {};
   const [title,setTitle]=useState(E.title||""),[type,setType]=useState(E.type||"Reading"),[diff,setDiff]=useState(E.difficulty||"Easy"),[subject,setSubject]=useState(E.subject||"");
-  const [classIds,setClassIds]=useState(E.classIds||[]),[timer,setTimer]=useState(E.timer||0),[thresh,setThresh]=useState(E.masteryThreshold??MASTERY_DEFAULT),[retake,setRetake]=useState(E.allowRetake!==false),[maxRetakes,setMaxRetakes]=useState(E.maxRetakes??2),[shuffle,setShuffle]=useState(E.shuffle!==false),[closeDate,setCloseDate]=useState(E.closeDate||""),[passage,setPassage]=useState(E.passage||"");
+  const [classIds,setClassIds]=useState(E.classIds||[]),[timer,setTimer]=useState(E.timer||0),[thresh,setThresh]=useState(E.masteryThreshold??MASTERY_DEFAULT),[retake,setRetake]=useState(E.allowRetake!==false),[maxRetakes,setMaxRetakes]=useState(E.maxRetakes??2),[shuffle,setShuffle]=useState(E.shuffle!==false),[allowAnswerReview,setAllowAnswerReview]=useState(E.allowAnswerReview===true),[closeDate,setCloseDate]=useState(E.closeDate||""),[passage,setPassage]=useState(E.passage||"");
   const [questions,setQuestions]=useState(E.questions&&E.questions.length?E.questions.map((q,i)=>({...q,id:i+1})):[{id:1,text:"",options:["","","",""],correct:0,skill:SKILLS[0],difficulty:"Easy"}]);
   const [mode,setMode]=useState(E.mode||"normal");
   const [instantFeedback,setInstantFeedback]=useState(E.instantFeedback!==false);
@@ -2294,7 +2301,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>850000){
       setErr("⚠️ The uploaded audio is too large to save. Please use a shorter clip, or upload the audio to a website and paste its LINK instead.");window.scrollTo(0,0);return;
     }
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,allowAnswerReview,mode,instantFeedback,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -2318,6 +2325,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
             <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={retake} onChange={e=>setRetake(e.target.checked)} id="rt"/><label htmlFor="rt" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Allow retakes</label></div>
             <div><Label text="Max retakes"/><input type="number" min="0" max="10" value={maxRetakes} onChange={e=>setMaxRetakes(Math.max(0,Number(e.target.value)||0))} disabled={!retake} style={{...inp,opacity:retake?1:.55}}/></div>
             <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} id="sh"/><label htmlFor="sh" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>🔀 Shuffle for students</label></div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={allowAnswerReview} onChange={e=>setAllowAnswerReview(e.target.checked)} id="arv"/><label htmlFor="arv" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>👀 Allow answer review</label></div>
           </div>
           <div style={{marginTop:"11px"}}>
             <Label text="Quiz Mode"/>
@@ -4309,7 +4317,22 @@ document.addEventListener("click", function(e){
       && (!stuQ || includesText(r.studentName,stuQ) || includesText(r.studentId,stuQ) || includesText(studentLabel(r),stuQ)));
   }
 
-  async function renderCards(){
+  async 
+  function cleanRpStudentMeta(r){
+    const d=data(), users=(d.users||[]), classes=(d.classes||[]), tasks=(d.readingTasks||[]);
+    let st = users.find(u=>String(u.id)===String(r.studentId)) ||
+             users.find(u=>String(u.studentId||"")===String(r.studentNumber||"")) ||
+             users.find(u=>String(u.name||"").trim()===String(r.studentName||r.name||"").trim());
+    const classId = (st&&st.classId) || r.classId || "";
+    const cls = classes.find(c=>String(c.id)===String(classId));
+    const task = tasks.find(t=>String(t.id)===String(r.taskId));
+    const sid = (st&&st.studentId) || r.studentNumber || r.realStudentId || "";
+    const sname = (st&&st.name) || r.studentName || r.name || "Student";
+    const cname = (cls&&cls.name) || r.className || classId || "—";
+    const ttitle = (task&&task.title) || r.taskTitle || "Reading Task";
+    return {sid,sname,cname,ttitle};
+  }
+function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
     const shown=await currentVisibleRecords();
     const completed=shown.filter(r=>finalScore(r)!=="");
@@ -4321,6 +4344,7 @@ document.addEventListener("click", function(e){
     if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b">Yet no submission.</div>`;return;}
     let out="";
     for(const r of shown){
+      const meta=cleanRpStudentMeta(r);
       const item=r.audioId?await getAudio(r.audioId):null;
       const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||"");
       const audioSize=item&&item.size?item.size:(r.audioSize||0);
@@ -4328,7 +4352,7 @@ document.addEventListener("click", function(e){
       const acceptReady=canAcceptRecord(r);
       const acceptBg=acceptReady?"#16a34a":"#94a3b8";
       const acceptLabel=acceptReady?"Accept":"Analyze first";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${r.studentName||"Student"}</div><div style="color:#64748b;font-size:13px">${r.studentId||""} · ${r.className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${meta.sname}</div><div style="color:#64748b;font-size:13px">ID: ${meta.sid||"—"} · Class: ${meta.cname} · Task: ${meta.ttitle}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button><button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
     }
     cards.innerHTML=out;
   }
@@ -4557,5 +4581,9 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
 
 <!-- BUILD_FINAL_REACT_LOGIN_MEMORY_STABLE_WITH_GMAIL_LINK -->
+
+<!-- BUILD_FINAL_RP_CLEAN_STUDENT_ID_DISPLAY -->
+
+<!-- BUILD_FINAL_QUIZ_REVIEW_TEACHER_CONTROL -->
 </body>
 </html>
