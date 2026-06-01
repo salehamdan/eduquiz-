@@ -3143,16 +3143,49 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const quizLow = quizDoneRows.length ? Math.min(...quizDoneRows.map(r=>r.percent)) : "-";
   const quizMastery = selectedResultQuiz ? (selectedResultQuiz.masteryThreshold??MASTERY_DEFAULT) : MASTERY_DEFAULT;
   const quizMasteryCount = quizDoneRows.filter(r=>r.percent>=quizMastery).length;
+  function quizResultsRowsForExport(){
+    if(!selectedResultQuiz) return null;
+    const rows=[["Quiz","Student","Student ID","Class","Best Score","Best %","Attempts","Last Attempt Date"]];
+    quizResultRows.forEach(r=>rows.push([
+      selectedResultQuiz.title||"",
+      r.student.name||"",
+      r.student.studentId||"",
+      r.className||"",
+      r.best?((r.best.score||0)+"/"+(r.best.totalQ||0)):"",
+      r.percent===null?"":(r.percent+"%"),
+      r.attempts.length,
+      r.last?(r.last.completedAt||""):""
+    ]));
+    return rows;
+  }
+  function safeQuizFileName(){
+    return (selectedResultQuiz?.title||"quiz").replace(/[^\w\u0600-\u06FF]+/g,"_");
+  }
+  function exportQuizResultsExcel(){
+    if(!selectedResultQuiz){alert("No quiz selected.");return;}
+    const rows=quizResultsRowsForExport();
+    try{
+      if(window.XLSX && XLSX.utils && XLSX.writeFile){
+        const ws=XLSX.utils.aoa_to_sheet(rows);
+        ws["!cols"]=[{wch:30},{wch:28},{wch:14},{wch:18},{wch:12},{wch:10},{wch:10},{wch:18}];
+        const wb=XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb,ws,"Quiz Results");
+        XLSX.writeFile(wb,"quiz_results_"+safeQuizFileName()+".xlsx");
+        return;
+      }
+    }catch(e){}
+    alert("Excel export is not supported in this browser. Use CSV instead.");
+  }
   function exportQuizResultsCsv(){
     if(!selectedResultQuiz){alert("No quiz selected.");return;}
-    const rows=[["Quiz","Student","Student ID","Class","Best Score","Best %","Attempts","Last Attempt Date"]];
-    quizResultRows.forEach(r=>rows.push([selectedResultQuiz.title||"",r.student.name||"",r.student.studentId||"",r.className||"",r.best?((r.best.score||0)+"/"+(r.best.totalQ||0)):"",r.percent===null?"":(r.percent+"%"),r.attempts.length,r.last?(r.last.completedAt||""):""]));
-    const csv=rows.map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\n");
+    const rows=quizResultsRowsForExport();
+    // UTF-8 BOM improves Arabic names in Excel/mobile spreadsheet apps.
+    const csv="\ufeff"+rows.map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\r\n");
     const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
     a.href=url;
-    a.download="quiz_results_"+(selectedResultQuiz.title||"quiz").replace(/[^\w\u0600-\u06FF]+/g,"_")+".csv";
+    a.download="quiz_results_"+safeQuizFileName()+".csv";
     a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -3341,7 +3374,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
-            <Btn onClick={exportQuizResultsCsv} color={C.s}>Export CSV</Btn>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn onClick={exportQuizResultsExcel} color={C.s}>Export Excel</Btn><Btn onClick={exportQuizResultsCsv} color={C.p}>Export CSV</Btn></div>
           </div>
           {!selectedResultQuiz ? <p style={{fontSize:"12px",color:C.mu,fontFamily:F,margin:0}}>No quizzes yet.</p> : <>
             <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"7px",marginBottom:"10px"}}>
@@ -4686,5 +4719,9 @@ function renderCards(){
 <!-- BUILD_FINAL_QUIZ_REVIEW_TOGGLE_VISIBLE_CARD -->
 
 <!-- BUILD_FINAL_TEACHER_QUIZ_RESULTS_BY_CLASS -->
+
+<!-- BUILD_FINAL_EXCEL_XLSX_EXPORT_FIX -->
+
+<!-- BUILD_FINAL_DUAL_EXCEL_CSV_EXPORT -->
 </body>
 </html>
