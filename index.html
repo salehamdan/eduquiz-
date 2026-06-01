@@ -3111,6 +3111,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [resumeAfterEdit,setResumeAfterEdit]=useState(false);
   const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
   const [shareModal,setShareModal]=useState(null);
+  const [qrQuizId,setQrQuizId]=useState("");
+  const [qrClassId,setQrClassId]=useState("all");
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
   const myClasses=data.classes.filter(c=>!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded);
@@ -3122,6 +3124,38 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const ra=data.responses.filter(r=>r.studentId===a.id&&myQuizzes.some(q=>q.id===r.quizId)),rb=data.responses.filter(r=>r.studentId===b.id&&myQuizzes.some(q=>q.id===r.quizId));
     return (rb.length?Math.round(rb.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/rb.length):0)-(ra.length?Math.round(ra.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/ra.length):0);
   });
+
+
+  const quizResultQuizzes = myQuizzes || [];
+  const selectedResultQuiz = quizResultQuizzes.find(q=>q.id===qrQuizId) || quizResultQuizzes[0] || null;
+  const quizResultRows = selectedResultQuiz ? myStudents
+    .filter(st=>qrClassId==="all" || String(st.classId||"")===String(qrClassId))
+    .map(st=>{
+      const cls=(data.classes||[]).find(c=>String(c.id)===String(st.classId));
+      const attempts=(data.responses||[]).filter(r=>String(r.studentId)===String(st.id) && String(r.quizId)===String(selectedResultQuiz.id)).sort((a,b)=>(b.ts||0)-(a.ts||0));
+      const best=attempts.length ? attempts.reduce((best,r)=>pct(r.score,r.totalQ)>pct(best.score,best.totalQ)?r:best, attempts[0]) : null;
+      const last=attempts[0]||null;
+      return {student:st,className:(cls&&cls.name)||st.className||"",attempts,best,last,percent:best?pct(best.score,best.totalQ):null};
+    }) : [];
+  const quizDoneRows = quizResultRows.filter(r=>r.best);
+  const quizAvg = quizDoneRows.length ? Math.round(quizDoneRows.reduce((s,r)=>s+r.percent,0)/quizDoneRows.length) : "-";
+  const quizHigh = quizDoneRows.length ? Math.max(...quizDoneRows.map(r=>r.percent)) : "-";
+  const quizLow = quizDoneRows.length ? Math.min(...quizDoneRows.map(r=>r.percent)) : "-";
+  const quizMastery = selectedResultQuiz ? (selectedResultQuiz.masteryThreshold??MASTERY_DEFAULT) : MASTERY_DEFAULT;
+  const quizMasteryCount = quizDoneRows.filter(r=>r.percent>=quizMastery).length;
+  function exportQuizResultsCsv(){
+    if(!selectedResultQuiz){alert("No quiz selected.");return;}
+    const rows=[["Quiz","Student","Student ID","Class","Best Score","Best %","Attempts","Last Attempt Date"]];
+    quizResultRows.forEach(r=>rows.push([selectedResultQuiz.title||"",r.student.name||"",r.student.studentId||"",r.className||"",r.best?((r.best.score||0)+"/"+(r.best.totalQ||0)):"",r.percent===null?"":(r.percent+"%"),r.attempts.length,r.last?(r.last.completedAt||""):""]));
+    const csv=rows.map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download="quiz_results_"+(selectedResultQuiz.title||"quiz").replace(/[^\w\u0600-\u06FF]+/g,"_")+".csv";
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
 
   async function saveQuiz(q){await fsSet("quizzes",q.id,q);await reload();setView(null);}
   // Auto-pause: close the quiz before editing so no new students start mid-change
@@ -3290,6 +3324,60 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {tab==="overview" && <div>
+
+        <Card style={{marginBottom:"11px"}}>
+          <strong style={{fontSize:"14px",color:C.tx,display:"block",marginBottom:"10px",fontFamily:F}}>📊 Quiz Results</strong>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:"8px",alignItems:"end",marginBottom:"10px"}}>
+            <div>
+              <Label text="Select Quiz"/>
+              <select value={selectedResultQuiz?.id||""} onChange={e=>setQrQuizId(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:"8px",border:"1px solid "+C.br,background:"#f8fafc",color:C.tx,fontFamily:F}}>
+                {quizResultQuizzes.map(q=><option key={q.id} value={q.id}>{q.title}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label text="Select Class"/>
+              <select value={qrClassId} onChange={e=>setQrClassId(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:"8px",border:"1px solid "+C.br,background:"#f8fafc",color:C.tx,fontFamily:F}}>
+                <option value="all">All Classes</option>
+                {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <Btn onClick={exportQuizResultsCsv} color={C.s}>Export CSV</Btn>
+          </div>
+          {!selectedResultQuiz ? <p style={{fontSize:"12px",color:C.mu,fontFamily:F,margin:0}}>No quizzes yet.</p> : <>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:"7px",marginBottom:"10px"}}>
+              <Stat icon="👥" label="Students" value={quizResultRows.length} color={C.p}/>
+              <Stat icon="✅" label="Submitted" value={quizDoneRows.length} color={C.s}/>
+              <Stat icon="📊" label="Average" value={quizAvg==="-"?"-":quizAvg+"%"} color={C.w}/>
+              <Stat icon="⬆️" label="Highest" value={quizHigh==="-"?"-":quizHigh+"%"} color={C.pu}/>
+              <Stat icon="⬇️" label="Lowest" value={quizLow==="-"?"-":quizLow+"%"} color={C.d}/>
+              <Stat icon="🎯" label="Mastery" value={quizDoneRows.length?Math.round((quizMasteryCount/quizDoneRows.length)*100)+"%":"-"} color={C.s}/>
+            </div>
+            <div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"10px"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px",fontFamily:F}}>
+                <thead><tr style={{background:"#f8fafc"}}>
+                  <th style={{textAlign:"left",padding:"9px",borderBottom:"1px solid "+C.br}}>Student</th>
+                  <th style={{textAlign:"left",padding:"9px",borderBottom:"1px solid "+C.br}}>Class</th>
+                  <th style={{padding:"9px",borderBottom:"1px solid "+C.br}}>Best</th>
+                  <th style={{padding:"9px",borderBottom:"1px solid "+C.br}}>Percent</th>
+                  <th style={{padding:"9px",borderBottom:"1px solid "+C.br}}>Attempts</th>
+                  <th style={{padding:"9px",borderBottom:"1px solid "+C.br}}>Last Date</th>
+                </tr></thead>
+                <tbody>
+                  {quizResultRows.map(r=><tr key={r.student.id}>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,fontWeight:"700",color:C.tx}}>{r.student.name}<div style={{fontSize:"10px",color:C.mu}}>ID: {r.student.studentId||"—"}</div></td>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,color:C.tx}}>{r.className||"—"}</td>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,textAlign:"center",color:C.tx}}>{r.best?(r.best.score+"/"+r.best.totalQ):"—"}</td>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,textAlign:"center",fontWeight:"900",color:r.percent===null?C.mu:gc(r.percent)}}>{r.percent===null?"—":r.percent+"%"}</td>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,textAlign:"center",color:C.tx}}>{r.attempts.length}</td>
+                    <td style={{padding:"8px",borderBottom:"1px solid "+C.br,textAlign:"center",color:C.mu}}>{r.last?(r.last.completedAt||"—"):"—"}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          </>}
+        </Card>
+
+
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"9px",marginBottom:"13px"}}>
             <Stat icon="📋" label="Quizzes" value={myQuizzes.length} color={C.p}/><Stat icon="👥" label="Students" value={myStudents.length} color={C.pu}/><Stat icon="📝" label="Submissions" value={myResps.length} color={C.s}/><Stat icon="🚨" label="Need Help" value={flags.length} color={C.d}/>
           </div>
@@ -4596,5 +4684,7 @@ function renderCards(){
 <!-- BUILD_FINAL_QUIZ_REVIEW_TEACHER_CONTROL -->
 
 <!-- BUILD_FINAL_QUIZ_REVIEW_TOGGLE_VISIBLE_CARD -->
+
+<!-- BUILD_FINAL_TEACHER_QUIZ_RESULTS_BY_CLASS -->
 </body>
 </html>
