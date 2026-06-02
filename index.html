@@ -2991,8 +2991,15 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents}){
   const [studentSelectOpen,setStudentSelectOpen]=useState(false);
   const [refreshTick,setRefreshTick]=useState(0);
 
-  function pageTop(){window.scrollTo({top:0,behavior:"smooth"});}
-  function pageBottom(){window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});}
+  function reportScrollTarget(){
+    try{
+      const els=[...document.querySelectorAll("div")];
+      const target=els.find(el=>{const st=getComputedStyle(el); return (st.overflowY==="auto"||st.overflowY==="scroll") && el.scrollHeight>el.clientHeight+40;});
+      return target || document.scrollingElement || document.documentElement;
+    }catch(e){return document.scrollingElement || document.documentElement;}
+  }
+  function pageTop(){const t=reportScrollTarget(); t.scrollTo?t.scrollTo({top:0,behavior:"smooth"}):window.scrollTo({top:0,behavior:"smooth"});}
+  function pageBottom(){const t=reportScrollTarget(); const h=t.scrollHeight||document.body.scrollHeight; t.scrollTo?t.scrollTo({top:h,behavior:"smooth"}):window.scrollTo({top:h,behavior:"smooth"});}
   function localRecords(){
     let out=[];
     try{["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"].forEach(k=>{const arr=JSON.parse(localStorage.getItem(k)||"[]"); if(Array.isArray(arr)) out=out.concat(arr);});}catch(e){}
@@ -4027,6 +4034,22 @@ document.addEventListener("click", function(e){
   function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
   function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
 
+  const RP_RESULT_MODE_KEY = "rp_result_display_mode_v1";
+  function getResultMode(){
+    try{
+      const v=localStorage.getItem(RP_RESULT_MODE_KEY)||"teacher";
+      return v==="auto"?"auto":"teacher";
+    }catch(e){return "teacher";}
+  }
+  function setResultMode(v){
+    try{localStorage.setItem(RP_RESULT_MODE_KEY, v==="auto"?"auto":"teacher");}catch(e){}
+  }
+  function canStudentSeeResult(r){
+    if(!r || isDeleted(r) || isRejected(r)) return false;
+    const manual=Number(r.teacherScore);
+    return r.status==="accepted" || r.resultVisibility==="auto" || (!Number.isNaN(manual)&&manual>0);
+  }
+
   async function transcribeBlob(blob,type){
     const key=getKey();
     if(!key) throw new Error("Add OpenAI API Key first.");
@@ -4181,8 +4204,11 @@ document.addEventListener("click", function(e){
     try{
       const text=await transcribeRecord(r);
       const res=score(refText(r),text,r.seconds||r.duration||60);
-      const saved=await updateRecord(id,{...res,transcript:text,analysisStatus:"Completed"});
-      if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%");
+      const mode=getResultMode();
+      const updates={...res,transcript:text,analysisStatus:"Completed",resultDisplayMode:mode};
+      if(mode==="auto"){ updates.status="accepted"; updates.resultVisibility="auto"; }
+      const saved=await updateRecord(id,updates);
+      if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%", "Mode:", mode);
     }catch(err){
       await updateRecord(id,{analysisStatus:"Failed: "+err.message});
       if(!silent) alert("فشل التحليل: "+err.message);
@@ -4204,10 +4230,11 @@ document.addEventListener("click", function(e){
     panelMade=true;
     const panel=document.createElement("div");
     panel.id="rp-v11-panel";
-    panel.style.cssText="margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
+    panel.style.cssText="display:none;margin:16px;padding:14px;border:2px solid #2563eb;border-radius:18px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.14);font-family:system-ui;direction:ltr;max-width:calc(100vw - 32px)";
     panel.innerHTML=`
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><h2 style="margin:0;color:#1e293b;font-size:22px">📖 Reading Progress</h2><button id="rp-v11-hide" type="button" style="padding:8px 10px;border:0;border-radius:10px;background:#64748b;color:white">Hide</button></div>
       <div style="margin:12px 0;padding:12px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0"><b>AI Settings</b><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input id="rp-v11-api-key" type="password" placeholder="OpenAI API Key" value="${getKey()?"********":""}" style="flex:1;min-width:220px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><button id="rp-v11-save-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">Save Key</button><button id="rp-v11-test-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:800">Test Key</button><button id="rp-v11-clear-key" type="button" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Clear</button></div><div style="font-size:12px;color:#64748b;margin-top:6px">The key is saved locally in this browser only.</div></div>
+      <div style="margin:12px 0;padding:12px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa"><b>Results Display / ظهور النتائج</b><div style="display:grid;gap:8px;margin-top:8px;font-size:13px;color:#334155"><label style="display:flex;gap:8px;align-items:flex-start"><input name="rp-v11-result-mode" type="radio" value="teacher" ${getResultMode()!=="auto"?"checked":""}> <span><b>Teacher approval required</b><br><small>لا تظهر النتيجة للطالب إلا بعد Accept أو إدخال Teacher Score.</small></span></label><label style="display:flex;gap:8px;align-items:flex-start"><input name="rp-v11-result-mode" type="radio" value="auto" ${getResultMode()==="auto"?"checked":""}> <span><b>Auto show after analysis</b><br><small>بعد تحليل التسجيل تظهر النتيجة تلقائيًا للطالب وتُقبل المحاولة.</small></span></label></div></div>
       <div id="rp-v11-summary" style="margin:12px 0"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <input id="rp-v11-class" type="text" placeholder="All Classes / اكتب الصف أو الفصل" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:210px">
@@ -4230,6 +4257,12 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-save-key"){const v=document.getElementById("rp-v11-api-key").value.trim(); if(v&&v!=="********")setKey(v); alert("API Key saved locally ✅"); document.getElementById("rp-v11-api-key").value="********"; return;}
       if(id==="rp-v11-clear-key"){setKey("");document.getElementById("rp-v11-api-key").value="";alert("API Key cleared.");return;}
       if(id==="rp-v11-test-key"){await testKey();return;}
+      if(e.target && e.target.name==="rp-v11-result-mode"){
+        setResultMode(e.target.value);
+        alert(e.target.value==="auto" ? "تم اختيار: إظهار النتائج تلقائيًا بعد التحليل" : "تم اختيار: لا تظهر النتائج إلا بعد اعتماد المعلم");
+        await renderCards();
+        return;
+      }
       if(id==="rp-v11-clear-filters"){
         document.getElementById("rp-v11-class").value="";
         document.getElementById("rp-v11-student").value="";
@@ -4349,7 +4382,7 @@ document.addEventListener("click", function(e){
     const last=mine.length?mine.slice().sort((a,b)=>recordTime(a)-recordTime(b))[mine.length-1]:null;
     const best=counted.length?Math.max(...counted.map(r=>Number(finalScore(r)||0))):"";
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)||0),0)/counted.length):"";
-    const lastScore=last&&finalScore(last)!==""?finalScore(last):"";
+    const lastScore=last&&canStudentSeeResult(last)&&finalScore(last)!==""?finalScore(last):"";
     const statusText=!last?"No submission yet":
       last.status==="accepted"?"Accepted":
       last.status==="rejected"?"Rejected":
@@ -4379,6 +4412,7 @@ document.addEventListener("click", function(e){
         <span style="padding:7px 10px;border-radius:12px;background:#fef2f2;color:#991b1b">Rejected excluded: ${rejectedCount}</span>
       </div>
       ${last&&last.teacherNotes?`<div style="margin-top:8px;color:#475569">Teacher note: ${last.teacherNotes}</div>`:""}
+      ${last && last.analysisStatus==="Completed" && !canStudentSeeResult(last)?`<div style="margin-top:8px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:8px">تم تحليل التسجيل، والنتيجة محفوظة عند المعلم. ستظهر لك بعد اعتماد المعلم.</div>`:""}
       <div style="margin-top:8px;color:#64748b;font-size:12px">Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
     `;
     box.style.background="#ffffff";
@@ -4557,5 +4591,8 @@ document.addEventListener("click", function(e){
 <!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
 
 <!-- BUILD_FINAL_REACT_LOGIN_MEMORY_STABLE_WITH_GMAIL_LINK -->
+<!-- BUILD_RP_RESULTS_TWO_OPTIONS_TEACHER_APPROVAL_DEFAULT -->
+<!-- BUILD_RP_TOP_PANEL_HIDDEN_OVERVIEW_FIRST -->
+<!-- BUILD_READING_PERFORMANCE_SCROLL_BUTTONS_FIXED -->
 </body>
 </html>
