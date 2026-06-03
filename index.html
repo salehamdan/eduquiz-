@@ -2911,7 +2911,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [retakeLimit,setRetakeLimit]=useState(0); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null);
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
   const [resetTaskId,setResetTaskId]=useState(""); const [resetTargetType,setResetTargetType]=useState("student"); const [resetStudentId,setResetStudentId]=useState(""); const [resetClassId,setResetClassId]=useState("");
-  const [teacherAuto,setTeacherAuto]=useState(()=>localStorage.getItem("rp_teacher_auto_correction")==="1"); const autoBusyRef=useRef(false);
+  const [teacherAuto,setTeacherAuto]=useState(()=>localStorage.getItem("rp_teacher_auto_correction")==="1"); const [teacherKey,setTeacherKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||""); const autoBusyRef=useRef(false);
   const tasks=(data.readingTasks||[]).filter(t=>t.teacherId===user.id);
   const taskIds=new Set(tasks.map(t=>t.id));
   const rawSubs=(data.readingSubmissions||[]).filter(s=>s.teacherId===user.id || taskIds.has(s.taskId));
@@ -3014,6 +3014,12 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     autoBusyRef.current=true;
     (async()=>{try{await analyzeWaitingNow(true);}finally{autoBusyRef.current=false;}})();
   },[teacherAuto, subs.map(s=>s.id+":"+s.status+":"+(s.analysis?"1":"0")).join("|")]);
+
+  useEffect(()=>{
+    if(!teacherAuto) return;
+    const timer=setInterval(()=>{try{ if(typeof reload==="function") reload(); }catch(e){}},12000);
+    return ()=>clearInterval(timer);
+  },[teacherAuto]);
   async function resetReadingAttempts(){
     if(!resetTaskId){setMsg("Choose a Reading Progress task first.");return;}
     const target={};
@@ -3053,8 +3059,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Reset + Auto Correction v1</div></Card>
-    <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" defaultValue={localStorage.getItem("rp_openai_api_key")||""} onBlur={e=>localStorage.setItem("rp_openai_api_key",e.target.value.trim())} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn></div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Reset + Auto Correction v2</div></Card>
+    <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}><strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>اختر الاختبار أولًا، ثم الطالب أو الصف أو جميع الفصول. التصفير لا يحذف التسجيلات القديمة؛ فقط لا يحسبها بعد وقت التصفير.</p><div style={{display:"grid",gridTemplateColumns:"1.2fr 130px 1fr 1fr",gap:"8px"}}><select value={resetTaskId} onChange={e=>setResetTaskId(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="">Choose test/task</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select><select value={resetTargetType} onChange={e=>setResetTargetType(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="student">Student</option><option value="class">Class</option><option value="all">All classes</option></select>{resetTargetType==="student"?<select value={resetStudentId} onChange={e=>setResetStudentId(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="">Choose student</option>{myStudents.map(s=><option key={s.id} value={s.id}>{s.name} · {s.studentId||s.id}</option>)}</select>:<select value={resetClassId} onChange={e=>setResetClassId(e.target.value)} disabled={resetTargetType!=="class"} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="">Choose class</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}<Btn color={C.w} onClick={resetReadingAttempts}>Reset Attempts</Btn></div></Card>
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx}}>{editingTaskId?"Edit Reading Task":"Create Reading Task"}</strong><div style={{display:"grid",gridTemplateColumns:"1fr 130px 120px 120px",gap:"8px",marginTop:"9px"}}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Topic / Title" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><select value={level} onChange={e=>setLevel(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select><input type="number" min="5" max="180" value={wordCount} onChange={e=>setWordCount(e.target.value)} placeholder="Words" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><input type="number" min="0" max="5" value={retakeLimit} onChange={e=>setRetakeLimit(e.target.value)} placeholder="Retakes" title="0 = no retake" style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"7px"}}>{[0,1,2,3,4,5].map(n=><button key={n} onClick={()=>setRetakeLimit(n)} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(Number(retakeLimit)===n?C.p:C.br),background:Number(retakeLimit)===n?C.p:"#fff",color:Number(retakeLimit)===n?"#fff":C.mu,fontWeight:800,fontSize:"11px"}}>{n===0?"No Retake":n+" Retake"+(n>1?"s":"")}</button>)}</div>
       <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Generate or paste reading text…" style={{width:"100%",minHeight:"90px",marginTop:"8px",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontFamily:F}}/>
@@ -3097,20 +3103,35 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   const [filtersOpen,setFiltersOpen]=useState(true);
   const [studentSelectOpen,setStudentSelectOpen]=useState(false);
   const [refreshTick,setRefreshTick]=useState(0);
+  const [refreshMsg,setRefreshMsg]=useState("");
+  const topRef=useRef(null), bottomRef=useRef(null);
 
+  function scrollAllTo(pos){
+    try{window.scrollTo({top:pos,behavior:"smooth"});}catch(e){try{window.scrollTo(0,pos);}catch(_e){}}
+    try{(document.scrollingElement||document.documentElement||document.body).scrollTo({top:pos,behavior:"smooth"});}catch(e){}
+    try{
+      document.querySelectorAll("div,main,section").forEach(el=>{
+        if(el && el.scrollHeight>el.clientHeight+40){
+          try{el.scrollTo({top:pos,behavior:"smooth"});}catch(_e){el.scrollTop=pos;}
+        }
+      });
+    }catch(e){}
+  }
   function pageTop(){
-    const el=document.scrollingElement||document.documentElement||document.body;
-    try{el.scrollTo({top:0,behavior:"smooth"});}catch(e){try{window.scrollTo(0,0);}catch(_e){}}
+    if(topRef.current){try{topRef.current.scrollIntoView({behavior:"smooth",block:"start"});}catch(e){}}
+    scrollAllTo(0);
   }
   function pageBottom(){
-    const el=document.scrollingElement||document.documentElement||document.body;
-    const bottom=Math.max(el.scrollHeight,document.body.scrollHeight,document.documentElement.scrollHeight);
-    try{el.scrollTo({top:bottom,behavior:"smooth"});}catch(e){try{window.scrollTo(0,bottom);}catch(_e){}}
+    const h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
+    if(bottomRef.current){try{bottomRef.current.scrollIntoView({behavior:"smooth",block:"end"});}catch(e){}}
+    scrollAllTo(h);
   }
   async function refreshReport(){
+    setRefreshMsg("Refreshing…");
     setRefreshTick(x=>x+1);
-    if(typeof reload==="function") await reload();
-    setTimeout(()=>setRefreshTick(x=>x+1),80);
+    try{ if(typeof reload==="function") await reload(); setRefreshMsg("✅ Refreshed"); }
+    catch(e){ setRefreshMsg("⚠️ Refresh failed"); }
+    setTimeout(()=>{setRefreshTick(x=>x+1);setRefreshMsg("");},900);
   }
   function localRecords(){
     let out=[];
@@ -3162,12 +3183,14 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   function clearAll(){setSearch("");setSelectedClasses([]);setSelectedStudents([]);setRefreshTick(refreshTick+1);}
 
   return <div>
+    <div ref={topRef}></div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
         <div><strong style={{color:"#fff",fontSize:"16px"}}>📊 Reading Performance</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Student and class performance report.</p></div>
         <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={pageTop}>Page Up</Btn><Btn size="sm" color={C.pu} onClick={pageBottom}>Page Down</Btn><Btn size="sm" color={C.s} onClick={refreshReport}>Refresh</Btn></div>
       </div>
     </Card>
+    {refreshMsg&&<div style={{fontSize:"11px",fontWeight:900,color:refreshMsg.startsWith("✅")?C.s:(refreshMsg.startsWith("⚠️")?C.d:C.mu),margin:"-5px 0 8px 4px"}}>{refreshMsg}</div>}
 
     <Card style={{marginBottom:"11px"}}>
       <button onClick={()=>setFiltersOpen(!filtersOpen)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#f8fafc",fontWeight:900,color:C.tx,textAlign:"left"}}>🔎 Filters {filtersOpen?"▴":"▾"}</button>
@@ -3193,7 +3216,8 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px",display:"block",marginBottom:"8px"}}>🏫 Class Performance</strong>{classCards.length===0?<p style={{fontSize:"12px",color:C.mu}}>No accepted class results yet.</p>:classCards.map(c=><div key={c.className} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"10px",marginBottom:"8px",background:"#fff"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><strong style={{fontSize:"14px",color:C.tx}}>Class: {c.className}</strong><span style={{fontWeight:900,color:gc(c.av||0)}}>{c.av!==null?c.av+"%":"—"}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px",fontSize:"11px",color:C.mu}}><div>Students: <b>{c.students}</b></div><div>Accepted: <b>{c.items.length}</b></div><div>Accuracy: <b>{c.aa!==null?c.aa+"%":"—"}</b></div><div>Highest: <b>{c.high!==null?c.high+"%":"—"}</b></div><div>WCPM: <b>{c.aw!==null?c.aw:"—"}</b></div><div>Fluency: <b>{c.af!==null?c.af+"%":"—"}</b></div></div>{miniBar("Class Average",c.av||0,100,C.p)}</div>)}</Card>
 
     <Card><strong style={{fontSize:"13px",display:"block",marginBottom:"8px"}}>👤 Student Performance</strong>{rows.length===0?<p style={{fontSize:"12px",color:C.mu}}>No accepted student results yet. Press Accept or enter Teacher Score in Reading Progress.</p>:rows.map(r=>{const sorted=r.items.slice().sort((a,b)=>timeOf(a)-timeOf(b)); const scores=sorted.map(x=>({task:x.taskTitle||x.title||x.taskId||"Task",score:score(x)})).filter(x=>x.score!==null); const av=avg(sorted.map(score)), aa=avg(sorted.map(accuracy)), aw=avg(sorted.map(wcpm)), af=avg(sorted.map(fluency)); const notes=sorted.map(x=>x.teacherNotes).filter(Boolean).slice(-2).join(" | "); return <div key={r.sid||r.name} style={{border:"1px solid "+C.br,borderRadius:"14px",padding:"11px",marginBottom:"10px",background:"#fff",boxShadow:"0 4px 12px rgba(15,23,42,.06)"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{r.name}</strong><div style={{fontSize:"10px",color:C.mu}}>ID: {r.sid||"—"} · Class: {r.cls||"—"}</div></div><div style={{fontWeight:900,color:gc(av||0),fontSize:"18px"}}>{av!==null?av+"%":"—"}</div></div><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"9px",fontSize:"11px"}}><div>Attempts: <b>{r.items.length}</b></div><div>Level: <b>{perfLevel(av)}</b></div><div>Accuracy: <b>{aa!==null?aa+"%":"—"}</b></div><div>WCPM: <b>{aw!==null?aw:"—"}</b></div><div>Fluency: <b>{af!==null?af+"%":"—"}</b></div><div>Improvement: <b>{improveText(sorted)}</b></div></div><div style={{marginTop:"8px",fontSize:"11px",color:C.tx}}><b>Final Scores:</b>{scores.map((s,i)=><div key={i} style={{color:C.mu}}>{s.task}: <b>{s.score}%</b></div>)}</div>{notes&&<div style={{marginTop:"7px",fontSize:"10px",color:C.mu}}>Notes: {notes}</div>}</div>})}</Card>
-    <div style={{margin:"12px 0",display:"flex",justifyContent:"center"}}><Btn color={C.p} onClick={pageTop}>Page Up</Btn></div>
+    <div ref={bottomRef}></div>
+    <div style={{margin:"12px 0",display:"flex",justifyContent:"center",gap:"8px"}}><Btn color={C.p} onClick={pageTop}>Page Up</Btn><Btn color={C.s} onClick={refreshReport}>Refresh</Btn></div>
   </div>;
 }
 
