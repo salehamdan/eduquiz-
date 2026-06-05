@@ -4957,7 +4957,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-dynamic-linked-filters</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-safe-actions-3135-3136</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5018,14 +5018,18 @@ document.addEventListener("click", function(e){
         const stu=document.getElementById("rp-v11-student-select")?.value||"all";
         const q=document.getElementById("rp-v11-student-search")?.value||"";
         const task=document.getElementById("rp-v11-task")?.value||"all";
-        alert("فحص الربط:\nالفصل: "+cls+" / "+classDisplay(cls)+"\nالطالب: "+stu+"\nبحث: "+q+"\nالمهمة: "+task+"\nكل التسجيلات: "+arr.length+"\nالمطابقة الآن: "+shown.length);
+        const selStu=stu?preStudentByAny(stu):null;
+        const byStudent=stu?arr.filter(r=>recordMatchesFilters(r,true)).length:0;
+        alert("فحص الربط:\nالفصل: "+cls+" / "+classDisplay(cls)+"\nالطالب: "+(selStu?(selStu.name+" / "+selStu.sid):stu)+"\nبحث: "+q+"\nالمهمة: "+task+"\nكل التسجيلات: "+arr.length+"\nالمطابقة مع الفلاتر بدون التبويب: "+byStudent+"\nالمطابقة الآن: "+shown.length+"\nتحتاج تحليل: "+shown.filter(needsAnalysisRecord).length+"\nجاهزة للقبول: "+shown.filter(canAcceptRecord).length);
         return;
       }
       if(id==="rp-v11-analyze-class"){
-        const arr=await currentVisibleRecords();
-        const ids=arr.filter(needsAnalysisRecord).map(r=>r.id);
-        if(!ids.length)return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.");
-        if(!confirm("تحليل "+ids.length+" تسجيل ظاهر فقط؟")) return;
+        // يحلل التسجيلات المنتظرة المطابقة للفلاتر حتى لو كان التبويب الحالي "الكل".
+        const arr=await currentVisibleRecords({ignoreTab:true, forceWaiting:true});
+        const withAudio=arr.filter(hasAudioRecord);
+        const ids=withAudio.filter(needsAnalysisRecord).map(r=>r.id);
+        if(!ids.length)return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nجاهز للقبول مسبقًا: "+withAudio.filter(canAcceptRecord).length);
+        if(!confirm("تحليل "+ids.length+" تسجيل منتظر مطابق للفلاتر؟")) return;
         for(const x of ids)await analyzeOne(x,true);
         await renderCards();
         return;
@@ -5057,7 +5061,13 @@ document.addEventListener("click", function(e){
     });
     panel.addEventListener("input",async e=>{const s=e.target.getAttribute("data-score"), n=e.target.getAttribute("data-notes"); if(s)await updateRecord(s,{teacherScore:e.target.value}); if(n)await updateRecord(n,{teacherNotes:e.target.value});});
     panel.addEventListener("input",async e=>{if(e.target.id==="rp-v11-student-search")await renderCards();});
-    panel.addEventListener("change",async e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student-select"||e.target.id==="rp-v11-task")await renderCards();});
+    panel.addEventListener("change",async e=>{
+      if(e.target.id==="rp-v11-class"){
+        const stuSel=document.getElementById("rp-v11-student-select"); if(stuSel) stuSel.value="";
+        const stuSearch=document.getElementById("rp-v11-student-search"); if(stuSearch) stuSearch.value="";
+      }
+      if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student-select"||e.target.id==="rp-v11-task")await renderCards();
+    });
     renderCards();
   }
 
@@ -5075,21 +5085,48 @@ document.addEventListener("click", function(e){
     const x=String(v||"").trim();
     return /^[a-z0-9]{12,}$/i.test(x) && !/[\u0600-\u06ff]/.test(x);
   }
+  function parseArabicClassText(v){
+    const n=arabicNorm(String(v||"").replace(/[()]/g," "));
+    let grade="", sec="";
+    if(/ثاني/.test(n)) grade="2";
+    if(/ثالث/.test(n)) grade="3";
+    if(/اول|الأول|الاول/.test(n)) sec="1";
+    if(/ثاني/.test(n) && grade==="2") sec=sec||"2";
+    else if(/ثاني/.test(n)) sec="2";
+    if(/ثالث/.test(n) && grade==="3") sec=sec||"3";
+    else if(/ثالث/.test(n)) sec="3";
+    if(/رابع/.test(n)) sec="4";
+    if(grade && sec) return {grade,sec};
+    return null;
+  }
+  function classParts(v){
+    const raw=String(v||"").trim();
+    const compact=raw.replace(/\s+/g,"");
+    let m=compact.match(/class[_-]?(\d+)[_-](\d+)/i) || compact.match(/^(\d+)[\/-](\d+)$/);
+    if(m) return {grade:m[1],sec:m[2]};
+    return parseArabicClassText(raw);
+  }
+  function canonicalClassId(v){
+    const p=classParts(v);
+    return p ? ("class_"+p.grade+"_"+p.sec) : "";
+  }
   function gradeArabic(g){
-    const x=String(g||"").trim().replace(/\s+/g,"");
-    const m=x.match(/^(\d+)[\/-](\d+)$/);
-    if(!m) return String(g||"").trim();
+    const p=classParts(g);
+    if(!p) return String(g||"").trim();
     const gradeMap={"1":"أول","2":"ثاني","3":"ثالث"};
     const secMap={"1":"أول","2":"ثاني","3":"ثالث","4":"رابع","5":"خامس","6":"سادس"};
-    return (gradeMap[m[1]]||("صف "+m[1]))+" "+(secMap[m[2]]||m[2]);
+    return (gradeMap[p.grade]||("صف "+p.grade))+" "+(secMap[p.sec]||p.sec);
   }
   function classLabel(c){
     if(!c) return "";
     const name=String(c.name||"").trim();
     const grade=String(c.grade||"").trim();
+    const id=String(c.id||c.classId||"").trim();
+    const can=canonicalClassId(grade)||canonicalClassId(name)||canonicalClassId(id);
+    if(can) return gradeArabic(can);
     if(name && !looksLikeRandomId(name)) return name;
     if(grade) return gradeArabic(grade);
-    return String(c.id||c.classId||name||"فصل").trim();
+    return id||name||"فصل";
   }
   let rpMetaCache=null, rpMetaAt=0;
   async function getRpMeta(force=false){
@@ -5097,22 +5134,32 @@ document.addEventListener("click", function(e){
     let data={users:[],classes:[],readingTasks:[]};
     try{ if(typeof loadAllData==="function") data=await loadAllData(); }catch(e){ console.warn("RP meta load failed", e); }
     const users=[...(Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[]), ...((data.users||[]).filter(Boolean))];
+    // تصحيح يدوي للطلاب الذين ظهرت أرقامهم في RP بدون ربط صحيح.
+    // يبقى الربط ديناميكيًا، وهذه القيم تعمل كأسماء بديلة فقط ولا تحذف أي بيانات.
+    users.push(
+      {id:"student_3135", role:"student", name:"حسن محمد العلي", studentId:"3135", classId:"class_3_1", grade:"3/1", rpAlias:true},
+      {id:"student_3136", role:"student", name:"أحمد علي الخميس", studentId:"3136", classId:"class_3_1", grade:"3/1", rpAlias:true},
+      {id:"student_3136_alt", role:"student", name:"احمد علي الخميس", studentId:"3136", classId:"class_3_1", grade:"3/1", rpAlias:true}
+    );
     const classes=[...(Array.isArray(PRELOADED_CLASSES)?PRELOADED_CLASSES:[]), ...((data.classes||[]).filter(Boolean))];
     const tasks=[...((data.readingTasks||[]).filter(Boolean))];
     const classMap=new Map();
     const classAliases=new Map();
     function addClass(c){
       if(!c) return;
-      const id=String(c.id||c.classId||c.grade||c.name||"").trim();
-      const label=classLabel(c);
-      if(!id && !label) return;
-      const key=id||label;
-      if(!classMap.has(key)) classMap.set(key,{id:key,label:label||key,raw:c});
-      [id,c.name,c.grade,label,gradeArabic(c.grade)].filter(Boolean).forEach(a=>classAliases.set(String(a), key));
+      const rawId=String(c.id||c.classId||"").trim();
+      const rawName=String(c.name||"").trim();
+      const rawGrade=String(c.grade||"").trim();
+      const canonical=canonicalClassId(rawGrade)||canonicalClassId(rawName)||canonicalClassId(rawId);
+      const label=canonical ? gradeArabic(canonical) : classLabel(c);
+      const key=canonical || rawId || rawName || rawGrade || label;
+      if(!key && !label) return;
+      if(!classMap.has(key) || looksLikeRandomId(classMap.get(key).label)) classMap.set(key,{id:key,label:label||key,raw:c});
+      [rawId,rawName,rawGrade,label,gradeArabic(rawGrade),canonical].filter(Boolean).forEach(a=>classAliases.set(String(a), key));
     }
     classes.forEach(addClass);
     // احتياط: إذا أضفت فصلًا جديدًا ولم يظهر بعد من السحابة، لا يضر وجوده هنا.
-    [{id:"class_2_4",name:"ثاني رابع",grade:"2/4"},{id:"class_3_4",name:"ثالث رابع",grade:"3/4"}].forEach(addClass);
+    [{id:"class_2_4",name:"ثاني رابع",grade:"2/4"},{id:"class_3_4",name:"ثالث رابع",grade:"3/4"},{id:"class_3_1",name:"ثالث أول",grade:"3/1"},{id:"class_3_2",name:"ثالث ثاني",grade:"3/2"},{id:"class_3_3",name:"ثالث ثالث",grade:"3/3"}].forEach(addClass);
     const userMap=new Map();
     const studentList=[];
     function addUser(u){
@@ -5123,10 +5170,22 @@ document.addEventListener("click", function(e){
       const clsRaw=String(u.classId||u.className||u.grade||"").trim();
       const cls=classAliases.get(clsRaw)||clsRaw;
       const item={uid:id||sid||name, sid, name, classId:cls, className:classDisplay(cls), raw:u};
-      [id,sid,name,arabicNorm(name),sid?"student_"+sid:""].filter(Boolean).forEach(k=>userMap.set(String(k), item));
-      studentList.push(item);
+      [id,sid,name,arabicNorm(name),arabicNorm(name).replace(/\s+/g,""),sid?"student_"+sid:"",sid?"student-"+sid:"",sid?name+" "+sid:""].filter(Boolean).forEach(k=>userMap.set(String(k), item));
+      // إذا وُجد الطالب سابقًا برقم مختلف في القائمة المحملة، نحتفظ بآخر نسخة تصحيحية للرقم.
+      if(!studentList.some(x=>x.sid===sid && sid && x.rpAlias)){ studentList.push(item); }
     }
     users.forEach(addUser);
+    function forceStudentAlias(sid, name, cls){
+      let item=studentList.find(s=>String(s.sid)===String(sid)) || studentList.find(s=>arabicNorm(s.name)===arabicNorm(name));
+      if(!item){ item={uid:"student_"+sid, sid:String(sid), name, classId:cls||"", className:classDisplay(cls)||"", raw:{}}; studentList.push(item); }
+      item.sid=String(sid);
+      if(name) item.name=name;
+      if(cls && !item.classId){ item.classId=cls; item.className=classDisplay(cls); }
+      [sid,"student_"+sid,name,arabicNorm(name),item.uid].filter(Boolean).forEach(k=>userMap.set(String(k), item));
+    }
+    forceStudentAlias("3135","حسن محمد العلي","");
+    forceStudentAlias("3136","أحمد علي الخميس","");
+    forceStudentAlias("3136","احمد علي الخميس","");
     const taskMap=new Map();
     function addTask(t){
       if(!t) return;
@@ -5158,11 +5217,13 @@ document.addEventListener("click", function(e){
   function preStudentByAny(v){
     const raw=String(v||"").trim();
     if(!raw) return null;
+    const n=arabicNorm(raw);
+    const digits=extractStudentNumber(raw);
     const meta=rpMetaCache;
     if(meta){
-      return meta.userMap.get(raw) || meta.userMap.get(arabicNorm(raw)) || null;
+      return meta.userMap.get(raw) || meta.userMap.get(n) || meta.userMap.get(n.replace(/\s+/g,"")) || (digits && (meta.userMap.get(digits) || meta.userMap.get("student_"+digits) || meta.userMap.get("student-"+digits))) || null;
     }
-    return (Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[]).find(u=>String(u.id)===raw || String(u.studentId)===raw || String(u.name)===raw) || null;
+    return (Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[]).find(u=>String(u.id)===raw || String(u.studentId)===raw || String(u.name)===raw || (digits && String(u.studentId)===digits)) || null;
   }
   function extractStudentNumber(v){
     const raw=String(v||"").trim();
@@ -5173,12 +5234,19 @@ document.addEventListener("click", function(e){
     const vals=[r&&r.studentId,r&&r.studentUserId,r&&r.studentUid,r&&r.userId,r&&r.uid,r&&r.studentNumber,r&&r.studentNo,r&&r.studentName,r&&r.name].filter(Boolean).map(String);
     let u=null;
     for(const v of vals){ u=preStudentByAny(v) || preStudentByAny(extractStudentNumber(v)); if(u) break; }
-    if(!u && r && r.studentName){
-      const q=arabicNorm(r.studentName);
+    const allText=arabicNorm(vals.join(" "));
+    if(!u && /3135|حسن محمد العلي|حسن.*محمد.*العلي/.test(allText)) u=preStudentByAny("3135");
+    if(!u && /3136|احمد علي الخميس|احمد.*علي.*الخميس/.test(allText)) u=preStudentByAny("3136");
+    if(!u && r && (r.studentName||r.name)){
+      const q=arabicNorm(r.studentName||r.name);
+      const qCompact=q.replace(/\s+/g,"");
       const meta=rpMetaCache;
-      if(meta) u=meta.studentList.find(s=>arabicNorm(s.name)===q || arabicNorm(s.name).includes(q) || q.includes(arabicNorm(s.name))) || null;
+      if(meta) u=meta.studentList.find(s=>{
+        const sn=arabicNorm(s.name), sc=sn.replace(/\s+/g,"");
+        return sn===q || sn.includes(q) || q.includes(sn) || sc.includes(qCompact) || qCompact.includes(sc);
+      }) || null;
     }
-    const sid=(u&&u.sid) || extractStudentNumber(r&&r.studentId) || String((r&&r.studentNumber)||(r&&r.studentNo)||"").trim();
+    const sid=(u&&u.sid) || extractStudentNumber(r&&r.studentId) || extractStudentNumber(r&&r.studentUserId) || extractStudentNumber(r&&r.userId) || String((r&&r.studentNumber)||(r&&r.studentNo)||"").trim();
     const name=(u&&u.name) || (r&&r.studentName) || (r&&r.name) || (sid?"Student "+sid:"Student");
     const uid=(u&&u.uid) || String((r&&r.studentId)||(r&&r.studentUserId)||(r&&r.userId)||sid||"").trim();
     const rawClass=(u&&u.classId) || (r&&r.classId) || (r&&r.className) || (r&&r.grade) || "";
@@ -5209,11 +5277,11 @@ document.addEventListener("click", function(e){
 
     const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
     let students=meta.studentList.slice();
-    if(clsVal) students=students.filter(s=>String(s.classId)===clsVal || String(meta.classAliases.get(String(s.classId))||s.classId)===clsVal);
+    if(clsVal) students=students.filter(s=>classMatchesSelection({classId:s.classId,className:s.className}, clsVal));
     // أضف أي طالب ظهر في التسجيلات حتى لو لم يكن في القائمة الرسمية
     (all||[]).forEach(r=>{
       const info=recStudentInfo(r);
-      if(clsVal && String(info.classId)!==clsVal) return;
+      if(clsVal && !classMatchesSelection(info, clsVal)) return;
       if(!students.some(s=>s.uid===info.uid || (info.sid&&s.sid===info.sid))){ students.push(info); }
     });
     const seen=new Set();
@@ -5229,9 +5297,19 @@ document.addEventListener("click", function(e){
     setSelectOptions(document.getElementById("rp-v11-task"), taskOpts, "جميع المهام / الاختبارات");
   }
   function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl)); }
-  function isAnalyzedRecord(r){ return !!(r && (r.analysisStatus==="Completed" || r.analysisStatus==="analyzed" || r.status==="analyzed" || r.status==="approved" || finalScore(r)!=="" || r.aiScore!==undefined || r.finalScore!==undefined || r.analysis)); }
-  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && !["accepted","approved","rejected","retake_allowed","deleted"].includes(String(r.status||"")) && !isAnalyzedRecord(r)); }
-  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && !["accepted","approved","rejected","retake_allowed"].includes(String(r.status||"")) && isAnalyzedRecord(r)); }
+  function isAnalyzedRecord(r){
+    if(!r) return false;
+    const st=String(r.analysisStatus||"").toLowerCase();
+    return !!(st==="completed" || st==="analyzed" || r.status==="analyzed" || r.status==="approved" || r.transcript || r.analysis || r.analyzedAt || r.aiScore!==undefined || r.finalScore!==undefined);
+  }
+  function needsAnalysisRecord(r){
+    const st=String(r&&r.status||"").toLowerCase();
+    return !!(r && !isDeleted(r) && hasAudioRecord(r) && !["accepted","approved","rejected","retake_allowed","deleted"].includes(st) && !isAnalyzedRecord(r));
+  }
+  function canAcceptRecord(r){
+    const st=String(r&&r.status||"").toLowerCase();
+    return !!(r && !isDeleted(r) && hasAudioRecord(r) && !["accepted","approved","rejected","retake_allowed"].includes(st) && isAnalyzedRecord(r));
+  }
   function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && !["accepted","approved","rejected","retake_allowed","deleted"].includes(String(r.status||""))); }
   function isPreviousRp(r){ return !!(r && !isDeleted(r) && ["accepted","approved","rejected","retake_allowed"].includes(String(r.status||""))); }
   function taskLabel(r){
@@ -5245,23 +5323,32 @@ document.addEventListener("click", function(e){
     const info=recStudentInfo(r);
     return `${info.name}${info.sid?` · ${info.sid}`:""}${info.className?` · ${info.className}`:""}`;
   }
-  async function currentVisibleRecords(){
-    const arr=await syncCloudIntoLocal();
-    await getRpMeta(false);
+  function recordMatchesFilters(r, ignoreTab=false){
+    if(isDeleted(r)) return false;
     const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
     const stuSel=String(document.getElementById("rp-v11-student-select")?.value||"");
     const stuQ=searchText(document.getElementById("rp-v11-student-search")?.value||"");
     const taskVal=String(document.getElementById("rp-v11-task")?.value||"");
-    return arr.filter(r=>{
-      if(isDeleted(r)) return false;
-      const info=recStudentInfo(r);
-      const classOk=!clsVal || String(info.classId)===clsVal;
-      const selectedStudentOk=!stuSel || String(info.sid)===stuSel || String(info.uid)===stuSel || String(r.studentId||"")===stuSel || extractStudentNumber(r.studentId)===stuSel;
-      const searchStudentOk=!stuQ || includesText(info.name,stuQ) || includesText(info.sid,stuQ) || includesText(info.uid,stuQ) || includesText(studentLabel(r),stuQ);
-      const taskOk=!taskVal || taskIdValue(r)===taskVal || String(taskLabel(r))===taskVal;
-      const tabOk=(rpActiveTab==="all" || (rpActiveTab==="previous" ? isPreviousRp(r) : isWaitingForTeacher(r)));
-      return classOk && selectedStudentOk && searchStudentOk && taskOk && tabOk;
-    });
+    const info=recStudentInfo(r);
+    const selectedStudent=stuSel?preStudentByAny(stuSel):null;
+    const selName=selectedStudent?arabicNorm(selectedStudent.name):"";
+    const recName=arabicNorm(info.name||r.studentName||r.name||"");
+    const recText=arabicNorm([info.name,info.sid,info.uid,r.studentId,r.studentUserId,r.studentUid,r.userId,r.uid,r.studentName,r.name].filter(Boolean).join(" "));
+    const classOk=!clsVal || String(info.classId)===clsVal || String(classDisplay(info.classId))===String(classDisplay(clsVal));
+    const selectedStudentOk=!stuSel ||
+      String(info.sid)===stuSel || String(info.uid)===stuSel || String(r.studentId||"")===stuSel || extractStudentNumber(r.studentId)===stuSel ||
+      (selectedStudent && (String(info.sid)===String(selectedStudent.sid) || String(info.uid)===String(selectedStudent.uid) || recName===selName || recName.includes(selName) || selName.includes(recName))) ||
+      (stuSel==="3135" && /3135|حسن.*محمد.*العلي/.test(recText)) ||
+      (stuSel==="3136" && /3136|احمد.*علي.*الخميس/.test(recText));
+    const searchStudentOk=!stuQ || includesText(info.name,stuQ) || includesText(info.sid,stuQ) || includesText(info.uid,stuQ) || includesText(studentLabel(r),stuQ) || includesText(recText,stuQ);
+    const taskOk=!taskVal || taskIdValue(r)===taskVal || String(taskLabel(r))===taskVal;
+    const tabOk=ignoreTab || (rpActiveTab==="all" || (rpActiveTab==="previous" ? isPreviousRp(r) : isWaitingForTeacher(r)));
+    return classOk && selectedStudentOk && searchStudentOk && taskOk && tabOk;
+  }
+  async function currentVisibleRecords(opts={}){
+    const arr=await syncCloudIntoLocal();
+    await getRpMeta(false);
+    return arr.filter(r=>recordMatchesFilters(r, !!opts.ignoreTab)).filter(r=> opts.forceWaiting ? isWaitingForTeacher(r) : true);
   }
 
 
