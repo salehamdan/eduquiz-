@@ -3495,9 +3495,6 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
   const myClasses=data.classes.filter(c=>!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded);
-  // Inject into window so the RP drawer can resolve IDs to real names
-  window.__rpClasses__ = myClasses;
-  window.__rpTasks__ = (data.readingTasks||[]).filter(t=>t.teacherId===user.id);
   const myStudents=data.users.filter(u=>u.role==="student"&&(myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   const myResps=data.responses.filter(r=>myQuizzes.some(q=>q.id===r.quizId));
   const flags=myStudents.filter(s=>{const rs=data.responses.filter(r=>r.studentId===s.id);return calcSkills(rs,data.quizzes).filter(sk=>sk.score<50&&sk.total>=2).length>=2;});
@@ -4534,59 +4531,14 @@ document.addEventListener("click", function(e){
     });
   }
 
-  function resolveClassName(id){
-    if(!id) return "Unassigned";
-    // Try window.__rpClasses__ injected from React
-    var classes = window.__rpClasses__ || [];
-    var cls = classes.find(function(c){return c.id===id;});
-    if(cls) return cls.name;
-    // Fallback: convert class_3_2 → ثالث ثاني style from PRELOADED_USERS
-    var preloaded = (typeof PRELOADED_USERS!=="undefined"?PRELOADED_USERS:[]);
-    var pu = preloaded.find(function(u){return u.classId===id;});
-    if(pu && pu.className) return pu.className;
-    // Last resort: prettify the ID
-    return id.replace(/^class_/,"").replace(/_/," ");
-  }
-  function resolveStudentName(idOrName){
-    if(!idOrName) return "Student";
-    // If it looks like an ID (student_XXXX), look up in PRELOADED_USERS
-    var preloaded = (typeof PRELOADED_USERS!=="undefined"?PRELOADED_USERS:[]);
-    var pu = preloaded.find(function(u){return u.id===idOrName||String(u.studentId)===String(idOrName);});
-    if(pu) return pu.name;
-    return idOrName;
-  }
-  function resolveStudentNumber(idOrNum){
-    if(!idOrNum) return "";
-    var preloaded = (typeof PRELOADED_USERS!=="undefined"?PRELOADED_USERS:[]);
-    var pu = preloaded.find(function(u){return u.id===idOrNum;});
-    if(pu) return String(pu.studentId);
-    return String(idOrNum).replace(/^student_/,"");
-  }
-  function resolveTaskTitle(id){
-    if(!id) return "Reading Task";
-    var tasks = window.__rpTasks__ || [];
-    var t = tasks.find(function(t){return t.id===id;});
-    if(t) return t.title;
-    return id.replace(/^reading-progress-task-/,"Task ").replace(/-/g," ");
-  }
   function normalizeRecord(r){
     if(!r) return r;
-    var rawClass = r.className||r.classId||"Unassigned";
-    var rawStudent = r.studentName||r.name||r.studentId||"Student";
-    var rawStudentId = r.studentId||r.id||"unknown";
-    var rawTask = r.taskTitle||r.title||r.taskId||"";
-    // Resolve IDs to real names
-    var resolvedClass = (rawClass.startsWith("class_")||rawClass.length<8) ? resolveClassName(rawClass) : rawClass;
-    var resolvedStudent = (rawStudent.startsWith("student_")||(!rawStudent.includes(" ")&&rawStudent.length>10)) ? resolveStudentName(rawStudent) : resolveStudentName(rawStudent)||rawStudent;
-    var resolvedStudentId = resolveStudentNumber(rawStudentId);
-    var resolvedTask = (rawTask.startsWith("reading-progress-task-")||(!rawTask.includes(" ")&&rawTask.length>8)) ? resolveTaskTitle(rawTask) : rawTask;
     return {
       ...r,
       taskId:r.taskId||taskId(),
-      className:resolvedClass,
-      studentName:resolvedStudent,
-      studentId:resolvedStudentId,
-      taskTitle:resolvedTask,
+      className:r.className||r.classId||"Unassigned",
+      studentName:r.studentName||r.name||"Student",
+      studentId:String(r.studentId||r.id||"unknown").trim(),
       source:r.source||"rp_shared_submission"
     };
   }
