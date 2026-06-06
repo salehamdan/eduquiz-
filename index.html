@@ -4957,7 +4957,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-task-list-clean</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-task-real-link</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5082,16 +5082,23 @@ document.addEventListener("click", function(e){
     return {u:u,sid:String(sid||""),name:name,classId:String(classId||""),className:className};
   }
   const RP_TASK_TITLE_CACHE = new Map();
+  const RP_TASK_META_CACHE = [];
+  function rpTaskTextOf(t){ return String((t&&(t.text||t.referenceText||t.taskText||t.passage||t.content||t.readingText))||"").trim(); }
   function rpTaskIdOf(t){ return String((t&&(t.id||t.taskId||t.taskKey||t.assignmentId))||"").trim(); }
   function rpTaskTitleOf(t){ return String((t&&(t.title||t.taskTitle||t.name||t.taskName||t.assignmentTitle||t.assignment))||"").trim(); }
   async function rpLoadReadingTasks(){
     const out=[];
+    RP_TASK_META_CACHE.length=0;
     function add(t){
       const id=rpTaskIdOf(t);
       const title=rpTaskTitleOf(t) || id;
+      const text=rpTaskTextOf(t);
       if(!id || !title) return;
-      if(!out.some(x=>x.id===id)) out.push({id,title});
+      if(!out.some(x=>x.id===id)) out.push({id,title,text});
       RP_TASK_TITLE_CACHE.set(id,title);
+      const textNorm=rpLongNorm(text);
+      const titleNorm=rpNorm(title);
+      if(!RP_TASK_META_CACHE.some(x=>x.id===id)) RP_TASK_META_CACHE.push({id,title,text,textNorm,titleNorm});
     }
     try{
       if(typeof fsAll==="function"){
@@ -5106,6 +5113,39 @@ document.addEventListener("click", function(e){
     return out;
   }
   function rpTaskLabelFromCache(id){ id=String(id||"").trim(); return (id&&RP_TASK_TITLE_CACHE.get(id)) || ""; }
+  function rpLongNorm(v){ return String(v||"").toLowerCase().replace(/[ـ]/g,"").replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[^؀-ۿa-z0-9]+/g," ").replace(/\s+/g," ").trim(); }
+  function rpIsGenericTaskTitle(v){ v=rpNorm(v); return !v || v==="reading progress task" || v==="reading task" || v==="task 1" || v==="reading progress task 1" || v==="reading-progress-task-1"; }
+  function rpRecordTextForTask(r){ return String((r&&(r.referenceText||r.taskText||r.text||r.passage||r.content||r.readingText))||"").trim(); }
+  function rpInferRealTask(r){
+    if(!r) return null;
+    const explicit=String(r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||"").trim();
+    if(explicit && !rpIsGenericTaskTitle(explicit)){
+      const byTitle=RP_TASK_META_CACHE.find(t=>t.titleNorm===rpNorm(explicit));
+      return byTitle || {id:String(r.taskId||""),title:explicit,textNorm:"",titleNorm:rpNorm(explicit)};
+    }
+    const id=String(r.taskId||r.taskKey||r.assignmentId||"").trim();
+    const byId=id ? RP_TASK_META_CACHE.find(t=>t.id===id) : null;
+    if(byId && !rpIsGenericTaskTitle(byId.title)) return byId;
+    const recNorm=rpLongNorm(rpRecordTextForTask(r));
+    if(recNorm){
+      let best=null, bestScore=0;
+      for(const t of RP_TASK_META_CACHE){
+        if(!t.textNorm || t.textNorm.length<10) continue;
+        let score=0;
+        if(recNorm===t.textNorm) score=1000;
+        else if(recNorm.includes(t.textNorm) || t.textNorm.includes(recNorm)) score=Math.min(recNorm.length,t.textNorm.length);
+        else {
+          const a=new Set(recNorm.split(" ").filter(w=>w.length>2));
+          const b=t.textNorm.split(" ").filter(w=>w.length>2);
+          let hit=0; b.forEach(w=>{ if(a.has(w)) hit++; });
+          score=hit;
+        }
+        if(score>bestScore){best=t;bestScore=score;}
+      }
+      if(best && bestScore>=3) return best;
+    }
+    return byId || null;
+  }
   function rpSetOptions(sel, opts, firstLabel){
     if(!sel) return;
     const old=sel.value;
@@ -5156,12 +5196,18 @@ document.addEventListener("click", function(e){
   function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && isAnalyzedRecord(r)); }
   function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && r.status!=="deleted"); }
   function isPreviousRp(r){ return !!(r && !isDeleted(r) && (r.status==="accepted" || r.status==="rejected" || r.status==="retake_allowed")); }
-  function taskKey(r){ return String((r&&(r.taskId||r.taskKey||r.assignmentId))||"").trim() || rpNorm(taskLabelRaw(r)); }
+  function taskKey(r){
+    const inferred=rpInferRealTask(r);
+    if(inferred && inferred.id) return inferred.id;
+    return String((r&&(r.taskId||r.taskKey||r.assignmentId))||"").trim() || rpNorm(taskLabelRaw(r));
+  }
   function taskLabelRaw(r){ return (r&&(r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||r.taskId))||"Reading Task"; }
   function taskLabel(r){
+    const inferred=rpInferRealTask(r);
+    if(inferred && inferred.title) return inferred.title;
     const id=String((r&&r.taskId)||"").trim();
     const cached=rpTaskLabelFromCache(id);
-    if(cached) return cached;
+    if(cached && !rpIsGenericTaskTitle(cached)) return cached;
     const raw=String(taskLabelRaw(r)||"").trim();
     if(id==="reading-progress-task-1") return "Reading Progress Task";
     if(raw==="reading-progress-task-1") return "Reading Progress Task";
