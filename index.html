@@ -4957,7 +4957,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-filter-addon</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-filter-addon-fix1</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5005,8 +5005,13 @@ document.addEventListener("click", function(e){
       }
       if(id==="rp-v11-analyze-class"){
         const arr=await currentVisibleRecords();
-        const ids=arr.filter(needsAnalysisRecord).map(r=>r.id);
-        if(!ids.length)return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.");
+        const withAudio=arr.filter(hasAudioRecord);
+        const ids=withAudio.filter(needsAnalysisRecord).map(r=>r.id);
+        if(!ids.length){
+          const done=withAudio.filter(isAnalyzedRecord).length;
+          const accepted=arr.filter(r=>r.status==="accepted").length;
+          return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nمحلل فعلًا: "+done+"\nمقبول سابقًا: "+accepted);
+        }
         if(!confirm("تحليل "+ids.length+" تسجيل ظاهر فقط؟")) return;
         for(const x of ids)await analyzeOne(x,true);
         await renderCards();
@@ -5094,17 +5099,44 @@ document.addEventListener("click", function(e){
     roster.forEach(u=>{const key=String(u.studentId||u.id||u.name); if(!key||seen.has(key)) return; seen.add(key); stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")});});
     (all||[]).forEach(r=>{const info=rpRecInfo(r); if(clsVal && info.classId!==clsVal) return; const key=info.sid||info.name; if(key&&!seen.has(String(key))){seen.add(String(key));stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")});}});
     rpSetOptions(stuSel,stuOpts,"جميع الطلاب");
-    const tSeen=new Set(), taskOpts=[];
-    (all||[]).forEach(r=>{const val=String(r.taskId||taskLabel(r)||"").trim(); const lab=String(taskLabel(r)||val).trim(); if(val&&!tSeen.has(val)){tSeen.add(val);taskOpts.push({value:val,label:lab});}});
+    const taskMap=new Map();
+    (all||[]).forEach(r=>{
+      const val=taskKey(r);
+      if(!val) return;
+      const lab=String(taskLabel(r)||val).trim();
+      const old=taskMap.get(val);
+      const better=!old || (old===val) || old.includes("reading-progress-task") || (old==="Task 1" && lab!=="Task 1");
+      if(better) taskMap.set(val,lab);
+    });
+    const taskOpts=Array.from(taskMap.entries()).map(([value,label])=>({value,label}));
     rpSetOptions(taskSel,taskOpts,"جميع المهام / الاختبارات");
   }
   function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl)); }
-  function isAnalyzedRecord(r){ return !!(r && (r.analysisStatus==="Completed" || finalScore(r)!=="" || r.aiScore!==undefined || r.finalScore!==undefined)); }
-  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && !isAnalyzedRecord(r)); }
+  function rpAnalysisState(r){ return String((r&&r.analysisStatus)||"").trim().toLowerCase(); }
+  function isPendingAnalysisRecord(r){ const st=rpAnalysisState(r); return !st || st==="pending" || st.includes("analyzing") || st.includes("failed"); }
+  function isAnalyzedRecord(r){
+    if(!r) return false;
+    const st=rpAnalysisState(r);
+    if(st==="completed") return true;
+    if(st==="pending" || st.includes("analyzing") || st.includes("failed")) return false;
+    if(r.transcript || r.analyzedAt) return true;
+    const manual=Number(r.teacherScore);
+    if(Number.isFinite(manual)&&manual>0) return true;
+    return false;
+  }
+  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && !isAnalyzedRecord(r)); }
   function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && isAnalyzedRecord(r)); }
   function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && r.status!=="deleted"); }
   function isPreviousRp(r){ return !!(r && !isDeleted(r) && (r.status==="accepted" || r.status==="rejected" || r.status==="retake_allowed")); }
-  function taskLabel(r){ return r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||r.taskId||"Reading Task"; }
+  function taskKey(r){ return String((r&&(r.taskId||r.taskKey||r.assignmentId))||"").trim() || rpNorm(taskLabelRaw(r)); }
+  function taskLabelRaw(r){ return (r&&(r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||r.taskId))||"Reading Task"; }
+  function taskLabel(r){
+    const id=String((r&&r.taskId)||"").trim();
+    const raw=String(taskLabelRaw(r)||"").trim();
+    if(id==="reading-progress-task-1") return "Reading Progress Task";
+    if(raw==="reading-progress-task-1") return "Reading Progress Task";
+    return raw || "Reading Task";
+  }
   function studentLabel(r){
     return `${r.studentName||"Student"}${r.studentId?` · ${r.studentId}`:""}${r.className?` · ${r.className}`:""}`;
   }
@@ -5117,8 +5149,8 @@ document.addEventListener("click", function(e){
     return arr.filter(r=>{
       if(isDeleted(r)) return false;
       const info=rpRecInfo(r);
-      const recTaskVal=String(r.taskId||taskLabel(r)||"");
-      const taskText=rpNorm(taskLabel(r)+" "+(r.taskId||""));
+      const recTaskVal=taskKey(r);
+      const taskText=rpNorm(taskLabel(r)+" "+(r.taskId||"")+" "+taskLabelRaw(r));
       const stuText=rpNorm([info.name,info.sid,info.u&&info.u.id,r.studentName,r.studentId,r.studentUserId,r.userId,studentLabel(r),info.className].join(" "));
       const okClass=!clsVal || info.classId===clsVal || String(r.classId||"")===clsVal;
       const okStu=!stuVal || String(info.sid)===stuVal || String(info.u&&info.u.id)===stuVal || rpNorm(info.name)===rpNorm(stuVal) || stuText.includes(rpNorm(stuVal));
@@ -5138,7 +5170,7 @@ document.addEventListener("click", function(e){
     if(badge){badge.textContent=String(waitingAll);badge.style.display=waitingAll?"block":"none";}
     panel.querySelectorAll('[data-rp-tab]').forEach(b=>{const on=b.getAttribute('data-rp-tab')===rpActiveTab;b.style.background=on?'#2563eb':'#e2e8f0';b.style.color=on?'#fff':'#334155';});
     const shown=await currentVisibleRecords();
-    const completed=shown.filter(r=>finalScore(r)!=="");
+    const completed=shown.filter(isAnalyzedRecord);
     const counted=shown.filter(isCountableAttempt);
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)),0)/counted.length):"-";
     const label=rpActiveTab==="waiting"?"المنتظر للتقييم":rpActiveTab==="previous"?"التسجيلات السابقة":"كل التسجيلات";
