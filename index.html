@@ -4957,7 +4957,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-class-student-analysis-fix</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-safe-actions-3135-3136</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5028,7 +5028,7 @@ document.addEventListener("click", function(e){
         const arr=await currentVisibleRecords({ignoreTab:true, forceWaiting:true});
         const withAudio=arr.filter(hasAudioRecord);
         const ids=withAudio.filter(needsAnalysisRecord).map(r=>r.id);
-        if(!ids.length)return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nمحللة فعليًا: "+withAudio.filter(isAnalyzedRecord).length+"\nملاحظة: التسجيل الذي يظهر Analysis: Pending يجب أن يدخل ضمن التحليل بعد هذا الإصلاح.");
+        if(!ids.length)return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nجاهز للقبول مسبقًا: "+withAudio.filter(canAcceptRecord).length);
         if(!confirm("تحليل "+ids.length+" تسجيل منتظر مطابق للفلاتر؟")) return;
         for(const x of ids)await analyzeOne(x,true);
         await renderCards();
@@ -5152,13 +5152,8 @@ document.addEventListener("click", function(e){
       const rawGrade=String(c.grade||"").trim();
       const canonical=canonicalClassId(rawGrade)||canonicalClassId(rawName)||canonicalClassId(rawId);
       const label=canonical ? gradeArabic(canonical) : classLabel(c);
-      const normLabel=arabicNorm(label);
-      // لا تجعل معرفات التسجيلات أو القيم الناقصة تظهر كفصول مثل Unassigned أو رموز عشوائية.
-      if(!label || /^unassigned$/i.test(String(label).trim()) || normLabel==="غير معين") return;
-      if(!canonical && looksLikeRandomId(label)) return;
-      if(!canonical && looksLikeRandomId(rawId) && !rawName && !rawGrade) return;
       const key=canonical || rawId || rawName || rawGrade || label;
-      if(!key) return;
+      if(!key && !label) return;
       if(!classMap.has(key) || looksLikeRandomId(classMap.get(key).label)) classMap.set(key,{id:key,label:label||key,raw:c});
       [rawId,rawName,rawGrade,label,gradeArabic(rawGrade),canonical].filter(Boolean).forEach(a=>classAliases.set(String(a), key));
     }
@@ -5173,9 +5168,7 @@ document.addEventListener("click", function(e){
       const sid=String(u.studentId||u.studentNo||u.number||"").trim();
       const name=String(u.name||u.fullName||u.studentName||"Student").trim();
       const clsRaw=String(u.classId||u.className||u.grade||"").trim();
-      const clsCan=canonicalClassId(clsRaw);
-      if(clsCan && !classMap.has(clsCan)) addClass({id:clsCan,grade:clsCan,name:gradeArabic(clsCan)});
-      const cls=classAliases.get(clsRaw)||clsCan||clsRaw;
+      const cls=classAliases.get(clsRaw)||clsRaw;
       const item={uid:id||sid||name, sid, name, classId:cls, className:classDisplay(cls), raw:u};
       [id,sid,name,arabicNorm(name),arabicNorm(name).replace(/\s+/g,""),sid?"student_"+sid:"",sid?"student-"+sid:"",sid?name+" "+sid:""].filter(Boolean).forEach(k=>userMap.set(String(k), item));
       // إذا وُجد الطالب سابقًا برقم مختلف في القائمة المحملة، نحتفظ بآخر نسخة تصحيحية للرقم.
@@ -5220,18 +5213,6 @@ document.addEventListener("click", function(e){
     const c=(Array.isArray(PRELOADED_CLASSES)?PRELOADED_CLASSES:[]).find(x=>String(x.id)===raw || String(x.name)===raw || String(x.grade)===raw);
     if(c) return classLabel(c);
     return gradeArabic(raw)||raw;
-  }
-  function classMatchesSelection(info, selected){
-    if(!selected) return true;
-    const sel=String(selected||"").trim();
-    const selCan=canonicalClassId(sel) || (rpMetaCache && rpMetaCache.classAliases.get(sel)) || sel;
-    const vals=[info&&info.classId, info&&info.className, info&&info.grade, info&&info.raw&&info.raw.classId, info&&info.raw&&info.raw.grade].filter(Boolean).map(String);
-    for(const v of vals){
-      const vCan=canonicalClassId(v) || (rpMetaCache && rpMetaCache.classAliases.get(v)) || v;
-      if(vCan===selCan) return true;
-      if(classDisplay(vCan) && classDisplay(vCan)===classDisplay(selCan)) return true;
-    }
-    return false;
   }
   function preStudentByAny(v){
     const raw=String(v||"").trim();
@@ -5284,7 +5265,10 @@ document.addEventListener("click", function(e){
   async function populateRpFilterDropdowns(all){
     const meta=await getRpMeta(false);
     (all||[]).forEach(r=>{
-      // لا نأخذ الفصول من التسجيلات؛ الفصل يؤخذ من بيانات الطالب حتى لا تظهر Unassigned أو معرفات عشوائية.
+      const ci=(r&&r.classId)||(r&&r.className)||(r&&r.grade);
+      if(ci && !meta.classAliases.has(String(ci))){
+        const key=String(ci); meta.classMap.set(key,{id:key,label:classDisplay(ci),raw:{id:key,name:classDisplay(ci)}}); meta.classAliases.set(key,key);
+      }
       const tl=taskLabel(r); const tid=String((r&&r.taskId)||tl||"");
       if(tid && !meta.taskMap.has(tid)) meta.taskMap.set(tid,{id:tid,label:tl||tid});
     });
@@ -5316,13 +5300,7 @@ document.addEventListener("click", function(e){
   function isAnalyzedRecord(r){
     if(!r) return false;
     const st=String(r.analysisStatus||"").toLowerCase();
-    // Pending/Analyzing/Failed ليست محللة حتى لو ظهرت أرقام قديمة في البطاقة.
-    if(!st || st.includes("pending") || st.includes("analyzing") || st.includes("failed") || st.includes("waiting")) return false;
-    if(st==="completed" || st==="analyzed") return true;
-    if(r.status==="analyzed" || r.status==="approved") return true;
-    if(r.transcript || r.analysis || r.analyzedAt) return true;
-    // قبول قديم: لا نعد الأرقام وحدها تحليلًا إلا إذا معها حالة Completed.
-    return false;
+    return !!(st==="completed" || st==="analyzed" || r.status==="analyzed" || r.status==="approved" || r.transcript || r.analysis || r.analyzedAt || r.aiScore!==undefined || r.finalScore!==undefined);
   }
   function needsAnalysisRecord(r){
     const st=String(r&&r.status||"").toLowerCase();
@@ -5356,7 +5334,7 @@ document.addEventListener("click", function(e){
     const selName=selectedStudent?arabicNorm(selectedStudent.name):"";
     const recName=arabicNorm(info.name||r.studentName||r.name||"");
     const recText=arabicNorm([info.name,info.sid,info.uid,r.studentId,r.studentUserId,r.studentUid,r.userId,r.uid,r.studentName,r.name].filter(Boolean).join(" "));
-    const classOk=!clsVal || classMatchesSelection(info, clsVal);
+    const classOk=!clsVal || String(info.classId)===clsVal || String(classDisplay(info.classId))===String(classDisplay(clsVal));
     const selectedStudentOk=!stuSel ||
       String(info.sid)===stuSel || String(info.uid)===stuSel || String(r.studentId||"")===stuSel || extractStudentNumber(r.studentId)===stuSel ||
       (selectedStudent && (String(info.sid)===String(selectedStudent.sid) || String(info.uid)===String(selectedStudent.uid) || recName===selName || recName.includes(selName) || selName.includes(recName))) ||
