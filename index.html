@@ -4957,7 +4957,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-task-source-fix</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-task-list-clean</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5124,20 +5124,19 @@ document.addEventListener("click", function(e){
     roster.forEach(u=>{const key=String(u.studentId||u.id||u.name); if(!key||seen.has(key)) return; seen.add(key); stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")});});
     (all||[]).forEach(r=>{const info=rpRecInfo(r); if(clsVal && info.classId!==clsVal) return; const key=info.sid||info.name; if(key&&!seen.has(String(key))){seen.add(String(key));stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")});}});
     rpSetOptions(stuSel,stuOpts,"جميع الطلاب");
-    const taskMap=new Map();
-    (tasks||[]).forEach(t=>{
-      const id=String(t.id||"").trim(), label=String(t.title||id||"").trim();
-      if(id && label) taskMap.set(id,{value:id,label:label});
-    });
-    (all||[]).forEach(r=>{
-      const id=taskKey(r);
-      if(!id) return;
-      const label=rpTaskLabelFromCache(id) || String(taskLabel(r)||id||"Reading Task").trim();
-      if(id && label && !taskMap.has(id)) taskMap.set(id,{value:id,label:label});
-    });
-    const labelCounts={};
-    Array.from(taskMap.values()).forEach(o=>{ labelCounts[o.label]=(labelCounts[o.label]||0)+1; });
-    const taskOpts=Array.from(taskMap.values()).map(o=>({value:o.value,label:labelCounts[o.label]>1?o.label+" — "+o.value:o.label})).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    const taskLabelMap=new Map();
+    function addTaskOption(label){
+      label=String(label||"").trim();
+      if(!label) return;
+      // The teacher should see task names only. Never show Firebase ids or task ids in the menu.
+      if(label==="reading-progress-task-1") label="Reading Progress Task";
+      const key=rpNorm(label);
+      if(!key) return;
+      if(!taskLabelMap.has(key)) taskLabelMap.set(key,{value:"label::"+key,label:label});
+    }
+    (tasks||[]).forEach(t=>addTaskOption(t.title||t.name||t.taskTitle||t.taskName));
+    (all||[]).forEach(r=>addTaskOption(taskLabel(r)));
+    const taskOpts=Array.from(taskLabelMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
     rpSetOptions(taskSel,taskOpts,"جميع المهام / الاختبارات");
   }
   function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl)); }
@@ -5181,12 +5180,13 @@ document.addEventListener("click", function(e){
       if(isDeleted(r)) return false;
       const info=rpRecInfo(r);
       const recTaskVal=taskKey(r);
+      const labelNorm=rpNorm(taskLabel(r));
       const taskText=rpNorm(taskLabel(r)+" "+(r.taskId||"")+" "+taskLabelRaw(r));
       const stuText=rpNorm([info.name,info.sid,info.u&&info.u.id,r.studentName,r.studentId,r.studentUserId,r.userId,studentLabel(r),info.className].join(" "));
       const okClass=!clsVal || info.classId===clsVal || String(r.classId||"")===clsVal;
       const okStu=!stuVal || String(info.sid)===stuVal || String(info.u&&info.u.id)===stuVal || rpNorm(info.name)===rpNorm(stuVal) || stuText.includes(rpNorm(stuVal));
       const okSearch=!searchQ || stuText.includes(searchQ);
-      const okTask=!taskVal || recTaskVal===taskVal || taskText.includes(rpNorm(taskVal));
+      const okTask=!taskVal || (String(taskVal).startsWith("label::") ? labelNorm===String(taskVal).slice(7) : (recTaskVal===taskVal || taskText.includes(rpNorm(taskVal))));
       const okTab=(rpActiveTab==="all" || (rpActiveTab==="previous" ? isPreviousRp(r) : isWaitingForTeacher(r)));
       return okClass && okStu && okSearch && okTask && okTab;
     });
