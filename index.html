@@ -140,8 +140,10 @@ function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
 function responseBelongsToStudent(resp, student){
   if(!resp || !student) return false;
   const studentDigits = eqDigits(student.studentId || student.id || student.number || student.studentNumber || "");
-  const ids = [student.id, student.studentId, student.number, student.studentNumber, studentDigits, studentDigits?"student_"+studentDigits:""].filter(Boolean).map(v=>String(v).trim());
-  const rids = [resp.studentId, resp.userId, resp.uid, resp.studentNumber, resp.restoredFromStudentId, resp.restoredFrom, resp.id, resp._id].filter(Boolean).map(v=>String(v).trim());
+  const studentAliasIds = [].concat(student.aliasIds||[], student.linkedIds||[], student.mergeIds||[]);
+  const studentAliasNums = [].concat(student.aliasStudentIds||[], student.linkedStudentIds||[], student.mergeStudentIds||[]);
+  const ids = [student.id, student.studentId, student.number, student.studentNumber, studentDigits, studentDigits?"student_"+studentDigits:""].concat(studentAliasIds, studentAliasNums).filter(Boolean).map(v=>String(v).trim());
+  const rids = [resp.studentId, resp.userId, resp.uid, resp.studentNumber, resp.studentIdNumber, resp.restoredFromStudentId, resp.restoredFrom, resp.id, resp._id].filter(Boolean).map(v=>String(v).trim());
   if(rids.some(x=>ids.includes(x))) return true;
   const rDigits = rids.map(eqDigits).filter(Boolean);
   if(studentDigits && rDigits.includes(studentDigits)) return true;
@@ -226,6 +228,54 @@ function isOfficialSecondFourthStudent(u){
   return !!(u && u.role==="student" && cid==="class_2_4" && /^24\d{2,}$/.test(sid));
 }
 function mergePreloadedRows(existing, preloaded){
+  existing = existing || [];
+  preloaded = preloaded || [];
+  // STUDENT_ID_ALIAS_MERGE_FIX_20260610
+  // بعض المحاولات الجديدة تحفظ studentId بمعرف حساب الطالب الداخلي،
+  // بينما النتائج القديمة تحفظ رقم الطالب فقط. هنا ندمج أي حسابات تحمل نفس رقم الطالب
+  // داخل سجل رسمي واحد ونحتفظ بكل المعرفات كـ aliasIds حتى تظهر كل النتائج القديمة والجديدة.
+  if(preloaded.some(function(x){return x && x.role==="student";})){
+    const map = {};
+    const sidMap = {};
+    function addUnique(arr, v){ v=String(v||"").trim(); if(v && !arr.includes(v)) arr.push(v); }
+    preloaded.forEach(function(x){
+      const sid = eqDigits(x.studentId || x.studentNumber || x.number || x.id);
+      const row = {...x, aliasIds:[], aliasStudentIds:[]};
+      addUnique(row.aliasIds, x.id);
+      addUnique(row.aliasStudentIds, sid);
+      map[x.id] = row;
+      if(sid) sidMap[sid] = x.id;
+    });
+    existing.forEach(function(x){
+      if(!x) return;
+      if(x.role && x.role!=="student") { map[x.id||uid()] = x; return; }
+      const sid = eqDigits(x.studentId || x.studentNumber || x.number || x.id);
+      const targetId = (sid && sidMap[sid]) || x.id || (sid ? "student_"+sid : uid());
+      const base = map[targetId] || {};
+      const official = !!(base.preloaded || base.protectedOfficial);
+      const aliasIds = [].concat(base.aliasIds||[]);
+      const aliasStudentIds = [].concat(base.aliasStudentIds||[]);
+      [base.id, x.id].concat(x.aliasIds||[], x.linkedIds||[], x.mergeIds||[]).forEach(function(v){addUnique(aliasIds,v);});
+      [sid, eqDigits(x.id), eqDigits(base.studentId), eqDigits(x.studentId)].concat(x.aliasStudentIds||[], x.linkedStudentIds||[], x.mergeStudentIds||[]).forEach(function(v){addUnique(aliasStudentIds,v);});
+      map[targetId] = {
+        ...x,
+        ...base,
+        id: base.id || x.id || targetId,
+        role: "student",
+        name: official ? (base.name || x.name || "") : (x.name || base.name || ""),
+        shortName: official ? (base.shortName || x.shortName || "") : (x.shortName || base.shortName || ""),
+        studentId: base.studentId || x.studentId || sid,
+        classId: canonicalClassId(base.classId || x.classId || x.className) || base.classId || x.classId || "",
+        password: x.password || base.password || sid,
+        fatherName: x.fatherName || base.fatherName || "",
+        aliasIds: aliasIds,
+        aliasStudentIds: aliasStudentIds,
+        deleted: (base.preloaded || base.protectedOfficial) ? false : !!x.deleted
+      };
+      if(sid) sidMap[sid] = targetId;
+    });
+    return Object.values(map).filter(function(x){return !x.deleted;});
+  }
   const map = {};
   preloaded.forEach(x => { map[x.id] = {...x}; });
   existing.forEach(x => { map[x.id] = {...(map[x.id]||{}), ...x}; });
