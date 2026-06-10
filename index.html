@@ -145,12 +145,30 @@ function responseBelongsToStudent(resp, student){
   if(rids.some(x=>ids.includes(x))) return true;
   const rDigits = rids.map(eqDigits).filter(Boolean);
   if(studentDigits && rDigits.includes(studentDigits)) return true;
+  // LONG_ID_SUFFIX_LINK_FIX_20260610
+  // بعض النتائج محفوظة برقم طويل مثل 240124072420 بينما رقم الطالب في القائمة 2420.
+  // نربطها إذا كان الرقم الطويل ينتهي برقم الطالب، مع حد أدنى 4 أرقام لمنع الربط الخاطئ.
+  if(studentDigits && studentDigits.length>=4 && rDigits.some(function(x){return x && x.length>studentDigits.length && x.endsWith(studentDigits);})){ return true; }
   const rText = [resp.studentName, resp.name, resp.restoredFromName, resp.email].filter(Boolean).join(" ");
   if(rText && studentNameMatches(student, rText)) return true;
   return false;
 }
 function responsesForStudent(list, student){
   return (list||[]).filter(function(r){ return responseBelongsToStudent(r, student); });
+}
+function studentMatchesSearch(student, rawSearch){
+  const q=String(rawSearch||"").trim();
+  if(!q) return true;
+  const qn=normalizeNameText(q);
+  const sid=eqDigits(student&&student.studentId);
+  const idd=eqDigits(student&&student.id);
+  const qd=eqDigits(q);
+  if(qn && (normalizeNameText(student&&student.name).includes(qn) || normalizeNameText(student&&student.shortName).includes(qn))) return true;
+  if(qd){
+    if(sid && (sid===qd || sid.includes(qd) || qd.endsWith(sid))) return true;
+    if(idd && (idd===qd || idd.includes(qd) || qd.endsWith(idd))) return true;
+  }
+  return false;
 }
 function findStudentForResponse(resp, students){
   return (students||[]).find(function(s){ return responseBelongsToStudent(resp, s); }) || null;
@@ -4079,8 +4097,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 var fQuizzes = qrdQuiz==="all" ? myQuizzes : myQuizzes.filter(function(q){return q.id===qrdQuiz;});
                 var fStudents = myStudents.filter(function(s){
                   var clsOk = qrdClass==="all" || s.classId===qrdClass;
-                  var srch = qrdSearch.trim().toLowerCase();
-                  var srchOk = !srch || s.name.toLowerCase().includes(srch) || (s.studentId||"").toLowerCase().includes(srch);
+                  var srch = qrdSearch.trim();
+                  var srchOk = studentMatchesSearch(s, srch);
                   return clsOk && srchOk;
                 });
                 var allResps = data.responses.filter(function(r){
@@ -4091,7 +4109,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 var highest = scores.length ? Math.max.apply(null,scores) : null;
                 var lowest = scores.length ? Math.min.apply(null,scores) : null;
                 var missing = fStudents.filter(function(s){return !allResps.some(function(r){return responseBelongsToStudent(r,s);});});
-                var participants = (function(){var ids={};allResps.forEach(function(r){ids[r.studentId]=1;});return Object.keys(ids).length;})();
+                var participants = (function(){var ids={};allResps.forEach(function(r){var st=findStudentForResponse(r,fStudents); ids[st?st.id:String(r.studentId||r.id||"")]=1;});return Object.keys(ids).length;})();
 
                 /* ── OVERVIEW TAB ── */
                 if(qDashTab==="overview") {
@@ -4111,6 +4129,29 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                         <div style={{fontSize:"9px",color:C.mu,fontFamily:F}}>{x.label}</div>
                       </Card>;})}
                     </div>
+                    {(()=>{
+                      var participantRows=fStudents.map(function(s){
+                        var rs=allResps.filter(function(r){return responseBelongsToStudent(r,s);});
+                        if(!rs.length) return null;
+                        var cls=data.classes.find(function(c){return c.id===s.classId;});
+                        var av=Math.round(rs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/rs.length);
+                        var best=Math.max.apply(null,rs.map(function(r){return pct(r.score,r.totalQ);}));
+                        return {s:s,cls:cls,rs:rs,av:av,best:best};
+                      }).filter(Boolean).sort(function(a,b){return String(a.s.studentId||"").localeCompare(String(b.s.studentId||""));});
+                      if(!participantRows.length) return null;
+                      return <Card style={{marginBottom:"10px",background:"#f8fafc",border:"1px solid "+C.br}}>
+                        <strong style={{fontSize:"12px",color:C.tx,fontFamily:F,display:"block",marginBottom:"7px"}}>👥 أسماء الطلاب أصحاب النتائج</strong>
+                        <div style={{display:"grid",gap:"6px"}}>
+                          {participantRows.slice(0,60).map(function(x){return <div key={x.s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:"1px solid "+C.br,borderRadius:"9px",padding:"7px 9px"}}>
+                            <div style={{minWidth:0}}>
+                              <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,whiteSpace:"normal"}}>{x.s.name}</div>
+                              <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>#{x.s.studentId}{x.cls?" · "+x.cls.name:""} · {x.rs.length} attempts</div>
+                            </div>
+                            <div style={{fontSize:"13px",fontWeight:"900",color:gc(x.av),fontFamily:F,marginLeft:"8px"}}>{x.av}%</div>
+                          </div>;})}
+                        </div>
+                      </Card>;
+                    })()}
                     {missing.length>0 && <Card style={{marginBottom:"10px",background:"#fef2f2",border:"1px solid #fecaca"}}>
                       <strong style={{fontSize:"12px",color:C.d,fontFamily:F,display:"block",marginBottom:"7px"}}>❌ Missing Students by Class</strong>
                       {myClasses.filter(function(c){return qrdClass==="all"||c.id===qrdClass;}).map(function(c){
