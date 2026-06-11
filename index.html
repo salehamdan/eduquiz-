@@ -134,30 +134,57 @@ function canonicalClassId(v){
 function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
 
 // RESPONSE_STUDENT_LINK_FIX_20260610
-// Some old quiz responses were saved with studentId as "3135" while roster users use id "student_3135".
-// Other restored responses may carry the name in restoredFromName/name/studentName.
-// This helper links attempts to students safely without changing Firebase data.
+// SAFE_PERFORMANCE_MEMO_20260611
+// Same matching rules, with a small memo cache to keep dashboards fast without
+// dropping old/new attempts or showing raw numbers instead of names.
+const __eqRespStudentMemo = new Map();
+function __eqRespStudentCacheKey(resp, student){
+  const rid = String((resp&&(resp.id||resp._id||resp.docId||resp.studentId||resp.userId||resp.uid))||"");
+  const sid = String((student&&(student.id||student.studentId||student.number||student.studentNumber))||"");
+  const r2 = String((resp&&(resp.studentId||resp.userId||resp.uid||resp.studentNumber||resp.studentIdNumber||resp.restoredFromStudentId||resp.restoredFrom||resp.studentName||resp.name||resp.restoredFromName))||"");
+  const s2 = String((student&&(student.studentId||student.name||student.shortName))||"");
+  return rid+"|"+sid+"|"+r2+"|"+s2;
+}
+function __eqMemoReturn(key, val){
+  if(__eqRespStudentMemo.size>250000) __eqRespStudentMemo.clear();
+  __eqRespStudentMemo.set(key, !!val);
+  return !!val;
+}
 function responseBelongsToStudent(resp, student){
   if(!resp || !student) return false;
+  const __ck = __eqRespStudentCacheKey(resp, student);
+  if(__eqRespStudentMemo.has(__ck)) return __eqRespStudentMemo.get(__ck);
   const studentDigits = eqDigits(student.studentId || student.id || student.number || student.studentNumber || "");
   const studentAliasIds = [].concat(student.aliasIds||[], student.linkedIds||[], student.mergeIds||[]);
   const studentAliasNums = [].concat(student.aliasStudentIds||[], student.linkedStudentIds||[], student.mergeStudentIds||[]);
   const ids = [student.id, student.studentId, student.number, student.studentNumber, studentDigits, studentDigits?"student_"+studentDigits:""].concat(studentAliasIds, studentAliasNums).filter(Boolean).map(v=>String(v).trim());
   const rids = [resp.studentId, resp.userId, resp.uid, resp.studentNumber, resp.studentIdNumber, resp.restoredFromStudentId, resp.restoredFrom, resp.id, resp._id].filter(Boolean).map(v=>String(v).trim());
-  if(rids.some(x=>ids.includes(x))) return true;
+  if(rids.some(x=>ids.includes(x))) return __eqMemoReturn(__ck,true);
   const rDigits = rids.map(eqDigits).filter(Boolean);
-  if(studentDigits && rDigits.includes(studentDigits)) return true;
+  if(studentDigits && rDigits.includes(studentDigits)) return __eqMemoReturn(__ck,true);
   // NUMERIC_STUDENT_ID_LINK_FIX_20260610
   // النتائج القديمة قد تحفظ رقم الطالب فقط مثل 2410/2415/2420 أو بصيغة أطول تنتهي برقم الطالب.
   // نربطها بالقائمة الرسمية حتى تظهر الأسماء بدل الأرقام.
-  if(studentDigits && studentDigits.length>=4 && rDigits.some(function(x){return x && x.length>studentDigits.length && x.endsWith(studentDigits);})){ return true; }
+  if(studentDigits && studentDigits.length>=4 && rDigits.some(function(x){return x && x.length>studentDigits.length && x.endsWith(studentDigits);})){ return __eqMemoReturn(__ck,true); }
   const rText = [resp.studentName, resp.name, resp.restoredFromName, resp.email].filter(Boolean).join(" ");
-  if(rText && studentNameMatches(student, rText)) return true;
-  return false;
+  if(rText && studentNameMatches(student, rText)) return __eqMemoReturn(__ck,true);
+  return __eqMemoReturn(__ck,false);
 }
+
 function responsesForStudent(list, student){
-  return (list||[]).filter(function(r){ return responseBelongsToStudent(r, student); });
+  if(!student) return [];
+  const arr=list||[];
+  const sk=String(student.id||student.studentId||student.number||student.name||"");
+  const lk=arr.length+":"+(arr[0]&&(arr[0].id||arr[0]._id||arr[0].studentId)||"")+":"+(arr[arr.length-1]&&(arr[arr.length-1].id||arr[arr.length-1]._id||arr[arr.length-1].studentId)||"");
+  if(!responsesForStudent.__cache) responsesForStudent.__cache=new Map();
+  const ck=sk+"|"+lk;
+  if(responsesForStudent.__cache.has(ck)) return responsesForStudent.__cache.get(ck);
+  if(responsesForStudent.__cache.size>10000) responsesForStudent.__cache.clear();
+  const out=arr.filter(function(r){ return responseBelongsToStudent(r, student); });
+  responsesForStudent.__cache.set(ck,out);
+  return out;
 }
+
 function studentMatchesSearch(student, rawSearch){
   const q=String(rawSearch||"").trim();
   if(!q) return true;
@@ -174,6 +201,64 @@ function studentMatchesSearch(student, rawSearch){
 }
 function findStudentForResponse(resp, students){
   return (students||[]).find(function(s){ return responseBelongsToStudent(resp, s); }) || null;
+}
+
+
+// QDASH_FAST_SAFE_INDEX_20260611
+// Fast local index for Quiz Results Dashboard only. It keeps the same matching
+// rules (number, student_ number, old/new aliases, restored names) but avoids
+// re-checking every response against every student many times during render.
+function __qrdRespKey(r, i){ return String((r&&(r.id||r._id||r.docId))||("__idx_"+i)); }
+function buildQrdResponseIndex(responses, students, quizzes, quizFilter){
+  const quizIdSet={};
+  (quizzes||[]).forEach(function(q){ if(q&&q.id) quizIdSet[String(q.id)]=1; });
+  const tokenToStudent={};
+  const digitToStudent={};
+  const studentDigitsList=[];
+  function addToken(t, st){
+    t=String(t||"").trim();
+    if(!t) return;
+    if(!tokenToStudent[t]) tokenToStudent[t]=st;
+  }
+  (students||[]).forEach(function(st){
+    const d=eqDigits(st.studentId||st.id||st.number||st.studentNumber||"");
+    const aliases=[].concat(st.aliasIds||[],st.linkedIds||[],st.mergeIds||[],st.aliasStudentIds||[],st.linkedStudentIds||[],st.mergeStudentIds||[]);
+    [st.id,st.studentId,st.number,st.studentNumber,d,d?"student_"+d:""].concat(aliases).forEach(function(x){ addToken(x,st); const dx=eqDigits(x); if(dx&&!digitToStudent[dx]) digitToStudent[dx]=st; });
+    if(d) studentDigitsList.push({d:d,st:st});
+  });
+  const out=[];
+  const byStudentId={};
+  const studentByRespKey={};
+  (students||[]).forEach(function(st){ byStudentId[st.id]=[]; });
+  (responses||[]).forEach(function(r,idx){
+    if(quizFilter!=="all" && !quizIdSet[String(r.quizId||"")]) return;
+    let st=null;
+    const rids=[r.studentId,r.userId,r.uid,r.studentNumber,r.studentIdNumber,r.restoredFromStudentId,r.restoredFrom,r.id,r._id].filter(Boolean).map(function(v){return String(v).trim();});
+    for(let i=0;i<rids.length && !st;i++){ st=tokenToStudent[rids[i]]||null; }
+    const rDigits=rids.map(eqDigits).filter(Boolean);
+    for(let i=0;i<rDigits.length && !st;i++){ st=digitToStudent[rDigits[i]]||null; }
+    // Old imports sometimes have a long code ending with the official student number.
+    for(let i=0;i<rDigits.length && !st;i++){
+      const rd=rDigits[i];
+      if(rd && rd.length>=4){
+        for(let j=0;j<studentDigitsList.length;j++){
+          const sd=studentDigitsList[j].d;
+          if(sd && sd.length>=4 && rd.length>sd.length && rd.endsWith(sd)){ st=studentDigitsList[j].st; break; }
+        }
+      }
+    }
+    if(!st){
+      const rText=[r.studentName,r.name,r.restoredFromName,r.email].filter(Boolean).join(" ");
+      if(rText){ st=(students||[]).find(function(s){ return studentNameMatches(s,rText); }) || null; }
+    }
+    if(st){
+      out.push(r);
+      if(!byStudentId[st.id]) byStudentId[st.id]=[];
+      byStudentId[st.id].push(r);
+      studentByRespKey[__qrdRespKey(r,idx)]=st;
+    }
+  });
+  return {responses:out, byStudentId:byStudentId, studentByRespKey:studentByRespKey};
 }
 
 function officialClassRow(id){
@@ -380,6 +465,7 @@ async function fsDel(col, id) {
   await db.collection(col).doc(id).delete();
 }
 async function loadAllData() {
+  try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
   const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets")
   ]);
@@ -2153,7 +2239,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
   const [profileOpen,setProfileOpen] = useState(false);
   const [reviewResp,setReviewResp] = useState(null);
 
-  const myResps = data.responses.filter(r=>responseBelongsToStudent(r,user));
+  const myResps = responsesForStudent(data.responses,user);
   const myClass = data.classes.find(c=>c.id===user.classId);
   const available = data.quizzes.filter(q=>{
     // Private quiz: only assigned students can see it
@@ -2171,7 +2257,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
   const skills = calcSkills(myResps,data.quizzes);
   const badges = calcBadges(myResps,data.quizzes);
   const board = data.users.filter(u=>u.role==="student").map(s=>{
-    const rs=data.responses.filter(r=>responseBelongsToStudent(r,s));
+    const rs=responsesForStudent(data.responses,s);
     return {...s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):0,total:rs.length};
   }).filter(s=>s.total>0).sort((a,b)=>b.avg-a.avg||(b.total-a.total));
   const allowedAttemptsForQuiz = q => 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0);
@@ -3680,10 +3766,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
-  const flags=myStudents.filter(s=>{const rs=data.responses.filter(r=>responseBelongsToStudent(r,s));return calcSkills(rs,data.quizzes).filter(sk=>sk.score<50&&sk.total>=2).length>=2;});
+  const flags=myStudents.filter(s=>{const rs=responsesForStudent(data.responses,s);return calcSkills(rs,data.quizzes).filter(sk=>sk.score<50&&sk.total>=2).length>=2;});
   const sorted=[...myStudents].filter(s=>(filterCls==="all"||sameClassId(s.classId||s.className,filterCls))&&(!search||s.name.toLowerCase().includes(search.toLowerCase())||(s.studentId||"").includes(search))).sort((a,b)=>{
     if(sortBy==="name")return a.name.localeCompare(b.name);if(sortBy==="id")return a.studentId.localeCompare(b.studentId);if(sortBy==="class")return (a.classId||"").localeCompare(b.classId||"");
-    const ra=data.responses.filter(r=>responseBelongsToStudent(r,a)&&myQuizzes.some(q=>q.id===r.quizId)),rb=data.responses.filter(r=>responseBelongsToStudent(r,b)&&myQuizzes.some(q=>q.id===r.quizId));
+    const ra=responsesForStudent(data.responses,a).filter(r=>myQuizzes.some(q=>q.id===r.quizId)),rb=responsesForStudent(data.responses,b).filter(r=>myQuizzes.some(q=>q.id===r.quizId));
     return (rb.length?Math.round(rb.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/rb.length):0)-(ra.length?Math.round(ra.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/ra.length):0);
   });
 
@@ -3984,7 +4070,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       const row=[s.name,s.studentId||"",cls?.name||""];
       let sum=0,cnt=0;
       qs.forEach(q=>{
-        const rs=data.responses.filter(r=>responseBelongsToStudent(r,s)&&r.quizId===q.id);
+        const rs=responsesForStudent(data.responses,s).filter(r=>r.quizId===q.id);
         if(rs.length){ const best=Math.max(...rs.map(r=>pct(r.score,r.totalQ))); row.push(best); sum+=best; cnt++; }
         else row.push("");
       });
@@ -4110,7 +4196,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               <ResponsiveContainer width="100%" height={150}><BarChart data={[{r:"0-49%",n:myResps.filter(r=>pct(r.score,r.totalQ)<50).length},{r:"50-69%",n:myResps.filter(r=>{const p=pct(r.score,r.totalQ);return p>=50&&p<70;}).length},{r:"70-89%",n:myResps.filter(r=>{const p=pct(r.score,r.totalQ);return p>=70&&p<90;}).length},{r:"90-100%",n:myResps.filter(r=>pct(r.score,r.totalQ)>=90).length}]} barSize={28}><XAxis dataKey="r" tick={{fontSize:9,fill:C.mu}} axisLine={false} tickLine={false}/><YAxis allowDecimals={false} tick={{fontSize:9,fill:C.mu}}/><Tooltip/><Bar dataKey="n" radius={[4,4,0,0]}>{[C.d,C.w,C.p,C.s].map((c,i)=><Cell key={i} fill={c}/>)}</Bar></BarChart></ResponsiveContainer>
             </Card>
             <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>🏆 Top Students</strong>
-              {(()=>{ const ranked=myStudents.map(s=>{const rs=data.responses.filter(r=>responseBelongsToStudent(r,s));return {s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null,count:rs.length};}).filter(x=>x.count>0).sort((a,b)=>b.avg-a.avg).slice(0,5); return ranked.length===0 ? <p style={{fontSize:"12px",color:C.mu,fontFamily:F}}>No attempts yet.</p> : ranked.map((x,i)=>(<div key={x.s.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:i<ranked.length-1?"1px solid "+C.br:"none"}}><span style={{fontSize:"12px",fontWeight:"600",color:C.tx,fontFamily:F}}>#{i+1} {x.s.name}</span><span style={{fontWeight:"700",color:gc(x.avg),fontSize:"12px",fontFamily:F}}>{x.avg}%</span></div>)); })()}
+              {(()=>{ const ranked=myStudents.map(s=>{const rs=responsesForStudent(data.responses,s);return {s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null,count:rs.length};}).filter(x=>x.count>0).sort((a,b)=>b.avg-a.avg).slice(0,5); return ranked.length===0 ? <p style={{fontSize:"12px",color:C.mu,fontFamily:F}}>No attempts yet.</p> : ranked.map((x,i)=>(<div key={x.s.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:i<ranked.length-1?"1px solid "+C.br:"none"}}><span style={{fontSize:"12px",fontWeight:"600",color:C.tx,fontFamily:F}}>#{i+1} {x.s.name}</span><span style={{fontWeight:"700",color:gc(x.avg),fontSize:"12px",fontFamily:F}}>{x.avg}%</span></div>)); })()}
             </Card>
           </div>}
         </div>}
@@ -4153,16 +4239,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   var srchOk = studentMatchesSearch(s, srch);
                   return clsOk && srchOk;
                 });
-                var allResps = data.responses.filter(function(r){
-                  var quizOk = qrdQuiz==="all" ? true : fQuizzes.some(function(q){return q.id===r.quizId;});
-                  return quizOk && fStudents.some(function(s){return responseBelongsToStudent(r,s);});
-                });
+                var qrdIdx = buildQrdResponseIndex(data.responses, fStudents, fQuizzes, qrdQuiz);
+                var allResps = qrdIdx.responses;
                 var scores = allResps.map(function(r){return pct(r.score,r.totalQ);});
                 var avg = scores.length ? Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length) : null;
                 var highest = scores.length ? Math.max.apply(null,scores) : null;
                 var lowest = scores.length ? Math.min.apply(null,scores) : null;
-                var missing = fStudents.filter(function(s){return !allResps.some(function(r){return responseBelongsToStudent(r,s);});});
-                var participants = (function(){var ids={};allResps.forEach(function(r){var st=findStudentForResponse(r,fStudents); ids[st?st.id:String(r.studentId||r.id||"")]=1;});return Object.keys(ids).length;})();
+                var missing = fStudents.filter(function(s){return !(qrdIdx.byStudentId[s.id]||[]).length;});
+                var participants = fStudents.filter(function(s){return (qrdIdx.byStudentId[s.id]||[]).length>0;}).length;
 
                 /* ── OVERVIEW TAB ── */
                 if(qDashTab==="overview") {
@@ -4184,7 +4268,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     </div>
                     {(()=>{
                       var participantRows=fStudents.map(function(s){
-                        var rs=allResps.filter(function(r){return responseBelongsToStudent(r,s);});
+                        var rs=qrdIdx.byStudentId[s.id]||[];
                         if(!rs.length) return null;
                         var cls=data.classes.find(function(c){return c.id===s.classId;});
                         var av=Math.round(rs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/rs.length);
@@ -4222,7 +4306,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       var rows=[["Student","ID","Class","Attempts","Best %","Avg %","Missing"]];
                       fStudents.forEach(function(s){
                         var cls=data.classes.find(function(c){return c.id===s.classId;});
-                        var sRs=allResps.filter(function(r){return responseBelongsToStudent(r,s);});
+                        var sRs=qrdIdx.byStudentId[s.id]||[];
                         var best=sRs.length?Math.max.apply(null,sRs.map(function(r){return pct(r.score,r.totalQ);})):null;
                         var av=sRs.length?Math.round(sRs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/sRs.length):null;
                         rows.push([s.name,s.studentId,cls?cls.name:"",sRs.length,best!==null?best+"%":"",av!==null?av+"%":"",sRs.length===0?"Yes":"No"]);
@@ -4237,10 +4321,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 if(qDashTab==="classes") {
                   var clsData = myClasses.filter(function(c){return qrdClass==="all"||c.id===qrdClass;}).map(function(c){
                     var studs=fStudents.filter(function(s){return sameClassId(s.classId||s.className, c.id);});
-                    var cResps=allResps.filter(function(r){return studs.some(function(s){return responseBelongsToStudent(r,s);});});
+                    var cResps=[]; studs.forEach(function(s){ cResps=cResps.concat(qrdIdx.byStudentId[s.id]||[]); });
                     var cScores=cResps.map(function(r){return pct(r.score,r.totalQ);});
                     var cAvg=cScores.length?Math.round(cScores.reduce(function(a,b){return a+b;},0)/cScores.length):null;
-                    var cMiss=studs.filter(function(s){return !cResps.some(function(r){return responseBelongsToStudent(r,s);});});
+                    var cMiss=studs.filter(function(s){return !(qrdIdx.byStudentId[s.id]||[]).length;});
                     var struggling=studs.filter(function(s){
                       var sRs=cResps.filter(function(r){return responseBelongsToStudent(r,s);});
                       var sAvg=sRs.length?Math.round(sRs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/sRs.length):null;
@@ -4274,7 +4358,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                           <div style={{fontSize:"10px",color:"#c2410c",fontWeight:"700",fontFamily:F,marginBottom:"5px"}}>⚠️ Struggling Students:</div>
                           <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
                             {x.struggling.map(function(s){
-                              var sRs=allResps.filter(function(r){return responseBelongsToStudent(r,s);});
+                              var sRs=qrdIdx.byStudentId[s.id]||[];
                               var sAvg=Math.round(sRs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/sRs.length);
                               return <span key={s.id} style={{fontSize:"10px",background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:"6px",padding:"2px 7px",fontFamily:F,color:C.tx}}>{s.name} <strong style={{color:"#c2410c"}}>{sAvg}%</strong></span>;
                             })}
@@ -4288,7 +4372,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 /* ── STUDENTS TAB ── */
                 if(qDashTab==="students") {
                   var stuRows = fStudents.map(function(s){
-                    var sRs=allResps.filter(function(r){return responseBelongsToStudent(r,s);});
+                    var sRs=qrdIdx.byStudentId[s.id]||[];
                     var cls=data.classes.find(function(c){return c.id===s.classId;});
                     if(!sRs.length) return null;
                     var sorted=sRs.slice().sort(function(a,b){return (a.completedAt||"").localeCompare(b.completedAt||"");});
@@ -4344,13 +4428,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 if(qDashTab==="questions") {
                   var singleQuiz = fQuizzes.length===1 ? fQuizzes[0] : null;
                   if(!singleQuiz) return <Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>Select a specific quiz to see question analysis.</p></Card>;
-                  var qResps=data.responses.filter(function(r){return r.quizId===singleQuiz.id && fStudents.some(function(s){return responseBelongsToStudent(r,s);});});
+                  var qResps=allResps.filter(function(r){return r.quizId===singleQuiz.id;});
                   if(!qResps.length) return <Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No attempts yet for this quiz.</p></Card>;
                   return <div>
                     {singleQuiz.questions.map(function(q,qi){
                       var correct=qResps.filter(function(r){return r.answers&&r.answers[q.id]===q.correct;}).length;
                       var rate=Math.round(correct/qResps.length*100);
-                      var wrongStudents=qResps.filter(function(r){return !r.answers||r.answers[q.id]!==q.correct;}).map(function(r){return fStudents.find(function(s){return responseBelongsToStudent(r,s);});}).filter(Boolean);
+                      var wrongStudents=qResps.filter(function(r){return !r.answers||r.answers[q.id]!==q.correct;}).map(function(r,i){return qrdIdx.studentByRespKey[__qrdRespKey(r,i)] || findStudentForResponse(r,fStudents);}).filter(Boolean);
                       return <Card key={q.id} style={{marginBottom:"9px"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"5px"}}>
                           <div style={{flex:1,paddingRight:"8px"}}>
@@ -4423,7 +4507,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
             return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px"}}><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete Class</Btn></div></div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=data.responses.filter(r=>responseBelongsToStudent(r,s)&&myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div>
             </Card>;
           })}
         </div>}
@@ -4444,7 +4528,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>
           <div style={{fontSize:"11px",color:C.mu,marginBottom:"9px",fontFamily:F}}>Showing {sorted.length} students</div>
           {sorted.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F}}>No students found.</p></Card>
-          :sorted.map(s=>{const sRs=data.responses.filter(r=>responseBelongsToStudent(r,s));const avg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const sk=calcSkills(sRs,data.quizzes);const flagged=flags.find(f=>f.id===s.id);const note=data.notes.find(n=>n.teacherId===user.id&&n.studentId===s.id);const cls=data.classes.find(c=>c.id===s.classId);
+          :sorted.map(s=>{const sRs=responsesForStudent(data.responses,s);const avg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const sk=calcSkills(sRs,data.quizzes);const flagged=flags.find(f=>f.id===s.id);const note=data.notes.find(n=>n.teacherId===user.id&&n.studentId===s.id);const cls=data.classes.find(c=>c.id===s.classId);
             return <Card key={s.id} style={{marginBottom:"8px",border:flagged?"2px solid "+C.d:"2px solid transparent"}}><div style={{display:"flex",gap:"9px",flexWrap:"wrap"}}>
               <div style={{flex:1,minWidth:"160px"}}><div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px",flexWrap:"wrap"}}><span style={{fontWeight:"700",fontSize:"13px",color:C.tx,fontFamily:F}}>{s.name}</span>{flagged&&<span style={{fontSize:"9px",background:"#fef2f2",color:C.d,padding:"1px 6px",borderRadius:"999px",fontWeight:"700",fontFamily:F}}>🚨 Help</span>}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {s.studentId} · {cls?.name||"—"} · {sRs.length} quizzes</div>{avg!==null&&<div style={{fontSize:"12px",fontWeight:"700",color:gc(avg),fontFamily:F}}>{avg}% avg</div>}{note&&<div style={{fontSize:"10px",color:C.mu,fontStyle:"italic",marginTop:"2px",fontFamily:F}}>📝 {note.note}</div>}</div>
               {sk.length>0&&<div style={{flex:1,minWidth:"160px"}}>{sk.slice(0,3).map(x=>(<div key={x.skill} style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}}><div style={{width:"75px",fontSize:"9px",color:C.mu,fontFamily:F,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.skill}</div><div style={{flex:1,height:"5px",background:"#f1f5f9",borderRadius:"999px"}}><div style={{height:"100%",width:x.score+"%",background:gc(x.score),borderRadius:"999px"}}/></div><div style={{fontSize:"9px",fontWeight:"700",color:gc(x.score),width:"28px",fontFamily:F}}>{x.score}%</div></div>))}</div>}
@@ -4489,7 +4573,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     {studs.map((s,ri)=>{
                       let sum=0,cnt=0;
                       const cells=qs.map(q=>{
-                        const rs=data.responses.filter(r=>responseBelongsToStudent(r,s)&&r.quizId===q.id).sort((a,b)=>(a.ts||0)-(b.ts||0));
+                        const rs=responsesForStudent(data.responses,s).filter(r=>r.quizId===q.id).sort((a,b)=>(a.ts||0)-(b.ts||0));
                         if(!rs.length) return {empty:true};
                         const scores=rs.map(r=>pct(r.score,r.totalQ));
                         const best=Math.max(...scores);
@@ -4552,7 +4636,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   </thead>
                   <tbody>
                     {heatStudents.map((s,si)=>{
-                      const sRs=data.responses.filter(r=>responseBelongsToStudent(r,s) && myQuizzes.some(q=>q.id===r.quizId));
+                      const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));
                       const skills=calcSkills(sRs,data.quizzes);
                       const map={}; skills.forEach(x=>{map[x.skill]=x;});
                       const vals=allSkills.map(sk=>map[sk]?map[sk].score:null).filter(v=>v!==null);
@@ -4641,7 +4725,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       </Modal>
       <Modal open={!!attemptsModal} onClose={()=>setAttemptsModal(null)} title={"Attempts — "+(attemptsModal?.name||"")}>
         {attemptsModal && (()=>{
-          const stuResps = data.responses.filter(r=>responseBelongsToStudent(r,attemptsModal)).sort((a,b)=>(b.ts||0)-(a.ts||0));
+          const stuResps = responsesForStudent(data.responses,attemptsModal).sort((a,b)=>(b.ts||0)-(a.ts||0));
           if(!stuResps.length) return <p style={{fontSize:"13px",color:C.mu,fontFamily:F}}>This student has no attempts yet.</p>;
           return <div>
             <p style={{fontSize:"12px",color:C.mu,fontFamily:F,margin:"0 0 10px"}}>Delete any attempt to adjust this student's progress and mastery. This cannot be undone.</p>
