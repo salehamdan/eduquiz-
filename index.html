@@ -5416,6 +5416,37 @@ document.addEventListener("click", function(e){
       analysisStatus:"Completed"
     };
   }
+  let rpAutoWorkerBusy=false;
+  let rpAutoWorkerLastRun=0;
+  async function rpAutoAnalyzePendingAll(limit=3){
+    try{
+      if(!isTeacher()) return {ok:0,fail:0,reason:"not-teacher"};
+      if(rpAutoWorkerBusy) return {ok:0,fail:0,reason:"busy"};
+      const key=getKey();
+      if(!key) return {ok:0,fail:0,reason:"missing-key"};
+      const now=Date.now();
+      if(now-rpAutoWorkerLastRun<10000) return {ok:0,fail:0,reason:"too-soon"};
+      rpAutoWorkerLastRun=now;
+      rpAutoWorkerBusy=true;
+      const all=await syncCloudIntoLocal();
+      const todo=all.filter(needsAnalysisRecord).slice(0, Math.max(1,Number(limit)||3));
+      let ok=0, fail=0, lastErr="";
+      for(const r of todo){
+        try{ await analyzeOne(r.id,true); ok++; }
+        catch(e){ fail++; lastErr=e&&e.message?e.message:String(e); }
+      }
+      if(ok||fail){
+        console.log("RP auto worker:", {ok, fail, lastErr});
+      }
+      return {ok,fail,lastErr};
+    }catch(e){
+      console.warn("RP auto worker failed", e);
+      return {ok:0,fail:1,lastErr:e&&e.message?e.message:String(e)};
+    }finally{
+      rpAutoWorkerBusy=false;
+    }
+  }
+
   async function analyzeOne(id,silent=false){
     const r=records().find(x=>x.id===id);
     if(!r) return alert("Submission not found.");
@@ -5558,7 +5589,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-second-fourth-official-safe</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260611-auto-worker-fixed</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -5579,7 +5610,9 @@ document.addEventListener("click", function(e){
           <button id="rp-v11-restore-old" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:900">استعادة تسجيلات قديمة</button>
           <button id="rp-v11-analyze-class" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">تحليل المنتظر الظاهر</button>
           <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول المحلل الظاهر</button>
+          <button id="rp-v11-auto-now" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#9333ea;color:white;font-weight:900">🤖 تشغيل التلقائي الآن</button>
         </div>
+        <div id="rp-v11-auto-status" style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#f8fafc;color:#475569;font-size:11px;font-weight:800">Auto correction: ${getKey()?"✅ key saved — يعمل كل 15 ثانية":"⚠️ OpenAI key missing"}</div>
       </div>
       <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
     (document.getElementById("root")||document.body).appendChild(panel);
@@ -5624,6 +5657,14 @@ document.addEventListener("click", function(e){
         await renderCards();
         return;
       }
+      if(id==="rp-v11-auto-now"){
+        const st=document.getElementById("rp-v11-auto-status");
+        if(st) st.textContent="Auto correction: running now...";
+        const res=await rpAutoAnalyzePendingAll(10);
+        if(st) st.textContent=getKey()?`Auto correction: analyzed ${res.ok||0}, failed ${res.fail||0}${res.lastErr?" — "+res.lastErr:""}`:"Auto correction: OpenAI key missing";
+        await renderCards();
+        return;
+      }
       if(id==="rp-v11-accept-visible"){
         const arr=await currentVisibleRecords();
         const ready=arr.filter(canAcceptRecord);
@@ -5653,6 +5694,21 @@ document.addEventListener("click", function(e){
     panel.addEventListener("input",async e=>{if(e.target.id==="rp-v11-search")await renderCards();});
     panel.addEventListener("change",async e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student"||e.target.id==="rp-v11-task")await renderCards();});
     renderCards();
+    // Teacher-side automatic correction worker: runs while teacher dashboard is open.
+    // It uses the saved OpenAI key and analyzes new/waiting RP submissions from Firestore.
+    if(!window.__rpAutoWorkerV12){
+      window.__rpAutoWorkerV12=true;
+      setTimeout(function(){ rpAutoAnalyzePendingAll(3).then(function(){ try{renderCards();}catch(e){} }); }, 2500);
+      setInterval(function(){
+        try{
+          if(isTeacher() && getKey()){
+            rpAutoAnalyzePendingAll(3).then(function(res){
+              if(res && (res.ok||res.fail)){ try{renderCards();}catch(e){} }
+            });
+          }
+        }catch(e){}
+      }, 15000);
+    }
   }
 
   function searchText(v){ return String(v||"").trim().toLowerCase(); }
