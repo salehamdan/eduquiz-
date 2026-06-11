@@ -5787,4 +5787,221 @@ document.addEventListener("click", function(e){
       const acceptReady=canAcceptRecord(r);
       const acceptBg=acceptReady?"#16a34a":"#94a3b8";
       const acceptLabel=acceptReady?"Accept":"Analyze first";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wra
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${r.accuracy||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${r.wcpm||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${r.fluency||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${r.mistakes||"-"}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${r.correctWords||"-"}/${r.totalWords||"-"}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+    }
+    cards.innerHTML=out;
+  }
+
+  async function studentStatus(){
+    const currentUserRole = String(user().role||"").toLowerCase();
+    if(currentUserRole.includes("teacher")) return;
+    if(!(document.body.innerText||"").includes("Reading Progress")) return;
+
+    let all=[];
+    try{ all=await syncCloudIntoLocal(); }catch(e){ all=records(); }
+
+    const u=user(), ok=canSubmit(u.id);
+    const mine=all.filter(r=>r && responseBelongsToStudent(r,u) && r.taskId===taskId() && !isDeleted(r));
+    const counted=mine.filter(isCountableAttempt);
+    const rejectedCount=mine.filter(isRejected).length;
+    const acceptedCount=mine.filter(r=>r.status==="accepted").length;
+    const last=mine.length?mine.slice().sort((a,b)=>recordTime(a)-recordTime(b))[mine.length-1]:null;
+    const best=counted.length?Math.max(...counted.map(r=>Number(finalScore(r)||0))):"";
+    const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)||0),0)/counted.length):"";
+    const lastScore=last&&finalScore(last)!==""?finalScore(last):"";
+    const statusText=!last?"No submission yet":
+      last.status==="accepted"?"Accepted":
+      last.status==="rejected"?"Rejected":
+      last.status==="retake_allowed"?"Retake allowed":
+      last.analysisStatus==="Completed"?"Analyzed / waiting for teacher":
+      "Submitted / waiting for teacher";
+
+    let box=document.getElementById("rp-v11-student-status");
+    if(!box){
+      box=document.createElement("div");
+      box.id="rp-v11-student-status";
+      box.style.cssText="margin:10px 24px;padding:12px;border-radius:16px;font-family:system-ui;font-weight:800;line-height:1.6;border:1px solid #dbeafe";
+      const host=(document.getElementById("root")||document.body);
+      if(host.firstChild) host.insertBefore(box, host.firstChild);
+      else host.appendChild(box);
+    }
+
+    box.innerHTML=`
+      <div style="font-size:16px;color:#1e293b;margin-bottom:8px">📊 Reading Progress Performance</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span style="padding:7px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8">Status: ${statusText}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#ecfdf5;color:#166534">Last: ${lastScore===""?"-":lastScore+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#fff7ed;color:#9a3412">Best: ${best===""?"-":best+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#f8fafc;color:#334155">Average: ${avg===""?"-":avg+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#f8fafc;color:#334155">Attempts: ${mine.length}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#ecfdf5;color:#166534">Accepted: ${acceptedCount}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#fef2f2;color:#991b1b">Rejected excluded: ${rejectedCount}</span>
+      </div>
+      ${last&&last.teacherNotes?`<div style="margin-top:8px;color:#475569">Teacher note: ${last.teacherNotes}</div>`:""}
+      <div style="margin-top:8px;color:#64748b;font-size:12px">Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
+    `;
+    box.style.background="#ffffff";
+    box.style.color="#334155";
+    // التسجيل والإرسال متاحان دائمًا للطالب.
+  }
+
+  setTimeout(()=>{teacherPanel();studentStatus();},1000);
+  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
+})();
+ // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
+</script>
+
+
+
+<!-- RP V12 old word-analysis add-on removed safely -->
+
+
+
+<!-- BUILD_ALLOW_STUDENT_RECORDING_NO_RESTRICTIONS -->
+
+<!-- BUILD_TEACHER_RECEIVES_STUDENT_RECORDINGS -->
+
+<!-- BUILD_FIX_ANALYZE_USES_ACTUAL_READING_TEXT -->
+
+<!-- BUILD_PERSIST_ANALYSIS_RESULT_TEACHER_STUDENT -->
+
+<!-- BUILD_FAIR_SCORING_PERSIST_RESULT -->
+
+<!-- BUILD_DELETE_ATTEMPT_STUDENT_PERFORMANCE_SAFE -->
+
+<!-- BUILD_COUNT_RETAKE_SCORE_SHOW_STUDENT_DASHBOARD -->
+
+<!-- BUILD_FIX_REFERENCE_TEXT_NOT_DASHBOARD_TEXT -->
+
+<!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
+
+<!-- BUILD_TEXT_FILTERS_ACCEPT_VISIBLE_NO_ORANGE_SELECT -->
+
+<script>
+(function(){
+  function addReadingProgressShowButton(){ return; }
+  setInterval(addReadingProgressShowButton,1500);
+})();
+</script>
+
+
+<!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
+
+<!-- BUILD_EDIT_TASKS_STUDENT_TARGETING_AI_IN_ORIGINAL_FORM -->
+
+<!-- BUILD_REMOVE_OLD_RECORDINGS_LINK_DASHBOARD_NEW_RESULTS -->
+<!-- BUILD_RESTORE_TOP_HIDE_NAME_FILTERS_ONLY -->
+
+
+<!-- removed floating navigation -->
+
+
+
+<!-- BUILD_TOP_BOTTOM_NAVIGATION_ARROWS -->
+<!-- BUILD_ROLLBACK_NO_PERFORMANCE_DASHBOARD -->
+
+<!-- BUILD_NO_RECORD_WHILE_AUDIO_RETAKE_LIMIT_SAFE -->
+
+<!-- BUILD_LINK_STUDENT_ATTEMPTS_RETAKE_ZERO_INLINE_SAFE -->
+
+<!-- BUILD_FINAL_ATTEMPTS_SMART_RECORDING_READING_REPORT -->
+
+<!-- BUILD_FINAL_FIX_ATTEMPTS_AND_SMART_STOP -->
+
+<!-- BUILD_FINAL_STRICT_RETAKE_GATE -->
+
+<!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
+
+<!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
+<!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
+<!-- BUILD_EMERGENCY_RESTORE_EVALUATION_BUTTONS -->
+
+<style id="safe-smart-scroll-style">
+  .safe-smart-scroll-btn{
+    position:fixed;
+    left:50%;
+    right:auto;
+    bottom:136px;
+    width:52px;
+    height:52px;
+    border-radius:999px;
+    border:0;
+    background:#2563eb;
+    color:white;
+    font-size:26px;
+    font-weight:900;
+    box-shadow:0 10px 24px rgba(15,23,42,.25);
+    z-index:9999;
+    opacity:0;
+    pointer-events:none;
+    transform:translate(-50%,10px);
+    transition:opacity .2s ease, transform .2s ease;
+  }
+  .safe-smart-scroll-btn.show{
+    opacity:.94;
+    pointer-events:auto;
+    transform:translate(-50%,0);
+  }
+</style>
+<script id="safe-smart-scroll-only">
+(function(){
+  var btn=document.createElement("button");
+  btn.className="safe-smart-scroll-btn";
+  btn.type="button";
+  btn.textContent="↓";
+  document.body.appendChild(btn);
+  var hideTimer=null;
+  function maxScroll(){return Math.max(1, document.documentElement.scrollHeight-window.innerHeight);}
+  function showButton(){
+    var y=window.scrollY || document.documentElement.scrollTop || 0;
+    var nearBottom=y > maxScroll()*0.55;
+    btn.textContent=nearBottom ? "↑" : "↓";
+    btn.onclick=function(){
+      var now=window.scrollY || document.documentElement.scrollTop || 0;
+      if(now > maxScroll()*0.55){ window.scrollTo({top:0,behavior:"smooth"}); }
+      else { window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"}); }
+    };
+    btn.classList.add("show");
+    clearTimeout(hideTimer);
+    hideTimer=setTimeout(function(){btn.classList.remove("show");},2200);
+  }
+  window.addEventListener("scroll", showButton, {passive:true});
+  window.addEventListener("touchmove", showButton, {passive:true});
+  window.addEventListener("wheel", showButton, {passive:true});
+})();
+</script>
+
+
+<!-- BUILD_EMERGENCY_NO_WHITE_SAFE_RESTORE -->
+
+<!-- BUILD_FINAL_QUIZ_LISTENING_RULES_RETAKE_LIMIT -->
+
+<!-- BUILD_FINAL_TEACHER_RETAKE_CONTROL_REVIEW_AFTER_FINAL -->
+
+<!-- BUILD_FINAL_QUIZ_SHOW_ALL_CLASSES -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_COMPLETION_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_MOBILE_FALLBACK -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_PLAY_STARTED_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_STRICT_COMPLETE_HIDE_NATIVE_REVIEW_GATE -->
+
+<!-- BUILD_FINAL_LISTENING_ONE_PLAYER_COUNTER_SUBMIT_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_COVERAGE_SKIP_CONTROL_REVIEW_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_PERSISTENT_AUDIO_NO_RESTART_FIX -->
+
+<!-- BUILD_BASE_WORKING_SUBMIT_PLUS_TEACHER_FIXES_ONLY -->
+
+<!-- BUILD_FINAL_RP_STUDENT_DRAFT_PREVIEW_RECORD_AGAIN_NO_SUBMIT_TOUCH -->
+<!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
+<!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
+
+<!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
+
+<!-- BUILD_FINAL_REACT_LOGIN_MEMORY_STABLE_WITH_GMAIL_LINK -->
+</body>
+</html>
