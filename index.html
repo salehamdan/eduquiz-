@@ -13,6 +13,8 @@
 <!-- SECOND_FOURTH_RELINK_TOOL_20260610 -->
 <!-- STICKY_GRADEBOOK_QRD_FILTERS_SAFE_20260611 -->
 <!-- SAFE_TABLE_INTERNAL_SCROLL_NO_TOPBAR_COVER_20260611 -->
+<!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
+<!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <meta name="theme-color" content="#0f172a"/>
@@ -469,12 +471,12 @@ async function fsDel(col, id) {
 }
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets")
+  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses")
   ]);
   const users = ensureProtectedStudents(mergePreloadedRows(usersRaw, PRELOADED_USERS));
   const classes = normalizeClassRows(mergePreloadedRows(classesRaw, PRELOADED_CLASSES));
-  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets};
+  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses};
 }
 
 // Session (this device only)
@@ -2271,7 +2273,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     return <TakeComponent quiz={taking} student={user} allResponses={data.responses} onSaved={reload} onDone={()=>{setTaking(null);if(clearDirect)clearDirect();}}/>;
   }
 
-  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"reading",icon:"📖",label:"Reading"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
+  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"reading",icon:"📖",label:"Reading"},{id:"readingTheory",icon:"📚",label:"Theory"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -2323,6 +2325,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
         </div>}
 
         {tab==="reading" && <ReadingProgressStudent user={user} data={data} reload={reload}/>}
+        {tab==="readingTheory" && <ReadingTheoryStudent user={user} data={data} reload={reload}/>}
 
         {tab==="progress" && <div>
           {myResps.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>Complete quizzes to see progress.</p></Card>:<>
@@ -4137,6 +4140,443 @@ function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
   </Card>;
 }
 
+
+
+// ── READING THEORY v2 — Adaptive + KP + Badges ───────────────
+// نظام تكيفي: المستوى يتطور حسب أداء الطالب
+// نقاط KP تتراكم مع كل إجابة صحيحة
+// أوسمة ReadTheory: Luminary → Orienteer → ... → Page 2+
+
+const RT_TOPICS = [
+  "Animals and Nature","Sports and Health","Technology","Food and Culture",
+  "Famous People","Travel and Places","Science and Discoveries","Environment",
+  "School and Education","Friendship and Family","History","Space and Universe",
+  "Ocean Life","Weather and Climate","Music and Art","Healthy Habits",
+  "Robots and AI","Ancient Civilizations","Insects and Plants","Teamwork"
+];
+
+// 5 مستويات تكيفية — كل مستوى أطول وأصعب
+const RT_ADAPTIVE_LEVELS = [
+  {id:1, name:"Beginner",    words:60,  color:"#22c55e", emoji:"🟢"},
+  {id:2, name:"Elementary",  words:90,  color:"#3b82f6", emoji:"🔵"},
+  {id:3, name:"Intermediate",words:130, color:"#f59e0b", emoji:"🟡"},
+  {id:4, name:"Upper-Inter", words:170, color:"#f97316", emoji:"🟠"},
+  {id:5, name:"Advanced",    words:220, color:"#ef4444", emoji:"🔴"},
+];
+
+// أوسمة ReadTheory الأصلية — مبنية على نقاط KP
+const RT_BADGES = [
+  {id:"luminary",   icon:"💡", name:"Luminary",    kp:10,   desc:"Earn 10 KP"},
+  {id:"orienteer",  icon:"🧭", name:"Orienteer",   kp:50,   desc:"Earn 50 KP"},
+  {id:"innovator",  icon:"⚙️", name:"Innovator",   kp:100,  desc:"Earn 100 KP"},
+  {id:"tactician",  icon:"♟️", name:"Tactician",   kp:150,  desc:"Earn 150 KP"},
+  {id:"analyst",    icon:"🔍", name:"Analyst",     kp:200,  desc:"Earn 200 KP"},
+  {id:"naturalist", icon:"🌿", name:"Naturalist",  kp:310,  desc:"Earn 310 KP"},
+  {id:"explorer",   icon:"🗺️", name:"Explorer",    kp:400,  desc:"Earn 400 KP"},
+  {id:"optimist",   icon:"☀️", name:"Optimist",    kp:500,  desc:"Earn 500 KP"},
+  {id:"scholar",    icon:"🎓", name:"Scholar",     kp:650,  desc:"Earn 650 KP"},
+  {id:"champion",   icon:"🏆", name:"Champion",    kp:850,  desc:"Earn 850 KP"},
+  {id:"legend",     icon:"⭐", name:"Legend",      kp:1100, desc:"Earn 1100 KP"},
+  {id:"master",     icon:"👑", name:"Master",      kp:1500, desc:"Earn 1500 KP"},
+];
+
+// احسب KP: كل إجابة صحيحة = نقاط حسب المستوى
+function rtKpPerCorrect(levelId){ return levelId||1; } // Beginner=1, Advanced=5
+function rtCalcKp(resps){
+  return (resps||[]).reduce((sum,r)=>{
+    const lv = RT_ADAPTIVE_LEVELS.find(l=>l.name===(r.level||"Beginner")||l.id===(r.levelId||1));
+    const kpEach = rtKpPerCorrect(lv?lv.id:1);
+    return sum + (r.correct||0)*kpEach;
+  },0);
+}
+function rtCurrentBadge(kp){
+  let badge = null;
+  RT_BADGES.forEach(b=>{ if(kp>=b.kp) badge=b; });
+  return badge;
+}
+function rtNextBadge(kp){
+  return RT_BADGES.find(b=>kp<b.kp)||null;
+}
+// حساب المستوى التكيفي بناءً على آخر 3 محاولات
+function rtAdaptiveLevel(resps){
+  if(!resps||!resps.length) return RT_ADAPTIVE_LEVELS[0];
+  const last3 = resps.slice(-3);
+  const avgScore = last3.reduce((s,r)=>s+(r.score||0),0)/last3.length;
+  const lastLv = RT_ADAPTIVE_LEVELS.find(l=>l.name===(resps[resps.length-1].level||"Beginner")||l.id===(resps[resps.length-1].levelId||1)) || RT_ADAPTIVE_LEVELS[0];
+  let newIdx = RT_ADAPTIVE_LEVELS.indexOf(lastLv);
+  if(avgScore>=80 && newIdx<RT_ADAPTIVE_LEVELS.length-1) newIdx++;
+  else if(avgScore<50 && newIdx>0) newIdx--;
+  return RT_ADAPTIVE_LEVELS[newIdx];
+}
+
+async function generateReadingTheorySession(apiKey, level, topic) {
+  const prompt = `Create an English reading comprehension exercise for EFL students.
+Level: ${level.name} (about ${level.words} words).
+Topic: ${topic}.
+
+Write a reading passage of exactly about ${level.words} words. Then create exactly 5 multiple-choice comprehension questions. Each question has 4 options (A,B,C,D) with ONE correct answer. Mix question types: Main Idea, Detail, Inference, Vocabulary, Cause & Effect.
+
+Return ONLY valid JSON (no markdown):
+{"topic":"${topic}","level":"${level.name}","passage":"full passage text","questions":[{"text":"question","options":["A","B","C","D"],"correct":0}]}
+
+"correct" is 0-3 index of the right answer.`;
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1400,messages:[{role:"user",content:prompt}]})
+  });
+  if(!resp.ok) throw new Error("API error "+resp.status);
+  const data = await resp.json();
+  let txt = (data.content&&data.content[0]&&data.content[0].text)||"";
+  txt = txt.replace(/```json/g,"").replace(/```/g,"").trim();
+  const s=txt.indexOf("{"), e=txt.lastIndexOf("}");
+  if(s>=0&&e>s) txt=txt.slice(s,e+1);
+  const parsed = JSON.parse(txt);
+  if(!parsed.passage||!parsed.questions||parsed.questions.length<3) throw new Error("Invalid AI response");
+  return parsed;
+}
+
+// ── Reading Theory Teacher: نتائج فقط
+function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
+  const rtResps = (data.readingTheoryResponses||[]);
+  const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
+  const [filterClass,setFilterClass] = useState("all");
+
+  const filtered = filterClass==="all" ? myResps : myResps.filter(r=>{
+    const st=myStudents.find(s=>responseBelongsToStudent(r,s));
+    return st && st.classId===filterClass;
+  });
+  const avg = filtered.length ? Math.round(filtered.reduce((s,r)=>s+(r.score||0),0)/filtered.length) : null;
+  const totalKp = rtCalcKp(filtered);
+
+  // تجميع حسب الطالب
+  const byStudent = {};
+  filtered.forEach(r=>{
+    const st=myStudents.find(s=>responseBelongsToStudent(r,s));
+    const key=st?st.id:(r.studentId||"?");
+    if(!byStudent[key]) byStudent[key]={st,resps:[]};
+    byStudent[key].resps.push(r);
+  });
+  const rows = Object.values(byStudent).sort((a,b)=>(a.st&&a.st.name||"").localeCompare(b.st&&b.st.name||""));
+
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"15px",display:"block",marginBottom:"3px",fontFamily:F}}>📚 Reading Theory — Results</strong>
+      <p style={{margin:0,color:"#94a3b8",fontSize:"11px",fontFamily:F}}>Adaptive AI reading. Students earn KP and unlock badges as they improve.</p>
+    </Card>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"11px"}}>
+      <Stat icon="📝" label="Attempts" value={filtered.length} color={C.p}/>
+      <Stat icon="📊" label="Average" value={avg!==null?avg+"%":"—"} color={avg!==null?gc(avg):C.mu}/>
+      <Stat icon="⚡" label="Total KP" value={totalKp} color={C.w}/>
+    </div>
+    <div style={{marginBottom:"11px"}}>
+      <select value={filterClass} onChange={e=>setFilterClass(e.target.value)} style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh,width:"100%"}}>
+        <option value="all">All Classes</option>
+        {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+    </div>
+    {rows.length===0&&<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>No Reading Theory attempts yet.</p></Card>}
+    {rows.map(({st,resps})=>{
+      const sKp=rtCalcKp(resps);
+      const sAvg=Math.round(resps.reduce((s,r)=>s+(r.score||0),0)/resps.length);
+      const badge=rtCurrentBadge(sKp);
+      const next=rtNextBadge(sKp);
+      const cls=st&&data.classes.find(c=>c.id===st.classId);
+      const adaptLv=rtAdaptiveLevel(resps);
+      return <Card key={st?st.id:resps[0].studentId} style={{marginBottom:"8px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"8px"}}>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:"800",fontSize:"13px",color:C.tx,fontFamily:F}}>{st?st.name:(resps[0].studentName||"Unknown")}</div>
+            <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {st&&"#"+st.studentId} · {resps.length} attempts</div>
+            <div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginTop:"5px",alignItems:"center"}}>
+              {badge&&<span style={{fontSize:"10px",background:"#fef9ec",border:"1px solid #fde68a",padding:"2px 7px",borderRadius:"999px",fontWeight:"700",fontFamily:F}}>{badge.icon} {badge.name}</span>}
+              <span style={{fontSize:"10px",background:"#eff6ff",color:C.p,padding:"2px 7px",borderRadius:"999px",fontWeight:"700",fontFamily:F}}>⚡ {sKp} KP</span>
+              <span style={{fontSize:"10px",background:adaptLv.color+"20",color:adaptLv.color,padding:"2px 7px",borderRadius:"999px",fontWeight:"700",fontFamily:F}}>{adaptLv.emoji} {adaptLv.name}</span>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontWeight:"900",fontSize:"18px",color:gc(sAvg),fontFamily:F}}>{sAvg}%</div>
+            <div style={{fontSize:"9px",color:C.mu,fontFamily:F}}>avg</div>
+          </div>
+        </div>
+        {next&&<div style={{marginTop:"7px"}}>
+          <div style={{fontSize:"9px",color:C.mu,fontFamily:F,marginBottom:"3px"}}>{next.icon} {next.name}: {next.kp-sKp} KP to go</div>
+          <div style={{height:"5px",background:"#f1f5f9",borderRadius:"999px"}}>
+            <div style={{height:"100%",width:Math.min(100,Math.round(sKp/next.kp*100))+"%",background:C.p,borderRadius:"999px"}}/>
+          </div>
+        </div>}
+        <div style={{marginTop:"8px",borderTop:"1px solid "+C.br,paddingTop:"7px"}}>
+          {resps.slice().sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0)).slice(0,4).map(r=>(
+            <div key={r.id} style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.tx,fontFamily:F,padding:"3px 0",borderBottom:"1px solid "+C.br+"40"}}>
+              <span style={{color:C.mu,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.topic||"Reading"}</span>
+              <span style={{color:C.mu,marginRight:"7px"}}>{r.level||""}</span>
+              <span style={{fontWeight:"800",color:gc(r.score||0)}}>{r.score||0}%</span>
+            </div>
+          ))}
+        </div>
+      </Card>;
+    })}
+  </div>;
+}
+
+// ── Reading Theory Student: تكيفي + KP + أوسمة
+function ReadingTheoryStudent({user,data,reload}){
+  const [phase,setPhase]=useState("list");
+  const [session,setSession]=useState(null);
+  const [answers,setAnswers]=useState({});
+  const [result,setResult]=useState(null);
+  const [errMsg,setErrMsg]=useState("");
+  const [badgeModal,setBadgeModal]=useState(null);
+
+  const rtResps=(data.readingTheoryResponses||[]).filter(r=>responseBelongsToStudent(r,user));
+  const totalKp=rtCalcKp(rtResps);
+  const currentBadge=rtCurrentBadge(totalKp);
+  const nextBadge=rtNextBadge(totalKp);
+  const adaptLevel=rtAdaptiveLevel(rtResps);
+  const earnedBadges=RT_BADGES.filter(b=>totalKp>=b.kp);
+  const myAvg=rtResps.length?Math.round(rtResps.reduce((s,r)=>s+(r.score||0),0)/rtResps.length):null;
+
+  async function startSession(){
+    const key=getAIKey();
+    if(!key){setErrMsg("No AI key. Ask your teacher to set it in Settings ⚙️.");return;}
+    setErrMsg("");setPhase("loading");
+    const topic=RT_TOPICS[Math.floor(Math.random()*RT_TOPICS.length)];
+    try{
+      const sess=await generateReadingTheorySession(key,adaptLevel,topic);
+      sess.questions=sess.questions.slice(0,5).map((q,i)=>({...q,id:i+1}));
+      sess.levelId=adaptLevel.id;
+      setSession(sess);setAnswers({});setResult(null);setPhase("reading");
+    }catch(e){setErrMsg("Failed: "+e.message);setPhase("list");}
+  }
+
+  function selectAnswer(qId,oi){if(result)return;setAnswers(a=>({...a,[qId]:oi}));}
+
+  async function submit(){
+    if(!session)return;
+    if(session.questions.some(q=>answers[q.id]===undefined)){alert("Answer all 5 questions first.");return;}
+    let correct=0;
+    session.questions.forEach(q=>{if(answers[q.id]===q.correct)correct++;});
+    const total=session.questions.length;
+    const score=Math.round(correct/total*100);
+    const kpEarned=correct*rtKpPerCorrect(session.levelId||adaptLevel.id);
+    const newTotalKp=totalKp+kpEarned;
+    const oldBadge=rtCurrentBadge(totalKp);
+    const newBadge=rtCurrentBadge(newTotalKp);
+    const newBadgeUnlocked=(newBadge&&(!oldBadge||newBadge.id!==oldBadge.id))?newBadge:null;
+    // حساب المستوى التالي
+    const fakeResps=[...rtResps,{score,level:session.level,levelId:session.levelId||adaptLevel.id,correct}];
+    const nextLevel=rtAdaptiveLevel(fakeResps);
+    setResult({correct,total,score,kpEarned,newTotalKp,newBadgeUnlocked,nextLevel});
+    setPhase("result");
+    const id=uid();
+    try{
+      await fsSet("readingTheoryResponses",id,{
+        id,topic:session.topic,level:session.level,levelId:session.levelId||adaptLevel.id,
+        passage:session.passage,questions:session.questions,answers,
+        correct,total,score,kpEarned,
+        studentId:user.id,studentNumber:user.studentId,studentName:user.name,
+        classId:user.classId,submittedAt:new Date().toISOString(),createdAt:today()
+      });
+      await reload();
+    }catch(e){console.warn("Save failed",e);}
+  }
+
+  // ── LOADING
+  if(phase==="loading") return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"65vh",gap:"16px",padding:"20px"}}>
+      <div style={{fontSize:"54px"}}>📚</div>
+      <div style={{fontSize:"16px",fontWeight:"800",color:C.tx,fontFamily:F,textAlign:"center"}}>Generating your passage…</div>
+      <div style={{fontSize:"12px",color:C.mu,fontFamily:F,textAlign:"center"}}>{adaptLevel.emoji} {adaptLevel.name} level · {adaptLevel.words} words</div>
+      <div style={{width:"44px",height:"44px",border:"5px solid "+C.br,borderTopColor:C.p,borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  // ── READING
+  if(phase==="reading"&&session) return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:"9px",marginBottom:"11px"}}>
+        <button onClick={()=>setPhase("list")} style={{background:"none",border:"none",fontSize:"22px",cursor:"pointer",color:C.mu}}>←</button>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:"800",fontSize:"14px",color:C.tx,fontFamily:F}}>{session.topic}</div>
+          <div style={{display:"flex",gap:"6px",alignItems:"center",marginTop:"3px"}}>
+            <span style={{fontSize:"10px",fontWeight:"700",background:adaptLevel.color+"25",color:adaptLevel.color,padding:"2px 8px",borderRadius:"999px",fontFamily:F}}>{adaptLevel.emoji} {session.level}</span>
+            <span style={{fontSize:"10px",color:C.mu,fontFamily:F}}>⚡ {totalKp} KP</span>
+          </div>
+        </div>
+      </div>
+      <Card style={{marginBottom:"13px",background:"#f8fafc",border:"2px solid "+C.p}}>
+        <div style={{fontSize:"11px",fontWeight:"700",color:C.p,marginBottom:"8px",fontFamily:F}}>📖 Read carefully:</div>
+        <p style={{fontSize:"14px",lineHeight:"1.9",color:C.tx,fontFamily:F,margin:0,whiteSpace:"pre-wrap"}}>{session.passage}</p>
+      </Card>
+      <div style={{fontSize:"13px",fontWeight:"800",color:C.tx,marginBottom:"10px",fontFamily:F}}>❓ Answer all 5 questions:</div>
+      {session.questions.map((q,qi)=>{
+        const chosen=answers[q.id];
+        return <Card key={q.id} style={{marginBottom:"10px",border:"2px solid "+(chosen!==undefined?C.p:C.br)}}>
+          <div style={{fontWeight:"700",fontSize:"13px",color:C.tx,marginBottom:"10px",fontFamily:F,lineHeight:"1.5"}}>Q{qi+1}: {q.text}</div>
+          {q.options.map((opt,oi)=>{
+            const isChosen=chosen===oi;
+            return <button key={oi} onClick={()=>selectAnswer(q.id,oi)}
+              style={{display:"flex",alignItems:"center",gap:"10px",width:"100%",padding:"10px 12px",marginBottom:"6px",borderRadius:"10px",border:"2px solid "+(isChosen?C.p:C.br),background:isChosen?"#eff6ff":"#f8fafc",cursor:"pointer",textAlign:"left",fontFamily:F}}>
+              <span style={{width:"24px",height:"24px",borderRadius:"50%",border:"2px solid "+(isChosen?C.p:C.br),background:isChosen?C.p:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",fontWeight:"800",flexShrink:0,color:isChosen?"#fff":C.mu}}>{["A","B","C","D"][oi]}</span>
+              <span style={{fontSize:"13px",fontWeight:isChosen?"700":"400",color:isChosen?C.p:C.tx}}>{opt}</span>
+            </button>;
+          })}
+        </Card>;
+      })}
+      <div style={{position:"sticky",bottom:"14px",paddingBottom:"4px"}}>
+        <Btn color={C.p} onClick={submit} style={{width:"100%",padding:"14px",fontSize:"15px"}}>✅ Submit Answers</Btn>
+      </div>
+    </div>
+  );
+
+  // ── RESULT
+  if(phase==="result"&&session&&result){
+    const lvChanged=result.nextLevel.id!==adaptLevel.id;
+    return(
+      <div>
+        {/* New Badge Modal */}
+        {result.newBadgeUnlocked&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:"20px"}}>
+          <div style={{background:"#fff",borderRadius:"20px",padding:"30px 24px",textAlign:"center",maxWidth:"320px",width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:"64px",marginBottom:"10px"}}>{result.newBadgeUnlocked.icon}</div>
+            <div style={{fontSize:"11px",fontWeight:"700",color:C.mu,fontFamily:F,letterSpacing:"2px",textTransform:"uppercase",marginBottom:"6px"}}>New Badge Unlocked!</div>
+            <div style={{fontSize:"26px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>{result.newBadgeUnlocked.name}</div>
+            <div style={{fontSize:"12px",color:C.mu,fontFamily:F,marginBottom:"18px"}}>{result.newBadgeUnlocked.desc}</div>
+            <Btn color={C.p} onClick={()=>setResult(r=>({...r,newBadgeUnlocked:null}))} style={{width:"100%"}}>🎉 Awesome!</Btn>
+          </div>
+        </div>}
+
+        <div style={{textAlign:"center",padding:"20px 0 14px"}}>
+          <div style={{fontSize:"52px",marginBottom:"8px"}}>{result.score>=80?"🌟":result.score>=60?"👍":"📚"}</div>
+          <div style={{fontSize:"46px",fontWeight:"900",color:gc(result.score),fontFamily:F}}>{result.score}%</div>
+          <div style={{fontSize:"13px",color:C.mu,fontFamily:F,marginTop:"4px"}}>{result.correct}/{result.total} correct</div>
+        </div>
+
+        {/* KP Earned */}
+        <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,#fef9ec,#fffbeb)",border:"2px solid #fde68a",textAlign:"center"}}>
+          <div style={{fontSize:"28px",fontWeight:"900",color:"#92400e",fontFamily:F}}>+{result.kpEarned} KP</div>
+          <div style={{fontSize:"12px",color:"#b45309",fontFamily:F,marginTop:"3px"}}>Total: {result.newTotalKp} KP</div>
+          {nextBadge&&<div style={{marginTop:"10px"}}>
+            <div style={{fontSize:"10px",color:C.mu,fontFamily:F,marginBottom:"5px"}}>{nextBadge.icon} {nextBadge.name}: {Math.max(0,nextBadge.kp-result.newTotalKp)} KP to go</div>
+            <div style={{height:"8px",background:"#f1f5f9",borderRadius:"999px",overflow:"hidden"}}>
+              <div style={{height:"100%",width:Math.min(100,Math.round(result.newTotalKp/nextBadge.kp*100))+"%",background:"linear-gradient(90deg,"+C.p+","+C.s+")",borderRadius:"999px",transition:"width .6s ease"}}/>
+            </div>
+          </div>}
+        </Card>
+
+        {/* Level Change */}
+        {lvChanged&&<Card style={{marginBottom:"11px",background:result.nextLevel.id>adaptLevel.id?"#f0fdf4":"#fef2f2",border:"2px solid "+(result.nextLevel.id>adaptLevel.id?C.s:C.d),textAlign:"center"}}>
+          <div style={{fontSize:"20px",marginBottom:"4px"}}>{result.nextLevel.id>adaptLevel.id?"🚀":"📖"}</div>
+          <div style={{fontWeight:"800",fontSize:"13px",color:C.tx,fontFamily:F}}>{result.nextLevel.id>adaptLevel.id?"Level Up!":"Keep Practicing!"}</div>
+          <div style={{fontSize:"12px",color:C.mu,fontFamily:F,marginTop:"3px"}}>{adaptLevel.emoji} {adaptLevel.name} → {result.nextLevel.emoji} {result.nextLevel.name}</div>
+        </Card>}
+
+        {/* Review */}
+        <Card style={{marginBottom:"11px",background:"#f8fafc"}}>
+          <div style={{fontSize:"11px",fontWeight:"700",color:C.mu,marginBottom:"8px",fontFamily:F}}>Review your answers:</div>
+          {session.questions.map((q,qi)=>{
+            const chosen=answers[q.id];
+            const isRight=chosen===q.correct;
+            return <div key={q.id} style={{marginBottom:"10px",paddingBottom:"10px",borderBottom:"1px solid "+C.br}}>
+              <div style={{fontSize:"12px",fontWeight:"700",color:C.tx,marginBottom:"6px",fontFamily:F,lineHeight:"1.4"}}>Q{qi+1}: {q.text}</div>
+              {q.options.map((opt,oi)=>{
+                const isCorrect=oi===q.correct;
+                const isChosen=chosen===oi;
+                if(!isCorrect&&!isChosen) return null;
+                let bg="transparent",border=C.br,color=C.mu,icon="";
+                if(isCorrect){bg="#f0fdf4";border=C.s;color="#166534";icon="✅";}
+                else if(isChosen){bg="#fef2f2";border=C.d;color="#991b1b";icon="❌";}
+                return <div key={oi} style={{display:"flex",alignItems:"center",gap:"7px",padding:"7px 10px",borderRadius:"8px",border:"2px solid "+border,background:bg,marginBottom:"4px"}}>
+                  <span style={{fontSize:"13px"}}>{icon}</span>
+                  <span style={{fontSize:"12px",fontWeight:"700",color}}>{["A","B","C","D"][oi]}: {opt}</span>
+                </div>;
+              })}
+              {!isRight&&<div style={{fontSize:"11px",color:C.s,fontWeight:"700",marginTop:"4px",fontFamily:F}}>✅ Correct: {q.options[q.correct]}</div>}
+            </div>;
+          })}
+        </Card>
+
+        <Btn color={C.p} onClick={startSession} style={{width:"100%",marginBottom:"9px",fontSize:"14px"}}>🔄 Next Passage ({result.nextLevel.emoji} {result.nextLevel.name})</Btn>
+        <Btn color={C.mu} onClick={()=>setPhase("list")} style={{width:"100%"}}>← Back</Btn>
+      </div>
+    );
+  }
+
+  // ── LIST (الشاشة الرئيسية)
+  return(
+    <div>
+      {/* Hero */}
+      <Card style={{marginBottom:"13px",background:"linear-gradient(135deg,#0f172a,#1e3a5f)",border:"none",borderRadius:"16px"}}>
+        <div style={{textAlign:"center",padding:"12px 0 8px"}}>
+          <div style={{fontSize:"40px",marginBottom:"8px"}}>📚</div>
+          <div style={{fontWeight:"900",fontSize:"18px",color:"#fff",fontFamily:F,marginBottom:"4px"}}>Reading Theory</div>
+          {currentBadge&&<div style={{fontSize:"13px",color:"#fde68a",fontFamily:F,marginBottom:"4px"}}>
+            {currentBadge.icon} Progress level: <strong>{currentBadge.name}</strong>
+          </div>}
+          <div style={{fontSize:"12px",color:"#94a3b8",fontFamily:F,marginBottom:"6px"}}>
+            ⚡ {totalKp} Total points · {adaptLevel.emoji} {adaptLevel.name}
+          </div>
+          {nextBadge&&<div style={{padding:"0 16px",marginBottom:"14px"}}>
+            <div style={{fontSize:"10px",color:"#64748b",fontFamily:F,marginBottom:"5px"}}>{nextBadge.kp-totalKp} points to the next level ({nextBadge.icon} {nextBadge.name})</div>
+            <div style={{height:"8px",background:"#1e293b",borderRadius:"999px",overflow:"hidden"}}>
+              <div style={{height:"100%",width:Math.min(100,Math.round(totalKp/nextBadge.kp*100))+"%",background:"linear-gradient(90deg,#3b82f6,#22c55e)",borderRadius:"999px"}}/>
+            </div>
+          </div>}
+          <button onClick={startSession} style={{padding:"14px 36px",background:"#fff",color:C.p,border:"none",borderRadius:"12px",fontWeight:"900",fontSize:"15px",cursor:"pointer",fontFamily:F,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>▶ Start Reading</button>
+        </div>
+      </Card>
+
+      {errMsg&&<div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:"8px",padding:"10px",fontSize:"12px",color:"#991b1b",marginBottom:"11px",fontFamily:F}}>{errMsg}</div>}
+
+      {/* Badges */}
+      <Card style={{marginBottom:"11px"}}>
+        <strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"10px",fontFamily:F}}>🏅 Badges</strong>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px"}}>
+          {RT_BADGES.map(b=>{
+            const earned=totalKp>=b.kp;
+            return <div key={b.id} style={{textAlign:"center",padding:"8px 4px",borderRadius:"10px",background:earned?"#fef9ec":"#f8fafc",border:"1px solid "+(earned?"#fde68a":C.br),opacity:earned?1:0.5}}>
+              <div style={{fontSize:"22px",marginBottom:"3px",filter:earned?"none":"grayscale(1)"}}>{b.icon}</div>
+              <div style={{fontSize:"9px",fontWeight:"700",color:earned?"#92400e":C.mu,fontFamily:F,lineHeight:"1.3"}}>{b.name}</div>
+              {!earned&&<div style={{fontSize:"8px",color:C.mu,fontFamily:F}}>{b.kp} KP</div>}
+              {earned&&<div style={{fontSize:"8px",color:C.s,fontFamily:F}}>✓ Achieved!</div>}
+            </div>;
+          })}
+        </div>
+      </Card>
+
+      {/* History */}
+      {rtResps.length>0&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"11px"}}>
+          <Stat icon="📝" label="Sessions" value={rtResps.length} color={C.p}/>
+          <Stat icon="📊" label="Average" value={myAvg!==null?myAvg+"%":"—"} color={myAvg!==null?gc(myAvg):C.mu}/>
+          <Stat icon="⚡" label="Total KP" value={totalKp} color={C.w}/>
+        </div>
+        <strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"8px",fontFamily:F}}>📋 Recent Sessions</strong>
+        {rtResps.slice().sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0)).slice(0,8).map(r=>{
+          const lv=RT_ADAPTIVE_LEVELS.find(l=>l.name===r.level||l.id===r.levelId)||RT_ADAPTIVE_LEVELS[0];
+          return <Card key={r.id} style={{marginBottom:"7px",border:"1px solid "+gc(r.score||0)+"30"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.topic||"Reading"}</div>
+                <div style={{fontSize:"10px",color:C.mu,fontFamily:F,marginTop:"2px"}}>
+                  <span style={{background:lv.color+"20",color:lv.color,padding:"1px 6px",borderRadius:"999px",fontWeight:"700",marginRight:"5px"}}>{lv.emoji} {lv.name}</span>
+                  {r.correct||0}/{r.total||0} · +{r.kpEarned||0} KP
+                </div>
+              </div>
+              <div style={{fontWeight:"900",fontSize:"18px",color:gc(r.score||0),fontFamily:F,marginLeft:"8px"}}>{r.score||0}%</div>
+            </div>
+          </Card>;
+        })}
+      </>}
+    </div>
+  );
+}
+
+
+
+
+
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
@@ -4551,7 +4991,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -4605,6 +5045,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="readingReport" && <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
+        {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
 
         {tab==="quizzes" && <div>
           {qDash ? (
