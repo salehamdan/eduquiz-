@@ -13,6 +13,7 @@
 <!-- SECOND_FOURTH_RELINK_TOOL_20260610 -->
 <!-- STICKY_GRADEBOOK_QRD_FILTERS_SAFE_20260611 -->
 <!-- SAFE_TABLE_INTERNAL_SCROLL_NO_TOPBAR_COVER_20260611 -->
+<!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -471,12 +472,15 @@ async function fsDel(col, id) {
 }
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses")
+  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings")
   ]);
   const users = ensureProtectedStudents(mergePreloadedRows(usersRaw, PRELOADED_USERS));
   const classes = normalizeClassRows(mergePreloadedRows(classesRaw, PRELOADED_CLASSES));
-  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses};
+  // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
+  const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
+  if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
+  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings};
 }
 
 // Session (this device only)
@@ -586,9 +590,23 @@ function rpStartRecognition(onText){
   try{rec.start();return rec;}catch(e){return null;}
 }
 
-// ── AI KEY (stored locally on teacher's device) ───────────────
+// ── AI KEY ────────────────────────────────────────────────────
+// المعلم يحفظ المفتاح محلياً + Firebase
+// الطالب يقرأه من Firebase تلقائياً بدون أن يراه
 function getAIKey() { try { return localStorage.getItem("eq_aikey") || ""; } catch(e){ return ""; } }
 function setAIKey(k) { try { if(k) localStorage.setItem("eq_aikey", k); else localStorage.removeItem("eq_aikey"); } catch(e){} }
+async function saveAIKeyToCloud(k) {
+  if(!FIREBASE_OK||!db) return;
+  try { await fsSet("appSettings","ai_key",{id:"ai_key",value:k||"",updatedAt:new Date().toISOString()}); } catch(e){}
+}
+async function loadAIKeyFromCloud() {
+  if(!FIREBASE_OK||!db) return "";
+  try {
+    const docs=await fsAll("appSettings");
+    const r=docs.find(d=>d.id==="ai_key");
+    return String((r&&r.value)||"").trim();
+  } catch(e){ return ""; }
+}
 
 // ── SKILL DETECTION (shared by AI generation & import) ────────
 function detectSkill(text, providedSkill, quizType) {
@@ -2112,8 +2130,10 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
   const [password,setPassword]=useState("");
   const [msg,setMsg]=useState("");
   const [saving,setSaving]=useState(false);
+  const [aiKeyInput,setAiKeyInput]=useState(()=>getAIKey());
+  const [aiKeyMsg,setAiKeyMsg]=useState("");
 
-  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg(""); } },[open]);
+  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg("");setAiKeyInput(getAIKey());setAiKeyMsg(""); } },[open]);
 
   async function save(){
     setMsg("");
@@ -2122,9 +2142,7 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
     setSaving(true);
     try {
       const all = await fsAll("users");
-      // Check duplicate Student ID (other than this user)
       if(user.role==="student" && all.find(u=>u.id!==user.id && (u.studentId||"")===studentId.trim())){setMsg("That Student ID is already used by someone else.");setSaving(false);return;}
-      // Check duplicate email (other than this user)
       if(email.trim() && all.find(u=>u.id!==user.id && (u.email||"").toLowerCase()===email.trim().toLowerCase())){setMsg("That email is already used.");setSaving(false);return;}
       const updated = {...user, name:name.trim(), email:email.trim().toLowerCase()};
       if(user.role==="student"){ updated.studentId=studentId.trim(); updated.classId=classId; }
@@ -2136,6 +2154,14 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
       setTimeout(()=>{ onClose(); }, 600);
     } catch(e){ setMsg("Error saving: "+(e.message||e)); }
     setSaving(false);
+  }
+
+  async function saveAIKey(){
+    const k=aiKeyInput.trim();
+    setAIKey(k);
+    await saveAIKeyToCloud(k);
+    setAiKeyMsg(k?"✅ AI Key saved & shared with students!":"✅ AI Key cleared.");
+    setTimeout(()=>setAiKeyMsg(""),3000);
   }
 
   const inp={width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box",marginBottom:"9px"};
@@ -2159,6 +2185,13 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
       <Label text="New Password (leave blank to keep current)"/>
       <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" style={inp}/>
       <Btn onClick={save} disabled={saving} style={{width:"100%",marginTop:"4px"}}>{saving?"Saving…":"💾 Save Changes"}</Btn>
+      {user.role==="teacher" && <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid "+C.br}}>
+        <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🤖 Claude AI Key</div>
+        <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"8px",background:"#eff6ff",padding:"8px",borderRadius:"7px"}}>هذا المفتاح يُشارك تلقائياً مع الطلاب عبر Firebase لتمكين Reading Theory. الطلاب لا يرون المفتاح.</div>
+        <input type="password" value={aiKeyInput} onChange={e=>setAiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{...inp,marginBottom:"7px",fontFamily:"monospace"}}/>
+        {aiKeyMsg&&<div style={{fontSize:"11px",color:C.s,fontWeight:"700",marginBottom:"7px",fontFamily:F}}>{aiKeyMsg}</div>}
+        <Btn color={C.s} onClick={saveAIKey} style={{width:"100%"}}>💾 Save & Share AI Key with Students</Btn>
+      </div>}
     </Modal>
   );
 }
@@ -4338,9 +4371,14 @@ function ReadingTheoryStudent({user,data,reload}){
   const myAvg=rtResps.length?Math.round(rtResps.reduce((s,r)=>s+(r.score||0),0)/rtResps.length):null;
 
   async function startSession(){
-    const key=getAIKey();
-    if(!key){setErrMsg("No AI key. Ask your teacher to set it in Settings ⚙️.");return;}
     setErrMsg("");setPhase("loading");
+    // أولاً: جرب المفتاح المحلي، إذا ما في جرب Firebase
+    let key=getAIKey();
+    if(!key){
+      key=await loadAIKeyFromCloud();
+      if(key) setAIKey(key); // خزّنه محلياً للمرة القادمة
+    }
+    if(!key){setErrMsg("No AI key. Ask your teacher to set it in Settings ⚙️.");setPhase("list");return;}
     const topic=RT_TOPICS[Math.floor(Math.random()*RT_TOPICS.length)];
     try{
       const sess=await generateReadingTheorySession(key,adaptLevel,topic);
