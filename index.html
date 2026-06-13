@@ -13,6 +13,7 @@
 <!-- SECOND_FOURTH_RELINK_TOOL_20260610 -->
 <!-- STICKY_GRADEBOOK_QRD_FILTERS_SAFE_20260611 -->
 <!-- SAFE_TABLE_INTERNAL_SCROLL_NO_TOPBAR_COVER_20260611 -->
+<!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
@@ -4275,6 +4276,16 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const rtResps = (data.readingTheoryResponses||[]);
   const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
   const [filterClass,setFilterClass] = useState("all");
+  const [aiKey,setAiKeyInput] = useState(()=>getAIKey());
+  const [aiKeyMsg,setAiKeyMsg] = useState("");
+
+  async function saveKey(){
+    const k=aiKey.trim();
+    setAIKey(k);
+    await saveAIKeyToCloud(k);
+    setAiKeyMsg(k?"✅ Key saved! Students can now use Reading Theory.":"✅ Key cleared.");
+    setTimeout(()=>setAiKeyMsg(""),3000);
+  }
 
   const filtered = filterClass==="all" ? myResps : myResps.filter(r=>{
     const st=myStudents.find(s=>responseBelongsToStudent(r,s));
@@ -4297,6 +4308,13 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
       <strong style={{color:"#fff",fontSize:"15px",display:"block",marginBottom:"3px",fontFamily:F}}>📚 Reading Theory — Results</strong>
       <p style={{margin:0,color:"#94a3b8",fontSize:"11px",fontFamily:F}}>Adaptive AI reading. Students earn KP and unlock badges as they improve.</p>
+    </Card>
+    <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}>
+      <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"5px"}}>🔑 Claude AI Key</div>
+      <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"8px"}}>أدخل المفتاح هنا — يُشارك تلقائياً مع الطلاب عبر Firebase. الطلاب لا يرون المفتاح.</div>
+      <input type="password" value={aiKey} onChange={e=>setAiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{width:"100%",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:"monospace",outline:"none",background:"#f8fafc",boxSizing:"border-box",marginBottom:"7px"}}/>
+      {aiKeyMsg&&<div style={{fontSize:"11px",color:C.s,fontWeight:"700",marginBottom:"7px",fontFamily:F}}>{aiKeyMsg}</div>}
+      <Btn color={C.s} onClick={saveKey} style={{width:"100%"}}>{aiKey?"💾 Save & Share with Students":"🗑 Clear AI Key"}</Btn>
     </Card>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"11px"}}>
       <Stat icon="📝" label="Attempts" value={filtered.length} color={C.p}/>
