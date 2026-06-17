@@ -13,7 +13,6 @@
 <!-- SECOND_FOURTH_RELINK_TOOL_20260610 -->
 <!-- STICKY_GRADEBOOK_QRD_FILTERS_SAFE_20260611 -->
 <!-- SAFE_TABLE_INTERNAL_SCROLL_NO_TOPBAR_COVER_20260611 -->
-<!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
@@ -4272,30 +4271,13 @@ Return ONLY valid JSON (no markdown):
   return parsed;
 }
 
-// ── Reading Theory Teacher: مفتاح + تحكم + نتائج
+// ── Reading Theory Teacher: نتائج فقط
 function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const rtResps = (data.readingTheoryResponses||[]);
   const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
-
-  // إعدادات التحكم من Firebase (appSettings → rt_access)
-  const rtAccess = (data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
-  const [status,setStatus] = useState(rtAccess.status||"closed");
-  const [selClasses,setSelClasses] = useState(rtAccess.classIds||[]);
-  const [selStudents,setSelStudents] = useState(rtAccess.studentIds||[]);
-  const [accessMsg,setAccessMsg] = useState("");
   const [filterClass,setFilterClass] = useState("all");
   const [aiKey,setAiKeyInput] = useState(()=>getAIKey());
   const [aiKeyMsg,setAiKeyMsg] = useState("");
-  const [showStudentPicker,setShowStudentPicker] = useState(false);
-  const [stSearch,setStSearch] = useState("");
-
-  // تحديث state عند تغيير data
-  React.useEffect(()=>{
-    const ac=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
-    setStatus(ac.status||"closed");
-    setSelClasses(ac.classIds||[]);
-    setSelStudents(ac.studentIds||[]);
-  },[data.appSettings]);
 
   async function saveKey(){
     const k=aiKey.trim();
@@ -4305,25 +4287,6 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     setTimeout(()=>setAiKeyMsg(""),3000);
   }
 
-  async function saveAccess(newStatus,newClasses,newStudents){
-    const s=newStatus!==undefined?newStatus:status;
-    const c=newClasses!==undefined?newClasses:selClasses;
-    const st=newStudents!==undefined?newStudents:selStudents;
-    await fsSet("appSettings","rt_access",{id:"rt_access",status:s,classIds:c,studentIds:st,updatedAt:new Date().toISOString()});
-    await reload();
-    setAccessMsg("✅ Saved!");
-    setTimeout(()=>setAccessMsg(""),2500);
-  }
-
-  function toggleClass(id){
-    const n=selClasses.includes(id)?selClasses.filter(x=>x!==id):[...selClasses,id];
-    setSelClasses(n);
-  }
-  function toggleStudent(id){
-    const n=selStudents.includes(id)?selStudents.filter(x=>x!==id):[...selStudents,id];
-    setSelStudents(n);
-  }
-
   const filtered = filterClass==="all" ? myResps : myResps.filter(r=>{
     const st=myStudents.find(s=>responseBelongsToStudent(r,s));
     return st && st.classId===filterClass;
@@ -4331,6 +4294,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const avg = filtered.length ? Math.round(filtered.reduce((s,r)=>s+(r.score||0),0)/filtered.length) : null;
   const totalKp = rtCalcKp(filtered);
 
+  // تجميع حسب الطالب
   const byStudent = {};
   filtered.forEach(r=>{
     const st=myStudents.find(s=>responseBelongsToStudent(r,s));
@@ -4340,95 +4304,25 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   });
   const rows = Object.values(byStudent).sort((a,b)=>(a.st&&a.st.name||"").localeCompare(b.st&&b.st.name||""));
 
-  const isOpen = status==="open";
-  const filteredStudents = myStudents.filter(s=>!stSearch.trim()||s.name.includes(stSearch.trim())||String(s.studentId||"").includes(stSearch.trim()));
-  const inp={width:"100%",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",boxSizing:"border-box",fontFamily:F};
-
   return <div>
-    {/* Header */}
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div>
-          <strong style={{color:"#fff",fontSize:"15px",display:"block",marginBottom:"3px",fontFamily:F}}>📚 Reading Theory</strong>
-          <p style={{margin:0,color:"#94a3b8",fontSize:"11px",fontFamily:F}}>Adaptive AI reading — KP & Badges</p>
-        </div>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:"11px",color:isOpen?"#86efac":"#fca5a5",fontWeight:"700",fontFamily:F,marginBottom:"5px"}}>{isOpen?"🟢 Open":"🔴 Closed"}</div>
-          <button onClick={async()=>{const n=isOpen?"closed":"open";setStatus(n);await saveAccess(n,undefined,undefined);}}
-            style={{padding:"8px 16px",borderRadius:"8px",border:"none",background:isOpen?C.d:C.s,color:"#fff",fontWeight:"800",fontSize:"12px",cursor:"pointer",fontFamily:F}}>
-            {isOpen?"Close":"Open"}
-          </button>
-        </div>
-      </div>
+      <strong style={{color:"#fff",fontSize:"15px",display:"block",marginBottom:"3px",fontFamily:F}}>📚 Reading Theory — Results</strong>
+      <p style={{margin:0,color:"#94a3b8",fontSize:"11px",fontFamily:F}}>Adaptive AI reading. Students earn KP and unlock badges as they improve.</p>
     </Card>
-
-    {/* AI Key */}
-    <Card style={{marginBottom:"11px",border:"1px solid "+C.br}}>
+    <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}>
       <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"5px"}}>🔑 Claude AI Key</div>
-      <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"7px"}}>يُشارك مع الطلاب تلقائياً — لا يرونه.</div>
-      <input type="password" value={aiKey} onChange={e=>setAiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{...inp,fontFamily:"monospace",marginBottom:"7px"}}/>
+      <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"8px"}}>أدخل المفتاح هنا — يُشارك تلقائياً مع الطلاب عبر Firebase. الطلاب لا يرون المفتاح.</div>
+      <input type="password" value={aiKey} onChange={e=>setAiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{width:"100%",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:"monospace",outline:"none",background:"#f8fafc",boxSizing:"border-box",marginBottom:"7px"}}/>
       {aiKeyMsg&&<div style={{fontSize:"11px",color:C.s,fontWeight:"700",marginBottom:"7px",fontFamily:F}}>{aiKeyMsg}</div>}
-      <Btn color={C.s} onClick={saveKey} style={{width:"100%"}}>💾 Save & Share Key</Btn>
+      <Btn color={C.s} onClick={saveKey} style={{width:"100%"}}>{aiKey?"💾 Save & Share with Students":"🗑 Clear AI Key"}</Btn>
     </Card>
-
-    {/* تحديد الفصول */}
-    <Card style={{marginBottom:"11px",border:"1px solid "+C.br}}>
-      <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"8px"}}>🏫 Classes (leave empty = all students)</div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"9px"}}>
-        {myClasses.map(c=>{
-          const on=selClasses.includes(c.id);
-          return <button key={c.id} onClick={()=>toggleClass(c.id)}
-            style={{padding:"7px 12px",borderRadius:"999px",border:"2px solid "+(on?C.p:C.br),background:on?C.p:"#fff",color:on?"#fff":C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>
-            {on?"✓ ":""}{c.name}
-          </button>;
-        })}
-      </div>
-
-      {/* تحديد طلاب بعينهم */}
-      <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>
-        👤 Specific Students {selStudents.length>0&&<span style={{background:C.p,color:"#fff",borderRadius:"999px",padding:"1px 8px",fontSize:"10px",marginLeft:"5px"}}>{selStudents.length}</span>}
-      </div>
-      {selStudents.length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginBottom:"7px"}}>
-        {selStudents.map(sid=>{
-          const st=myStudents.find(s=>s.id===sid);
-          return st?<span key={sid} style={{fontSize:"10px",background:"#eff6ff",color:C.p,padding:"3px 8px",borderRadius:"999px",fontWeight:"700",fontFamily:F,display:"flex",alignItems:"center",gap:"4px"}}>
-            {st.name}
-            <button onClick={()=>toggleStudent(sid)} style={{background:"none",border:"none",cursor:"pointer",color:C.d,fontWeight:"900",fontSize:"12px",padding:"0",lineHeight:1}}>×</button>
-          </span>:null;
-        })}
-      </div>}
-      <Btn size="sm" color={C.mu} onClick={()=>setShowStudentPicker(v=>!v)} style={{marginBottom:"9px"}}>
-        {showStudentPicker?"▲ Hide":"👤 Add/Remove Students"}
-      </Btn>
-      {showStudentPicker&&<div style={{border:"1px solid "+C.br,borderRadius:"10px",padding:"10px",background:"#f8fafc"}}>
-        <input value={stSearch} onChange={e=>setStSearch(e.target.value)} placeholder="Search student…" style={{...inp,marginBottom:"8px"}}/>
-        <div style={{maxHeight:"200px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"4px"}}>
-          {filteredStudents.map(s=>{
-            const on=selStudents.includes(s.id);
-            const cls=data.classes.find(c=>c.id===s.classId);
-            return <button key={s.id} onClick={()=>toggleStudent(s.id)}
-              style={{display:"flex",alignItems:"center",gap:"8px",padding:"7px 10px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",cursor:"pointer",textAlign:"left",fontFamily:F}}>
-              <span style={{width:"18px",height:"18px",borderRadius:"4px",border:"2px solid "+(on?C.p:C.br),background:on?C.p:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                {on&&<span style={{color:"#fff",fontSize:"11px",fontWeight:"900"}}>✓</span>}
-              </span>
-              <span style={{fontSize:"12px",fontWeight:on?"700":"400",color:on?C.p:C.tx,flex:1}}>{s.name}</span>
-              <span style={{fontSize:"10px",color:C.mu}}>{cls?cls.name:""}</span>
-            </button>;
-          })}
-        </div>
-      </div>}
-      {accessMsg&&<div style={{fontSize:"11px",color:C.s,fontWeight:"700",margin:"7px 0",fontFamily:F}}>{accessMsg}</div>}
-      <Btn color={C.p} onClick={()=>saveAccess()} style={{width:"100%",marginTop:"9px"}}>💾 Save Access Settings</Btn>
-    </Card>
-
-    {/* النتائج */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"11px"}}>
       <Stat icon="📝" label="Attempts" value={filtered.length} color={C.p}/>
       <Stat icon="📊" label="Average" value={avg!==null?avg+"%":"—"} color={avg!==null?gc(avg):C.mu}/>
       <Stat icon="⚡" label="Total KP" value={totalKp} color={C.w}/>
     </div>
     <div style={{marginBottom:"11px"}}>
-      <select value={filterClass} onChange={e=>setFilterClass(e.target.value)} style={{...inp,padding:"8px 12px"}}>
+      <select value={filterClass} onChange={e=>setFilterClass(e.target.value)} style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh,width:"100%"}}>
         <option value="all">All Classes</option>
         {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
@@ -4485,12 +4379,6 @@ function ReadingTheoryStudent({user,data,reload}){
   const [result,setResult]=useState(null);
   const [errMsg,setErrMsg]=useState("");
   const [badgeModal,setBadgeModal]=useState(null);
-
-  // التحقق من صلاحية الوصول
-  const rtAccess=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
-  const isOpen=rtAccess.status==="open";
-  const noFilter=(!rtAccess.classIds||rtAccess.classIds.length===0)&&(!rtAccess.studentIds||rtAccess.studentIds.length===0);
-  const hasAccess=isOpen&&(noFilter||rtAccess.classIds.includes(user.classId)||rtAccess.studentIds.includes(user.id));
 
   const rtResps=(data.readingTheoryResponses||[]).filter(r=>responseBelongsToStudent(r,user));
   const totalKp=rtCalcKp(rtResps);
@@ -4549,17 +4437,6 @@ function ReadingTheoryStudent({user,data,reload}){
       await reload();
     }catch(e){console.warn("Save failed",e);}
   }
-
-  // ── NO ACCESS
-  if(!hasAccess) return(
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"60vh",gap:"14px",padding:"24px",textAlign:"center"}}>
-      <div style={{fontSize:"52px"}}>🔒</div>
-      <div style={{fontSize:"16px",fontWeight:"800",color:C.tx,fontFamily:F}}>Reading Theory is Closed</div>
-      <div style={{fontSize:"13px",color:C.mu,fontFamily:F,maxWidth:"260px",lineHeight:"1.6"}}>
-        {isOpen?"Your teacher hasn't given you access yet.":"Your teacher has closed Reading Theory for now. Check back later!"}
-      </div>
-    </div>
-  );
 
   // ── LOADING
   if(phase==="loading") return(
