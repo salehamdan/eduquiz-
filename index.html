@@ -450,15 +450,9 @@ async function forceUpdate(){
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
 // Collections: users, classes, quizzes, responses, announcements, notes
 async function fsAll(col) {
-  const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
-  if (!FIREBASE_OK) return local();
-  try {
-    const snap = await db.collection(col).get();
-    return snap.docs.map(d => ({...d.data(), _id:d.id}));
-  } catch(e) {
-    console.warn("Firestore read failed", col, e && e.message);
-    return local();
-  }
+  if (!FIREBASE_OK) return JSON.parse(localStorage.getItem("eq_"+col) || "[]");
+  const snap = await db.collection(col).get();
+  return snap.docs.map(d => ({...d.data(), _id:d.id}));
 }
 async function fsSet(col, id, data) {
   if (!FIREBASE_OK) {
@@ -468,8 +462,7 @@ async function fsSet(col, id, data) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  try { await db.collection(col).doc(id).set(data); }
-  catch(e){ console.warn("Firestore write failed", col, e && e.message); }
+  await db.collection(col).doc(id).set(data);
 }
 async function fsDel(col, id) {
   if (!FIREBASE_OK) {
@@ -477,8 +470,7 @@ async function fsDel(col, id) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  try { await db.collection(col).doc(id).delete(); }
-  catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
+  await db.collection(col).doc(id).delete();
 }
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
