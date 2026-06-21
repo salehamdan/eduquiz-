@@ -64,12 +64,16 @@ window.addEventListener("error", function(e){
   }
 });
 window.addEventListener("unhandledrejection", function(e){
+  var msg = (e.reason&&e.reason.message?e.reason.message:String(e.reason||""));
+  // Do not replace the whole app with an error screen for Firebase permission/cache errors.
+  if(/Missing or insufficient permissions/i.test(msg)){ try{ e.preventDefault && e.preventDefault(); }catch(_){} return; }
   var root = document.getElementById("root");
   if(root && root.innerHTML.indexOf("Loading")>-1){
-    showErr("Promise error: "+(e.reason&&e.reason.message?e.reason.message:e.reason));
+    showErr("Promise error: "+msg);
   }
 });
 </script>
+<!-- SAFE_RESTORE_NO_SW_FIREBASE_FALLBACK -->
 </head>
 <body>
 <div id="root">
@@ -435,10 +439,6 @@ async function forceUpdate(){
       const keys = await caches.keys();
       await Promise.all(keys.map(k=>caches.delete(k)));
     }
-    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r=>r.unregister()));
-    }
   } catch(e){}
   // Add a cache-busting query param so the server returns the freshest file
   const u = new URL(window.location.href);
@@ -450,9 +450,15 @@ async function forceUpdate(){
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
 // Collections: users, classes, quizzes, responses, announcements, notes
 async function fsAll(col) {
-  if (!FIREBASE_OK) return JSON.parse(localStorage.getItem("eq_"+col) || "[]");
-  const snap = await db.collection(col).get();
-  return snap.docs.map(d => ({...d.data(), _id:d.id}));
+  const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
+  if (!FIREBASE_OK) return local();
+  try {
+    const snap = await db.collection(col).get();
+    return snap.docs.map(d => ({...d.data(), _id:d.id}));
+  } catch(e) {
+    console.warn("Firestore read failed", col, e && e.message);
+    return local();
+  }
 }
 async function fsSet(col, id, data) {
   if (!FIREBASE_OK) {
@@ -462,7 +468,8 @@ async function fsSet(col, id, data) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  await db.collection(col).doc(id).set(data);
+  try { await db.collection(col).doc(id).set(data); }
+  catch(e){ console.warn("Firestore write failed", col, e && e.message); }
 }
 async function fsDel(col, id) {
   if (!FIREBASE_OK) {
@@ -470,7 +477,8 @@ async function fsDel(col, id) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  await db.collection(col).doc(id).delete();
+  try { await db.collection(col).doc(id).delete(); }
+  catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
 }
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
