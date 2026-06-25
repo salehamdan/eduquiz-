@@ -7263,6 +7263,465 @@ document.addEventListener("click", function(e){
 })();
 </script>
 
+
+<!-- WRITING_INDEPENDENT_FULL_V1_20260626 -->
+<script>
+(function(){
+  if (window.__WRITING_INDEPENDENT_FULL_V1__) return;
+  window.__WRITING_INDEPENDENT_FULL_V1__ = true;
+
+  const STORE = {
+    students: "eqWritingAdvancedStudents_v1",
+    tasks: "eqWritingTasks_v1",
+    submissions: "eqWritingSubmissions_v1"
+  };
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function(m){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m];
+    });
+  }
+  function uid(prefix){
+    return (prefix || "id") + "_" + Date.now() + "_" + Math.random().toString(36).slice(2,8);
+  }
+  function getJSON(key, fallback){
+    try { return JSON.parse(localStorage.getItem(key) || "null") || fallback; }
+    catch(e){ return fallback; }
+  }
+  function setJSON(key, value){
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+  function getCurrentUser(){
+    const keys = ["currentUser","eduquizCurrentUser","eq_current_user","session","eq_session","user"];
+    for (const k of keys){
+      try {
+        const v = JSON.parse(localStorage.getItem(k) || "null");
+        if (v && (v.role || v.name || v.studentId || v.id)) return v;
+      } catch(e){}
+    }
+    try {
+      if (window.currentUser) return window.currentUser;
+      if (window.user) return window.user;
+    } catch(e){}
+    return {};
+  }
+  function isTeacher(){
+    const u = getCurrentUser();
+    const role = String(u.role || u.type || "").toLowerCase();
+    const txt = document.body ? (document.body.innerText || "") : "";
+    return role.includes("teacher") || txt.includes("Teacher Dashboard") || txt.includes("TEACHER") || txt.includes("لوحة المعلم");
+  }
+  function isStudent(){
+    const u = getCurrentUser();
+    const role = String(u.role || u.type || "").toLowerCase();
+    return role.includes("student") || (!!(u.studentId || u.password) && !isTeacher());
+  }
+
+  function allStudents(){
+    let arr = [];
+    try { if (Array.isArray(PRELOADED_USERS)) arr = arr.concat(PRELOADED_USERS); } catch(e){}
+    try { if (Array.isArray(window.users)) arr = arr.concat(window.users); } catch(e){}
+    try { arr = arr.concat(getJSON("users", [])); } catch(e){}
+    const m = new Map();
+    arr.forEach(u => {
+      if (!u || u.role !== "student") return;
+      const id = String(u.id || ("student_" + (u.studentId || u.password || u.name || Math.random())));
+      if (!m.has(id)) m.set(id, Object.assign({}, u, {id}));
+    });
+    return Array.from(m.values());
+  }
+  function allClasses(){
+    let arr = [];
+    try { if (Array.isArray(PRELOADED_CLASSES)) arr = arr.concat(PRELOADED_CLASSES); } catch(e){}
+    try { if (Array.isArray(window.classes)) arr = arr.concat(window.classes); } catch(e){}
+    try { arr = arr.concat(getJSON("classes", [])); } catch(e){}
+    const m = new Map();
+    arr.forEach(c => {
+      if (!c) return;
+      const id = String(c.id || c.name || Math.random());
+      if (!m.has(id)) m.set(id, Object.assign({}, c, {id}));
+    });
+    return Array.from(m.values());
+  }
+  function stName(u){ return String(u.name || u.fullName || u.shortName || u.studentName || u.id || "Student"); }
+  function stNo(u){ return String(u.studentId || u.studentNo || u.studentNumber || u.password || u.id || ""); }
+  function clName(classId){
+    const c = allClasses().find(x => String(x.id) === String(classId) || String(x.name) === String(classId));
+    return c ? String(c.name || c.grade || c.id || "") : "";
+  }
+
+  function selectedIds(){
+    return new Set(getJSON(STORE.students, []).map(x => String(x.studentId || x.id)));
+  }
+  function tasks(){ return getJSON(STORE.tasks, []); }
+  function submissions(){ return getJSON(STORE.submissions, []); }
+
+  function normalize(s){
+    return String(s || "").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, " ").trim();
+  }
+  function wordCount(text){
+    return (String(text || "").match(/\b[\w']+\b/g) || []).length;
+  }
+  function sentenceCount(text){
+    const t = String(text || "").trim();
+    if (!t) return 0;
+    const p = (t.match(/[.!?]+/g) || []).length;
+    if (p) return p;
+    const parts = t.split(/\n+|(?=\s+i\s+)/i).filter(x => x.trim());
+    return Math.max(1, parts.length);
+  }
+  const ERRORS = [
+    {re:/\bi\b/g, fix:"I", msg:"Capital I", type:"error"},
+    {re:/\blke\b/gi, fix:"like", msg:"Spelling", type:"error"},
+    {re:/\blik\b/gi, fix:"like", msg:"Spelling", type:"error"},
+    {re:/\bfotbal\b/gi, fix:"football", msg:"Spelling", type:"error"},
+    {re:/\bskol\b/gi, fix:"school", msg:"Spelling", type:"error"},
+    {re:/\bpitza\b/gi, fix:"pizza", msg:"Spelling", type:"error"},
+    {re:/\bfamly\b/gi, fix:"family", msg:"Spelling", type:"error"},
+    {re:/\bfrend\b/gi, fix:"friend", msg:"Spelling", type:"error"}
+  ];
+
+  function autoMark(text, task){
+    const min = Number(task.minSentences || 6);
+    const total = Number(task.totalMarks || 10);
+    const wc = wordCount(text);
+    const sc = sentenceCount(text);
+    const issues = [];
+    ERRORS.forEach(rule => {
+      let m;
+      const r = new RegExp(rule.re.source, rule.re.flags);
+      while ((m = r.exec(text)) !== null) {
+        issues.push({start:m.index, end:m.index + m[0].length, fix:rule.fix, msg:rule.msg, type:rule.type});
+      }
+    });
+    if (sc < min) issues.push({msg:"Less than minimum sentences: " + sc + "/" + min, type:"warning"});
+    if (wc < 25) issues.push({msg:"Short writing: " + wc + " words", type:"warning"});
+    if (!/[.!?]/.test(text)) issues.push({msg:"Missing punctuation", type:"warning"});
+    const cleanGeneral = wc >= 55 && issues.filter(x=>x.type==="error").length === 0 && /\b(I like|I enjoy|I am|I try|family and friends|free time)\b/i.test(text);
+    if (cleanGeneral) issues.push({msg:"Very clean/general paragraph. AI review recommended.", type:"ai"});
+
+    const errCount = issues.filter(x => x.type === "error").length;
+    let content = wc >= 35 ? 2 : wc >= 20 ? 1.5 : wc >= 10 ? 1 : 0.5;
+    let organization = sc >= min ? 2 : sc >= 4 ? 1.5 : sc >= 2 ? 1 : 0.5;
+    let grammar = Math.max(0, 2 - errCount * 0.35);
+    let vocabulary = new Set(normalize(text).split(" ").filter(Boolean)).size >= 18 ? 2 : 1.25;
+    let mechanics = /[.!?]/.test(text) ? 1 : 0.25;
+    let originality = cleanGeneral ? 0.5 : 1;
+    let score = Math.round((content + organization + grammar + vocabulary + mechanics + originality) * 10) / 10;
+    score = Math.max(0, Math.min(total, score));
+    return {score, total, wordCount:wc, sentenceCount:sc, issues, rubric:{content,organization,grammar,vocabulary,mechanics,originality}};
+  }
+
+  function highlighted(text, issues){
+    const ranges = (issues || []).filter(i => Number.isInteger(i.start) && Number.isInteger(i.end)).sort((a,b)=>a.start-b.start);
+    let out = "", pos = 0;
+    ranges.forEach(r => {
+      if (r.start < pos) return;
+      out += esc(text.slice(pos, r.start));
+      const bg = r.type === "error" ? "#fecaca" : r.type === "ai" ? "#ddd6fe" : "#fef3c7";
+      const bd = r.type === "error" ? "#dc2626" : r.type === "ai" ? "#7c3aed" : "#f59e0b";
+      out += '<mark title="'+esc((r.msg||"") + (r.fix ? " → " + r.fix : ""))+'" style="background:'+bg+';border-bottom:2px solid '+bd+';padding:1px 2px;border-radius:3px">'+esc(text.slice(r.start, r.end))+'</mark>';
+      pos = r.end;
+    });
+    out += esc(text.slice(pos));
+    return out.replace(/\n/g, "<br>");
+  }
+
+  function similarity(a,b){
+    const A = new Set(normalize(a).split(" ").filter(w=>w.length>2));
+    const B = new Set(normalize(b).split(" ").filter(w=>w.length>2));
+    if (!A.size || !B.size) return 0;
+    let hit = 0; A.forEach(w => { if (B.has(w)) hit++; });
+    return Math.round(hit / Math.min(A.size, B.size) * 100);
+  }
+
+  function openShell(title){
+    const old = document.getElementById("writing-independent-panel");
+    if (old) old.remove();
+    const wrap = document.createElement("div");
+    wrap.id = "writing-independent-panel";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.50);display:flex;align-items:flex-end;justify-content:center;font-family:system-ui,-apple-system,sans-serif";
+    wrap.innerHTML = '<div style="width:min(1020px,100%);height:min(88vh,780px);background:#fff;border-radius:22px 22px 0 0;box-shadow:0 -20px 45px rgba(0,0,0,.28);display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="background:#0f172a;color:#fff;padding:12px 14px;display:flex;justify-content:space-between;gap:12px;align-items:center"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — not connected to Gradebook</div></div><button id="writing-close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div>'+
+      '<div id="writing-body" style="flex:1;overflow:auto;background:#f8fafc;padding:12px"></div>'+
+      '</div>';
+    document.body.appendChild(wrap);
+    wrap.querySelector("#writing-close").onclick = () => wrap.remove();
+    return wrap.querySelector("#writing-body");
+  }
+
+  function makeFloatingButton(){
+    if (document.getElementById("writing-independent-fab")) return;
+    if (!isTeacher() && !isStudent()) return;
+    const b = document.createElement("button");
+    b.id = "writing-independent-fab";
+    b.innerHTML = "✍️ Writing";
+    b.style.cssText = "position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui";
+    b.onclick = openWriting;
+    document.body.appendChild(b);
+  }
+
+  function addTopWritingTab(){
+    if (document.getElementById("writing-independent-top")) return;
+    if (!isTeacher()) return;
+    const els = Array.from(document.querySelectorAll("button,div,span,a")).filter(el => {
+      const t = (el.innerText || "").trim();
+      return t === "Reading Theory" || t === "Reading Progress" || t === "Quizzes";
+    });
+    if (!els.length) return;
+    const ref = els[els.length - 1];
+    const parent = ref.parentElement;
+    if (!parent) return;
+    const b = document.createElement("button");
+    b.id = "writing-independent-top";
+    b.innerHTML = "✍️ Writing";
+    b.style.cssText = "margin:4px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font-weight:900;padding:9px 11px;font-family:system-ui";
+    b.onclick = openWriting;
+    parent.appendChild(b);
+  }
+
+  function openWriting(){
+    if (isTeacher()) return teacherPanel();
+    if (isStudent()) return studentPanel();
+    alert("Login first.");
+  }
+
+  function teacherPanel(){
+    const body = openShell("✍️ Writing — Teacher");
+    body.innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+      '<button class="wtab" data-tab="students">Advanced Students</button>'+
+      '<button class="wtab" data-tab="tasks">Writing Tasks</button>'+
+      '<button class="wtab" data-tab="subs">Submissions / Marking</button>'+
+      '<button class="wtab" data-tab="scores">Writing Scores</button>'+
+      '</div><div id="wcontent"></div>';
+    body.querySelectorAll(".wtab").forEach(btn => {
+      btn.style.cssText = "border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font-weight:900;padding:10px 12px";
+      btn.onclick = () => drawTeacher(btn.dataset.tab);
+    });
+    drawTeacher("students");
+  }
+
+  function drawTeacher(tab){
+    const box = document.querySelector("#writing-body #wcontent");
+    if (!box) return;
+    if (tab === "students") return drawStudents(box);
+    if (tab === "tasks") return drawTasks(box);
+    if (tab === "subs") return drawSubs(box);
+    if (tab === "scores") return drawScores(box);
+  }
+
+  function drawStudents(box){
+    const studs = allStudents();
+    const classes = allClasses();
+    const ids = selectedIds();
+    box.innerHTML = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px">'+
+      '<b>Advanced Writing Students</b><div style="font-size:12px;color:#64748b;margin-top:4px">هذه القائمة محفوظة للكتابة فقط. اختر بالاسم أو رقم الطالب أو من الفصل.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><input id="wsearch" placeholder="Search name or student number" style="flex:1;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="wclass" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All classes</option>'+classes.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select></div></div><div id="wlist"></div>';
+    const search = box.querySelector("#wsearch");
+    const sel = box.querySelector("#wclass");
+    const list = box.querySelector("#wlist");
+    function redraw(){
+      const q = normalize(search.value);
+      const cid = sel.value;
+      const filtered = studs.filter(u => {
+        if (cid && String(u.classId) !== String(cid)) return false;
+        const hay = normalize(stName(u) + " " + stNo(u));
+        return !q || hay.includes(q);
+      });
+      list.innerHTML = filtered.map(u => {
+        const id = String(u.id);
+        const checked = ids.has(id);
+        return '<label style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-bottom:7px">'+
+          '<input type="checkbox" data-stu="'+esc(id)+'" '+(checked?"checked":"")+' style="width:20px;height:20px">'+
+          '<div style="flex:1"><b>'+esc(stName(u))+'</b><div style="font-size:12px;color:#64748b">'+esc(stNo(u))+' — '+esc(clName(u.classId))+'</div></div>'+
+          '<span style="font-size:11px;color:'+(checked?"#16a34a":"#64748b")+';font-weight:900">'+(checked?"Selected":"Not selected")+'</span>'+
+          '</label>';
+      }).join("") || '<div style="background:#fff;border-radius:14px;padding:16px;color:#64748b">No students found.</div>';
+      list.querySelectorAll("input[type=checkbox]").forEach(ch => {
+        ch.onchange = () => {
+          const sid = ch.dataset.stu;
+          const u = studs.find(x => String(x.id) === String(sid));
+          let arr = getJSON(STORE.students, []).filter(x => String(x.studentId || x.id) !== sid);
+          if (ch.checked) arr.push({id:sid, studentId:sid, name:stName(u), classId:u.classId || "", studentNumber:stNo(u), createdAt:new Date().toISOString()});
+          setJSON(STORE.students, arr);
+          drawStudents(box);
+        };
+      });
+    }
+    search.oninput = redraw;
+    sel.onchange = redraw;
+    redraw();
+  }
+
+  function drawTasks(box){
+    const all = tasks();
+    box.innerHTML = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px">'+
+      '<b>Create Writing Task</b>'+
+      '<div style="display:grid;grid-template-columns:1fr 120px 120px;gap:8px;margin-top:10px"><input id="wtitle" placeholder="Title مثل: Write about yourself" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wmin" type="number" min="1" value="6" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wmarks" type="number" min="1" value="10" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div>'+
+      '<textarea id="winst" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:70px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea>'+
+      '<select id="wmode" style="margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="both">Auto + Teacher review</option><option value="manual">Teacher manual correction</option><option value="auto">Auto only</option></select>'+
+      '<button id="wcreate" style="margin-top:8px;margin-left:8px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;padding:10px 14px">Create Task</button></div>'+
+      '<div>'+all.map(t => '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px;margin-bottom:8px"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions || "")+' — '+esc(t.minSentences || 6)+' sentences — '+esc(t.totalMarks || 10)+' marks</div><button data-del="'+esc(t.id)+'" style="margin-top:8px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:900;padding:8px 10px">Delete</button></div>').join("")+'</div>';
+    box.querySelector("#wcreate").onclick = () => {
+      const rec = {
+        id:uid("wtask"),
+        title:box.querySelector("#wtitle").value.trim() || "Writing Task",
+        instructions:box.querySelector("#winst").value.trim(),
+        minSentences:Number(box.querySelector("#wmin").value || 6),
+        totalMarks:Number(box.querySelector("#wmarks").value || 10),
+        mode:box.querySelector("#wmode").value,
+        assignedTo:"advanced",
+        createdAt:new Date().toISOString()
+      };
+      const arr = tasks();
+      arr.push(rec);
+      setJSON(STORE.tasks, arr);
+      drawTasks(box);
+    };
+    box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+      if (!confirm("Delete writing task?")) return;
+      setJSON(STORE.tasks, tasks().filter(t => String(t.id) !== String(b.dataset.del)));
+      drawTasks(box);
+    });
+  }
+
+  function drawSubs(box){
+    const sub = submissions().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+    const allTasks = tasks();
+    box.innerHTML = sub.map(s => {
+      const task = allTasks.find(t => String(t.id) === String(s.taskId)) || {};
+      const auto = s.auto || autoMark(s.text || "", task);
+      const best = submissions().filter(x => x.id !== s.id && x.taskId === s.taskId).map(x=>({name:x.studentName || "Student", pct:similarity(s.text, x.text)})).sort((a,b)=>b.pct-a.pct)[0] || {pct:0};
+      return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px">'+
+        '<div style="display:flex;justify-content:space-between;gap:8px"><div><b>'+esc(s.studentName || "Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(task.title || s.taskTitle || "Writing Task")+'</div></div><div style="text-align:right"><b>'+esc(s.finalScore != null ? s.finalScore : auto.score)+' / '+esc(auto.total)+'</b><div style="font-size:11px;color:'+(best.pct>=70?"#dc2626":"#64748b")+'">Similarity: '+best.pct+'% '+(best.pct ? "with "+esc(best.name) : "")+'</div></div></div>'+
+        '<div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+highlighted(s.text || "", auto.issues)+'</div>'+
+        '<div style="font-size:12px;color:#64748b;margin-top:8px">Words: '+auto.wordCount+' — Sentences: '+auto.sentenceCount+' — Status: <b>'+esc(s.status || "pending_review")+'</b></div>'+
+        (auto.issues || []).filter(i=>!Number.isInteger(i.start)).map(i=>'<div style="font-size:12px;color:'+(i.type==="ai"?"#7c3aed":"#b45309")+';margin-top:4px">⚠️ '+esc(i.msg)+'</div>').join("")+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button data-manual="'+esc(s.id)+'" style="border:0;border-radius:10px;background:#2563eb;color:white;font-weight:900;padding:8px 10px">Manual Mark / Highlight</button><button data-accept="'+esc(s.id)+'" style="border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900;padding:8px 10px">Accept</button><button data-retake="'+esc(s.id)+'" style="border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:900;padding:8px 10px">Retake</button><button data-zero="'+esc(s.id)+'" style="border:0;border-radius:10px;background:#dc2626;color:white;font-weight:900;padding:8px 10px">Cancel / 0</button></div>'+
+        '</div>';
+    }).join("") || '<div style="background:#fff;border-radius:14px;padding:16px;color:#64748b">No writing submissions yet.</div>';
+    box.querySelectorAll("[data-accept]").forEach(b=>b.onclick=()=>changeSub(b.dataset.accept,"accepted"));
+    box.querySelectorAll("[data-retake]").forEach(b=>b.onclick=()=>changeSub(b.dataset.retake,"retake_required"));
+    box.querySelectorAll("[data-zero]").forEach(b=>b.onclick=()=>changeSub(b.dataset.zero,"cancelled",0));
+    box.querySelectorAll("[data-manual]").forEach(b=>b.onclick=()=>manualMark(b.dataset.manual));
+  }
+
+  function changeSub(id, status, score){
+    const all = submissions();
+    const i = all.findIndex(s => String(s.id) === String(id));
+    if (i < 0) return;
+    const task = tasks().find(t => String(t.id) === String(all[i].taskId)) || {};
+    const auto = all[i].auto || autoMark(all[i].text || "", task);
+    all[i].status = status;
+    all[i].finalScore = score != null ? score : (all[i].teacherScore != null ? all[i].teacherScore : auto.score);
+    all[i].updatedAt = new Date().toISOString();
+    setJSON(STORE.submissions, all);
+    drawTeacher("subs");
+  }
+
+  function manualMark(id){
+    const all = submissions();
+    const s = all.find(x => String(x.id) === String(id));
+    if (!s) return;
+    const task = tasks().find(t => String(t.id) === String(s.taskId)) || {};
+    const auto = s.auto || autoMark(s.text || "", task);
+    const body = openShell("Manual Writing Marking");
+    body.innerHTML = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px">'+
+      '<b>'+esc(s.studentName || "Student")+' — '+esc(task.title || "Writing Task")+'</b><div style="font-size:12px;color:#64748b;margin:5px 0 10px">حدد كلمة أو جملة، ثم اختر نوع التظليل.</div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button data-hl="error" style="background:#fecaca;border:1px solid #dc2626;border-radius:10px;padding:8px;font-weight:900">Error</button><button data-hl="review" style="background:#fef3c7;border:1px solid #f59e0b;border-radius:10px;padding:8px;font-weight:900">Review</button><button data-hl="good" style="background:#dcfce7;border:1px solid #16a34a;border-radius:10px;padding:8px;font-weight:900">Good</button><button data-hl="ai" style="background:#ddd6fe;border:1px solid #7c3aed;border-radius:10px;padding:8px;font-weight:900">AI</button></div>'+
+      '<div id="weditor" contenteditable="true" style="min-height:190px;border:1px solid #cbd5e1;border-radius:12px;padding:12px;line-height:1.9;background:#fff">'+highlighted(s.text || "", auto.issues)+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-top:10px">'+["Content","Grammar","Vocabulary","Organization","Mechanics","Originality"].map((n,i)=>'<label style="font-size:11px;color:#64748b">'+n+'<input data-score="'+i+'" type="number" step=".5" min="0" value="'+(i<4?2:1)+'" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #cbd5e1;border-radius:10px"></label>').join("")+'</div>'+
+      '<textarea id="wfeedback" placeholder="Teacher feedback" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:70px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"></textarea>'+
+      '<button id="wsavemanual" style="margin-top:10px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;padding:10px 14px;width:100%">Save Manual Score</button></div>';
+    body.querySelectorAll("[data-hl]").forEach(btn => btn.onclick = () => {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || sel.isCollapsed) return alert("حدد الكلمة أو الجملة أولاً.");
+      const range = sel.getRangeAt(0);
+      const span = document.createElement("mark");
+      const t = btn.dataset.hl;
+      span.style.cssText = (t==="error" ? "background:#fecaca;border-bottom:2px solid #dc2626" : t==="review" ? "background:#fef3c7;border-bottom:2px solid #f59e0b" : t==="good" ? "background:#dcfce7;border-bottom:2px solid #16a34a" : "background:#ddd6fe;border-bottom:2px solid #7c3aed") + ";padding:1px 2px;border-radius:3px";
+      try { range.surroundContents(span); sel.removeAllRanges(); } catch(e){ alert("حدد كلمة أو جملة قصيرة فقط."); }
+    });
+    body.querySelector("#wsavemanual").onclick = () => {
+      const scores = Array.from(body.querySelectorAll("[data-score]")).map(x=>Number(x.value || 0));
+      const total = Math.round(scores.reduce((a,b)=>a+b,0)*10)/10;
+      const idx = all.findIndex(x => String(x.id) === String(id));
+      all[idx].teacherScore = total;
+      all[idx].finalScore = total;
+      all[idx].status = "accepted";
+      all[idx].manualHtml = body.querySelector("#weditor").innerHTML;
+      all[idx].teacherFeedback = body.querySelector("#wfeedback").value;
+      all[idx].updatedAt = new Date().toISOString();
+      setJSON(STORE.submissions, all);
+      teacherPanel();
+      drawTeacher("subs");
+    };
+  }
+
+  function drawScores(box){
+    const ids = selectedIds();
+    const studs = allStudents().filter(u => ids.has(String(u.id)));
+    const sub = submissions();
+    box.innerHTML = '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;overflow:auto"><b>Writing Scores / 10</b><div style="font-size:12px;color:#64748b;margin-top:4px">هذه درجات مستقلة للكتابة فقط ولا تدخل في Gradebook.</div><table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="text-align:left;padding:8px">Student</th><th style="text-align:left;padding:8px">No.</th><th style="text-align:left;padding:8px">Class</th><th style="text-align:left;padding:8px">Score</th><th style="text-align:left;padding:8px">Status</th></tr></thead><tbody>'+
+      (studs.map(u => {
+        const ss = sub.filter(s => String(s.studentId) === String(u.id));
+        const best = ss.length ? ss.reduce((a,b)=>Number(a.finalScore ?? a.auto?.score ?? 0) >= Number(b.finalScore ?? b.auto?.score ?? 0) ? a : b) : null;
+        return '<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px">'+esc(stName(u))+'</td><td style="padding:8px">'+esc(stNo(u))+'</td><td style="padding:8px">'+esc(clName(u.classId))+'</td><td style="padding:8px"><b>'+(best ? esc(best.finalScore != null ? best.finalScore : (best.auto && best.auto.score) || "Pending") : "-")+'</b></td><td style="padding:8px">'+esc(best ? best.status || "pending_review" : "No submission")+'</td></tr>';
+      }).join("") || '<tr><td colspan="5" style="padding:14px;color:#64748b">No advanced writing students selected.</td></tr>')+
+      '</tbody></table></div>';
+  }
+
+  function studentPanel(){
+    const body = openShell("✍️ Writing — Student");
+    const u = getCurrentUser();
+    const sid = String(u.id || (u.studentId ? "student_" + u.studentId : "") || "");
+    const ids = selectedIds();
+    if (!ids.has(sid)) {
+      body.innerHTML = '<div style="background:#fff;border-radius:16px;padding:16px;color:#64748b">لا توجد مهام كتابة مخصصة لك الآن.</div>';
+      return;
+    }
+    const sub = submissions();
+    body.innerHTML = tasks().map(t => {
+      const old = sub.find(s => String(s.taskId) === String(t.id) && String(s.studentId) === sid);
+      if (old) {
+        const score = old.finalScore != null ? old.finalScore : (old.auto && old.auto.score) || "Pending";
+        return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b;margin-top:4px">'+esc(t.instructions || "")+'</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>'+esc(score)+' / '+esc(t.totalMarks || 10)+'</b> — Status: '+esc(old.status || "pending_review")+'</div></div>';
+      }
+      return '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b;margin-top:4px">'+esc(t.instructions || "")+' — Minimum: '+esc(t.minSentences || 6)+' sentences</div><textarea data-task="'+esc(t.id)+'" style="width:100%;box-sizing:border-box;min-height:160px;border:1px solid #cbd5e1;border-radius:12px;padding:10px;margin-top:8px" placeholder="Write here..."></textarea><button data-submit="'+esc(t.id)+'" style="margin-top:8px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;padding:10px 14px;width:100%">Submit Writing</button></div>';
+    }).join("") || '<div style="background:#fff;border-radius:16px;padding:16px;color:#64748b">No writing tasks yet.</div>';
+    body.querySelectorAll("[data-submit]").forEach(btn => btn.onclick = () => {
+      const taskId = btn.dataset.submit;
+      const t = tasks().find(x => String(x.id) === String(taskId));
+      const ta = body.querySelector('[data-task="'+CSS.escape(taskId)+'"]');
+      const text = (ta.value || "").trim();
+      if (!text) return alert("Write your paragraph first.");
+      const auto = autoMark(text, t);
+      const rec = {
+        id:uid("wsub"),
+        taskId,
+        taskTitle:t.title,
+        studentId:sid,
+        studentName:u.name || u.shortName || "Student",
+        text,
+        auto,
+        status:t.mode === "auto" ? "accepted" : "pending_review",
+        finalScore:t.mode === "auto" ? auto.score : null,
+        createdAt:new Date().toISOString()
+      };
+      const arr = submissions();
+      arr.push(rec);
+      setJSON(STORE.submissions, arr);
+      alert("Writing submitted.");
+      studentPanel();
+    });
+  }
+
+  setInterval(function(){ makeFloatingButton(); addTopWritingTab(); }, 1200);
+  setTimeout(function(){ makeFloatingButton(); addTopWritingTab(); }, 1500);
+})();
+</script>
+<!-- END_WRITING_INDEPENDENT_FULL_V1_20260626 -->
+
 </body>
 </html>
 
