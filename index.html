@@ -7279,10 +7279,10 @@ const jget=(k,f)=>{try{return JSON.parse(localStorage.getItem(k)||"null")||f}cat
 const jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 function uniq(a){return Array.from(new Set((a||[]).filter(Boolean).map(String)))}
 function mergeList(a,b){const del=new Set(uniq([...(a.deletedSubmissionIds||[]),...(b.deletedSubmissionIds||[])]));const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||x.studentId||uid("x"));if(del.has(id)||x.deleted)return; m.set(id,Object.assign({},m.get(id)||{},x,{id}))});return Array.from(m.values())}
-function mergeRequests(a,b){const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||((x.studentId||"")+"_"+(x.taskId||"")));m.set(id,Object.assign({},m.get(id)||{},x,{id}))});return Array.from(m.values()).filter(x=>!x.cleared)}
-function merge(a,b){const deleted=uniq([...(a.deletedSubmissionIds||[]),...(b.deletedSubmissionIds||[])]);const base={deletedSubmissionIds:deleted};base.students=mergeList(a.students,b.students);base.tasks=mergeList(a.tasks,b.tasks);base.submissions=mergeList(Object.assign([],a.submissions||[],{deletedSubmissionIds:deleted}),Object.assign([],b.submissions||[],{deletedSubmissionIds:deleted}));base.submissions=base.submissions.filter(s=>!deleted.includes(String(s.id)));base.retakeRequests=mergeRequests(a.retakeRequests,b.retakeRequests);base.settings=Object.assign({},a.settings||{},b.settings||{});return base}
-async function load(){let local=jget(LOCAL,{students:[],tasks:[],submissions:[],retakeRequests:[],deletedSubmissionIds:[],settings:{}}),cloud=null;["eq_writing_independent_v11","eq_writing_independent_v10","eq_writing_independent_v9","eq_writing_independent_v8","eq_writing_independent_v7","eq_writing_independent_v6","eq_writing_independent_v5"].forEach(k=>{const old=jget(k,null);if(old)local=merge(old,local)});try{if(typeof fsAll==="function"){const arr=await fsAll("appSettings");cloud=(arr||[]).find(x=>x.id===DOC||x._id===DOC)||null;if(!cloud)cloud=(arr||[]).find(x=>["writing_independent_v11","writing_independent_v10","writing_independent_v9","writing_independent_v8","writing_independent_v7","writing_independent_v6","writing_independent_v5"].includes(x.id||x._id))||null}else if(typeof db!=="undefined"&&db){const d=await db.collection("appSettings").doc(DOC).get();cloud=d.exists?d.data():null;if(!cloud){for(const od of["writing_independent_v11","writing_independent_v10","writing_independent_v9","writing_independent_v8","writing_independent_v7","writing_independent_v6","writing_independent_v5"]){const x=await db.collection("appSettings").doc(od).get();if(x.exists){cloud=x.data();break}}}}}catch(e){}DATA=merge(cloud||{},local||{});DATA.settings=DATA.settings||{};DATA.settings.aiEndpoint=DATA.settings.aiEndpoint||localStorage.getItem(EP)||"";jset(LOCAL,DATA);return DATA}
-async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id)));jset(LOCAL,DATA);if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
+function mergeRequests(a,b){const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||((x.studentId||"")+"_"+(x.taskId||"")));const old=m.get(id)||{};const merged=Object.assign({},old,x,{id});if(old.cleared||x.cleared)merged.cleared=true;m.set(id,merged)});return Array.from(m.values()).filter(x=>!x.cleared)}
+function merge(a,b){const deleted=uniq([...(a.deletedSubmissionIds||[]),...(b.deletedSubmissionIds||[])]);const deletedTasks=uniq([...(a.deletedTaskIds||[]),...(b.deletedTaskIds||[])]);const base={deletedSubmissionIds:deleted,deletedTaskIds:deletedTasks};base.students=mergeList(a.students,b.students);base.tasks=mergeList(a.tasks,b.tasks).filter(t=>!deletedTasks.includes(String(t.id)));base.submissions=mergeList(Object.assign([],a.submissions||[],{deletedSubmissionIds:deleted}),Object.assign([],b.submissions||[],{deletedSubmissionIds:deleted}));base.submissions=base.submissions.filter(s=>!deleted.includes(String(s.id))&&!deletedTasks.includes(String(s.taskId)));base.retakeRequests=mergeRequests(a.retakeRequests,b.retakeRequests).filter(r=>!deletedTasks.includes(String(r.taskId)));base.settings=Object.assign({},a.settings||{},b.settings||{});return base}
+async function load(){let local=jget(LOCAL,{students:[],tasks:[],submissions:[],retakeRequests:[],deletedSubmissionIds:[],deletedTaskIds:[],settings:{}}),cloud=null;["eq_writing_independent_v11","eq_writing_independent_v10","eq_writing_independent_v9","eq_writing_independent_v8","eq_writing_independent_v7","eq_writing_independent_v6","eq_writing_independent_v5"].forEach(k=>{const old=jget(k,null);if(old)local=merge(old,local)});try{if(typeof fsAll==="function"){const arr=await fsAll("appSettings");cloud=(arr||[]).find(x=>x.id===DOC||x._id===DOC)||null;if(!cloud)cloud=(arr||[]).find(x=>["writing_independent_v11","writing_independent_v10","writing_independent_v9","writing_independent_v8","writing_independent_v7","writing_independent_v6","writing_independent_v5"].includes(x.id||x._id))||null}else if(typeof db!=="undefined"&&db){const d=await db.collection("appSettings").doc(DOC).get();cloud=d.exists?d.data():null;if(!cloud){for(const od of["writing_independent_v11","writing_independent_v10","writing_independent_v9","writing_independent_v8","writing_independent_v7","writing_independent_v6","writing_independent_v5"]){const x=await db.collection("appSettings").doc(od).get();if(x.exists){cloud=x.data();break}}}}}catch(e){}DATA=merge(cloud||{},local||{});DATA.settings=DATA.settings||{};DATA.settings.aiEndpoint=DATA.settings.aiEndpoint||localStorage.getItem(EP)||"";jset(LOCAL,DATA);return DATA}
+async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.deletedTaskIds=uniq(DATA.deletedTaskIds||[]);DATA.tasks=(DATA.tasks||[]).filter(t=>!DATA.deletedTaskIds.includes(String(t.id)));DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId)));DATA.retakeRequests=(DATA.retakeRequests||[]).filter(r=>!DATA.deletedTaskIds.includes(String(r.taskId))&&!r.cleared);jset(LOCAL,DATA);if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
 function sess(){for(const k of["eq_session","currentUser","eduquizCurrentUser","session","user"]){try{const v=JSON.parse(localStorage.getItem(k)||"null");if(v&&(v.id||v.name||v.studentId||v.role||v.password))return v}catch(e){}}try{if(window.currentUser)return window.currentUser;if(window.user)return window.user}catch(e){}return{}}
 function hi(){const t=(document.body&&document.body.innerText)||"",m=t.match(/Hi,\s*([^!\n\r]+)!/i);return m?m[1].trim():""}
 function teacher(){const u=sess(),r=String(u.role||u.type||"").toLowerCase(),t=(document.body&&document.body.innerText)||"";return r.includes("teacher")||t.includes("TEACHER DASHBOARD")||t.includes("Teacher Dashboard")}
@@ -7311,9 +7311,9 @@ async function teacherPanel(){const body=panel("✍️ Writing — Teacher");bod
 function draw(t){const el=document.getElementById("w12content");try{if(t==="students")return tabStudents(el);if(t==="tasks")return tabTasks(el);if(t==="subs")return tabSubs(el);if(t==="eval")return tabEval(el);if(t==="scores")return tabScores(el);if(t==="ai")return tabAI(el)}catch(e){el.innerHTML='<div class="w12box" style="color:#dc2626"><b>Tab error:</b><br>'+esc(e.message||e)+'</div>'}}
 function tabAI(el){el.innerHTML='<div class="w12box"><b>AI Settings</b><input id="w12ep" placeholder="https://your-worker.workers.dev" value="'+esc(DATA.settings.aiEndpoint||"")+'" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="w12saveep" class="w12btn" style="margin-top:8px;background:#2563eb;color:white">Save Worker Link</button></div>';el.querySelector("#w12saveep").onclick=async()=>{DATA.settings.aiEndpoint=el.querySelector("#w12ep").value.trim();await save();alert("Saved")}}
 function tabStudents(el){const us=users(),ids=new Set(DATA.students.flatMap(x=>[String(x.id||""),String(x.studentId||""),String(x.studentNumber||"")]));el.innerHTML='<div class="w12box"><b>Advanced Writing Students</b><input id="w12q" placeholder="Search" style="width:100%;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div><div id="w12list"></div>';const q=el.querySelector("#w12q"),list=el.querySelector("#w12list");function red(){const n=norm(q.value);list.innerHTML=us.filter(u=>!n||norm(name(u)+" "+num(u)).includes(n)).map(u=>{const checked=Array.from(aliases(u)).some(a=>ids.has(a));return'<label class="w12box" style="display:flex;gap:10px;align-items:center"><input type="checkbox" data-id="'+esc(u.id)+'" '+(checked?"checked":"")+'><div><b>'+esc(name(u))+'</b><div style="font-size:12px;color:#64748b">'+esc(num(u))+' — '+esc(cname(u.classId))+'</div></div></label>'}).join("")}q.oninput=red;red();list.onclick=async e=>{const ch=e.target.closest("input");if(!ch)return;const u=us.find(x=>String(x.id)===String(ch.dataset.id));DATA.students=DATA.students.filter(x=>String(x.id)!==String(u.id)&&String(x.studentId)!==String(u.id));if(ch.checked)DATA.students.push({id:u.id,studentId:u.id,studentNumber:num(u),name:name(u),classId:u.classId||""});await save();tabStudents(el)}}
-function tabTasks(el){el.innerHTML='<div class="w12box"><b>Create Writing Task</b><input id="w12title" placeholder="Title" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><textarea id="w12inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><button id="w12create" class="w12btn" style="background:#2563eb;color:white;margin-top:8px">Create</button></div>'+DATA.tasks.map(t=>'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div><button data-del="'+esc(t.id)+'" class="w12btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");el.querySelector("#w12create").onclick=async()=>{DATA.tasks.push({id:uid("task"),title:el.querySelector("#w12title").value.trim()||"Writing Task",instructions:el.querySelector("#w12inst").value.trim(),minSentences:6,totalMarks:10,mode:"review",createdAt:new Date().toISOString()});await save();tabTasks(el)};el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{DATA.tasks=DATA.tasks.filter(t=>String(t.id)!==String(b.dataset.del));await save();tabTasks(el)})}
+function tabTasks(el){el.innerHTML='<div class="w12box"><b>Create Writing Task</b><input id="w12title" placeholder="Title" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><textarea id="w12inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><button id="w12create" class="w12btn" style="background:#2563eb;color:white;margin-top:8px">Create</button></div>'+DATA.tasks.map(t=>'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div><button data-del="'+esc(t.id)+'" class="w12btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");el.querySelector("#w12create").onclick=async()=>{DATA.tasks.push({id:uid("task"),title:el.querySelector("#w12title").value.trim()||"Writing Task",instructions:el.querySelector("#w12inst").value.trim(),minSentences:6,totalMarks:10,mode:"review",createdAt:new Date().toISOString()});await save();tabTasks(el)};el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(!confirm("Delete this writing task permanently?"))return;const tid=String(b.dataset.del);DATA.deletedTaskIds=uniq([...(DATA.deletedTaskIds||[]),tid]);DATA.tasks=DATA.tasks.filter(t=>String(t.id)!==tid);DATA.submissions=(DATA.submissions||[]).filter(s=>String(s.taskId)!==tid);DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>String(r.taskId)===tid?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString(),clearedReason:"task_deleted"}):r);await save();tabTasks(el)})}
 function createRetake(s){const vals=subStudentIds(s);DATA.retakeRequests=DATA.retakeRequests||[];DATA.retakeRequests.push({id:uid("retake"),taskId:s.taskId,studentId:vals[0]||s.studentId,studentNumber:vals.find(x=>/^\d+$/.test(x))||"",studentName:s.studentName||"",requestedAt:new Date().toISOString(),sourceSubmissionId:s.id});s.status="retake_requested"}
-function deleteAttempt(id){const sub=(DATA.submissions||[]).find(x=>String(x.id)===String(id));DATA.deletedSubmissionIds=uniq([...(DATA.deletedSubmissionIds||[]),String(id)]);if(sub){const ids=subStudentIds(sub);DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>{const sameSource=String(r.sourceSubmissionId||"")===String(id);const sameTask=String(r.taskId)===String(sub.taskId);const sameStudent=ids.some(x=>String(r.studentId)===String(x)||String(r.studentNumber)===String(x));return(sameSource||(sameTask&&sameStudent))?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString()}):r})}DATA.submissions=(DATA.submissions||[]).filter(x=>String(x.id)!==String(id))}
+function deleteAttempt(id){const sub=(DATA.submissions||[]).find(x=>String(x.id)===String(id));DATA.deletedSubmissionIds=uniq([...(DATA.deletedSubmissionIds||[]),String(id)]);if(sub){const ids=subStudentIds(sub),nm=String(sub.studentName||"").trim();DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>{const sameSource=String(r.sourceSubmissionId||"")===String(id);const sameTask=String(r.taskId)===String(sub.taskId);const sameStudent=ids.some(x=>String(r.studentId)===String(x)||String(r.studentNumber)===String(x));const sameName=nm&&String(r.studentName||"").trim()===nm;return(sameSource||(sameTask&&(sameStudent||sameName)))?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString(),clearedReason:"submission_deleted"}):r})}DATA.submissions=(DATA.submissions||[]).filter(x=>String(x.id)!==String(id))}
 function actionButtons(s){return'<button data-ok="'+esc(s.id)+'" class="w12btn" style="background:#16a34a;color:white;margin-top:8px">Accept</button><button data-zero="'+esc(s.id)+'" class="w12btn" style="background:#dc2626;color:white;margin-top:8px;margin-left:6px">0</button><button data-re="'+esc(s.id)+'" class="w12btn" style="margin-top:8px;margin-left:6px">Re-score AI</button><button data-ret="'+esc(s.id)+'" class="w12btn" style="background:#f59e0b;color:white;margin-top:8px;margin-left:6px">Request Retake</button><button data-delatt="'+esc(s.id)+'" class="w12btn" style="background:#7f1d1d;color:white;margin-top:8px;margin-left:6px">Delete Attempt</button>'}
 function bindActions(el,refresh){async function retake(ids){if(!ids.length)return alert("حدد طالبًا أو أكثر");visibleSubs().forEach(s=>{if(ids.includes(String(s.id)))createRetake(s)});await save();refresh()}el.querySelectorAll("[data-ret]").forEach(b=>b.onclick=()=>retake([String(b.dataset.ret)]));el.querySelectorAll("[data-delatt]").forEach(b=>b.onclick=async()=>{if(!confirm("Delete this writing attempt?"))return;deleteAttempt(String(b.dataset.delatt));await save();refresh()});el.querySelectorAll("[data-ok]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.ok));s.status="accepted";s.finalScore=(s.auto&&s.auto.score)||0;await save();refresh()});el.querySelectorAll("[data-zero]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.zero));s.status="cancelled";s.finalScore=0;await save();refresh()});el.querySelectorAll("[data-re]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.re)),t=DATA.tasks.find(x=>String(x.id)===String(s.taskId))||{};const mx=Math.max(0,...visibleSubs().filter(x=>x.id!==s.id&&String(x.taskId)===String(s.taskId)).map(x=>sim(s.text,x.text)));s.auto=await aiMark(s.text||"",t,s.studentName,mx);await save();refresh()})}
 function attemptCard(s){const t=DATA.tasks.find(x=>String(x.id)===String(s.taskId))||{},a=s.auto||localMark(s.text||"",t,0);return'<div class="w12box"><b>'+esc(s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(t.title||s.taskTitle||"Writing")+' — Status: <b>'+esc(s.status||"pending_review")+'</b></div>'+box(a,false)+'<div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+esc(s.text||"").replace(/\n/g,"<br>")+'</div>'+actionButtons(s)+'</div>'}
@@ -7331,155 +7331,7 @@ setInterval(fab,1200);setTimeout(fab,1500);
 
 
 
-<!-- WRITING_STOP_RETAKES_VISIBLE_V2 -->
-<script>
-(function(){
-  if (window.__WRITING_STOP_RETAKES_VISIBLE_V2__) return;
-  window.__WRITING_STOP_RETAKES_VISIBLE_V2__ = true;
 
-  const DOCS = [
-    "writing_independent_v12",
-    "writing_independent_v11",
-    "writing_independent_v10",
-    "writing_independent_v9",
-    "writing_independent_v8",
-    "writing_independent_v7",
-    "writing_independent_v6",
-    "writing_independent_v5"
-  ];
-
-  const LOCAL_KEYS = [
-    "eq_writing_independent_v12",
-    "eq_writing_independent_v11",
-    "eq_writing_independent_v10",
-    "eq_writing_independent_v9",
-    "eq_writing_independent_v8",
-    "eq_writing_independent_v7",
-    "eq_writing_independent_v6",
-    "eq_writing_independent_v5"
-  ];
-
-  function teacherScreen(){
-    const t = (document.body && document.body.innerText) || "";
-    return t.includes("TEACHER DASHBOARD") || t.includes("Teacher Dashboard") || t.includes("Writing — Teacher");
-  }
-
-  function readJSON(k){
-    try { return JSON.parse(localStorage.getItem(k) || "null"); }
-    catch(e){ return null; }
-  }
-
-  function writeJSON(k, v){
-    try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){}
-  }
-
-  function stopRetakesInData(obj){
-    if (!obj || typeof obj !== "object") return 0;
-    let count = 0;
-
-    if (Array.isArray(obj.retakeRequests)) {
-      obj.retakeRequests = obj.retakeRequests.map(function(r){
-        if (r && !r.cleared) {
-          count++;
-          return Object.assign({}, r, {
-            cleared: true,
-            clearedAt: new Date().toISOString(),
-            clearedReason: "teacher_stop_retakes"
-          });
-        }
-        return r;
-      });
-    }
-
-    if (Array.isArray(obj.submissions)) {
-      obj.submissions = obj.submissions.map(function(s){
-        if (s && s.status === "retake_requested") {
-          count++;
-          return Object.assign({}, s, {
-            status: "pending_review",
-            retakeStoppedAt: new Date().toISOString()
-          });
-        }
-        return s;
-      });
-    }
-
-    obj.updatedAt = new Date().toISOString();
-    return count;
-  }
-
-  async function stopAllRetakes(){
-    if (!confirm("إيقاف كل حالات إعادة المحاولة retake_requested؟")) return;
-
-    let total = 0;
-
-    LOCAL_KEYS.forEach(function(k){
-      const obj = readJSON(k);
-      if (obj) {
-        total += stopRetakesInData(obj);
-        writeJSON(k, obj);
-      }
-    });
-
-    try {
-      if (typeof fsAll === "function" && typeof fsSet === "function") {
-        const arr = await fsAll("appSettings");
-        for (const id of DOCS) {
-          const doc = (arr || []).find(x => x && (x.id === id || x._id === id));
-          if (doc) {
-            total += stopRetakesInData(doc);
-            await fsSet("appSettings", id, Object.assign({ id }, doc));
-          }
-        }
-      } else if (typeof db !== "undefined" && db) {
-        for (const id of DOCS) {
-          const snap = await db.collection("appSettings").doc(id).get();
-          if (snap.exists) {
-            const data = snap.data();
-            total += stopRetakesInData(data);
-            await db.collection("appSettings").doc(id).set(Object.assign({ id }, data), { merge: true });
-          }
-        }
-      }
-    } catch(e) {
-      console.warn("Stop retakes cloud sync failed", e);
-    }
-
-    alert("تم إيقاف إعادة المحاولة. العدد: " + total + "\nأغلق Writing وافتحه من جديد.");
-    try { document.getElementById("w12p")?.remove(); } catch(e){}
-    setTimeout(function(){ location.reload(); }, 700);
-  }
-
-  function addButton(){
-    if (!teacherScreen()) return;
-    if (document.getElementById("writing-stop-retakes-visible-btn")) return;
-
-    const b = document.createElement("button");
-    b.id = "writing-stop-retakes-visible-btn";
-    b.textContent = "🛑 Stop Retakes";
-    b.style.cssText = [
-      "position:fixed",
-      "top:calc(env(safe-area-inset-top,0px) + 190px)",
-      "left:12px",
-      "z-index:2147483647",
-      "border:0",
-      "border-radius:999px",
-      "background:#b91c1c",
-      "color:white",
-      "font-weight:900",
-      "padding:12px 15px",
-      "box-shadow:0 10px 28px rgba(0,0,0,.35)",
-      "font-family:system-ui,-apple-system,sans-serif"
-    ].join(";");
-    b.onclick = stopAllRetakes;
-    document.body.appendChild(b);
-  }
-
-  setInterval(addButton, 800);
-  setTimeout(addButton, 500);
-})();
-</script>
-<!-- END_WRITING_STOP_RETAKES_VISIBLE_V2 -->
 
 </body>
 </html>
