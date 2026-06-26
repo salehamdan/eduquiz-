@@ -7328,27 +7328,16 @@ setInterval(fab,1200);setTimeout(fab,1500);
 <!-- END_WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_20260627 -->
 
 
-<!-- WRITING_SAFE_CLEAR_RETAKES_V1 -->
+
+
+
+<!-- WRITING_STOP_RETAKES_VISIBLE_V2 -->
 <script>
 (function(){
-  if (window.__WRITING_SAFE_CLEAR_RETAKES_V1__) return;
-  window.__WRITING_SAFE_CLEAR_RETAKES_V1__ = true;
+  if (window.__WRITING_STOP_RETAKES_VISIBLE_V2__) return;
+  window.__WRITING_STOP_RETAKES_VISIBLE_V2__ = true;
 
-  function isTeacherScreen(){
-    var t = (document.body && document.body.innerText) || "";
-    return t.includes("TEACHER DASHBOARD") || t.includes("Teacher Dashboard") || t.includes("Writing — Teacher");
-  }
-
-  function readJSON(k, fallback){
-    try { return JSON.parse(localStorage.getItem(k) || "null") || fallback; }
-    catch(e){ return fallback; }
-  }
-
-  function writeJSON(k, v){
-    try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){}
-  }
-
-  var DOCS = [
+  const DOCS = [
     "writing_independent_v12",
     "writing_independent_v11",
     "writing_independent_v10",
@@ -7359,7 +7348,7 @@ setInterval(fab,1200);setTimeout(fab,1500);
     "writing_independent_v5"
   ];
 
-  var LOCAL_KEYS = [
+  const LOCAL_KEYS = [
     "eq_writing_independent_v12",
     "eq_writing_independent_v11",
     "eq_writing_independent_v10",
@@ -7370,19 +7359,33 @@ setInterval(fab,1200);setTimeout(fab,1500);
     "eq_writing_independent_v5"
   ];
 
-  function clearRetakesInObject(obj){
+  function teacherScreen(){
+    const t = (document.body && document.body.innerText) || "";
+    return t.includes("TEACHER DASHBOARD") || t.includes("Teacher Dashboard") || t.includes("Writing — Teacher");
+  }
+
+  function readJSON(k){
+    try { return JSON.parse(localStorage.getItem(k) || "null"); }
+    catch(e){ return null; }
+  }
+
+  function writeJSON(k, v){
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){}
+  }
+
+  function stopRetakesInData(obj){
     if (!obj || typeof obj !== "object") return 0;
-    var count = 0;
+    let count = 0;
 
     if (Array.isArray(obj.retakeRequests)) {
       obj.retakeRequests = obj.retakeRequests.map(function(r){
         if (r && !r.cleared) {
           count++;
-          var n = Object.assign({}, r);
-          n.cleared = true;
-          n.clearedAt = new Date().toISOString();
-          n.clearedReason = "teacher_clear_all";
-          return n;
+          return Object.assign({}, r, {
+            cleared: true,
+            clearedAt: new Date().toISOString(),
+            clearedReason: "teacher_stop_retakes"
+          });
         }
         return r;
       });
@@ -7392,10 +7395,10 @@ setInterval(fab,1200);setTimeout(fab,1500);
       obj.submissions = obj.submissions.map(function(s){
         if (s && s.status === "retake_requested") {
           count++;
-          var n = Object.assign({}, s);
-          n.status = "pending_review";
-          n.retakeCancelledAt = new Date().toISOString();
-          return n;
+          return Object.assign({}, s, {
+            status: "pending_review",
+            retakeStoppedAt: new Date().toISOString()
+          });
         }
         return s;
       });
@@ -7405,78 +7408,78 @@ setInterval(fab,1200);setTimeout(fab,1500);
     return count;
   }
 
-  async function clearAllRetakes(){
-    if (!confirm("إيقاف جميع أذونات إعادة المحاولة العالقة؟")) return;
+  async function stopAllRetakes(){
+    if (!confirm("إيقاف كل حالات إعادة المحاولة retake_requested؟")) return;
 
-    var total = 0;
+    let total = 0;
 
     LOCAL_KEYS.forEach(function(k){
-      var obj = readJSON(k, null);
+      const obj = readJSON(k);
       if (obj) {
-        total += clearRetakesInObject(obj);
+        total += stopRetakesInData(obj);
         writeJSON(k, obj);
       }
     });
 
     try {
       if (typeof fsAll === "function" && typeof fsSet === "function") {
-        var arr = await fsAll("appSettings");
-        for (var i=0; i<DOCS.length; i++) {
-          var id = DOCS[i];
-          var doc = (arr || []).find(function(x){ return x && (x.id === id || x._id === id); });
+        const arr = await fsAll("appSettings");
+        for (const id of DOCS) {
+          const doc = (arr || []).find(x => x && (x.id === id || x._id === id));
           if (doc) {
-            total += clearRetakesInObject(doc);
-            await fsSet("appSettings", id, Object.assign({id:id}, doc));
+            total += stopRetakesInData(doc);
+            await fsSet("appSettings", id, Object.assign({ id }, doc));
           }
         }
       } else if (typeof db !== "undefined" && db) {
-        for (var j=0; j<DOCS.length; j++) {
-          var did = DOCS[j];
-          var snap = await db.collection("appSettings").doc(did).get();
+        for (const id of DOCS) {
+          const snap = await db.collection("appSettings").doc(id).get();
           if (snap.exists) {
-            var data = snap.data();
-            total += clearRetakesInObject(data);
-            await db.collection("appSettings").doc(did).set(Object.assign({id:did}, data), {merge:true});
+            const data = snap.data();
+            total += stopRetakesInData(data);
+            await db.collection("appSettings").doc(id).set(Object.assign({ id }, data), { merge: true });
           }
         }
       }
     } catch(e) {
-      console.warn("Clear retakes cloud sync failed:", e);
+      console.warn("Stop retakes cloud sync failed", e);
     }
 
-    alert("تم إيقاف أذونات إعادة المحاولة العالقة. العدد: " + total + "\nافتح حساب الطالب من جديد للتأكد.");
+    alert("تم إيقاف إعادة المحاولة. العدد: " + total + "\nأغلق Writing وافتحه من جديد.");
+    try { document.getElementById("w12p")?.remove(); } catch(e){}
+    setTimeout(function(){ location.reload(); }, 700);
   }
 
   function addButton(){
-    if (!isTeacherScreen()) return;
-    if (document.getElementById("writing-clear-retakes-safe-btn")) return;
+    if (!teacherScreen()) return;
+    if (document.getElementById("writing-stop-retakes-visible-btn")) return;
 
-    var b = document.createElement("button");
-    b.id = "writing-clear-retakes-safe-btn";
-    b.textContent = "🧹 Clear Retakes";
+    const b = document.createElement("button");
+    b.id = "writing-stop-retakes-visible-btn";
+    b.textContent = "🛑 Stop Retakes";
     b.style.cssText = [
       "position:fixed",
-      "left:14px",
-      "bottom:82px",
-      "z-index:2147482600",
+      "top:calc(env(safe-area-inset-top,0px) + 190px)",
+      "left:12px",
+      "z-index:2147483647",
       "border:0",
       "border-radius:999px",
-      "background:#64748b",
+      "background:#b91c1c",
       "color:white",
       "font-weight:900",
-      "padding:12px 16px",
-      "box-shadow:0 10px 25px rgba(15,23,42,.30)",
+      "padding:12px 15px",
+      "box-shadow:0 10px 28px rgba(0,0,0,.35)",
       "font-family:system-ui,-apple-system,sans-serif"
     ].join(";");
-    b.onclick = clearAllRetakes;
+    b.onclick = stopAllRetakes;
     document.body.appendChild(b);
   }
 
-  setInterval(addButton, 1500);
-  setTimeout(addButton, 1200);
+  setInterval(addButton, 800);
+  setTimeout(addButton, 500);
 })();
 </script>
-<!-- END_WRITING_SAFE_CLEAR_RETAKES_V1 -->
+<!-- END_WRITING_STOP_RETAKES_VISIBLE_V2 -->
 
 </body>
 </html>
