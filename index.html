@@ -7263,8 +7263,7 @@ document.addEventListener("click", function(e){
 })();
 </script>
 
-
-<!-- WRITING_INDEPENDENT_FULL_V3_20260626 -->
+<!-- WRITING_INDEPENDENT_FULL_V4_20260626 -->
 <style>
   #wri-v3-panel, #wri-v3-panel * { box-sizing: border-box; }
   #wri-v3-panel {
@@ -7301,8 +7300,8 @@ document.addEventListener("click", function(e){
 </style>
 <script>
 (function(){
-  if(window.__WRITING_INDEPENDENT_FULL_V3__) return;
-  window.__WRITING_INDEPENDENT_FULL_V3__ = true;
+  if(window.__WRITING_INDEPENDENT_FULL_V4__) return;
+  window.__WRITING_INDEPENDENT_FULL_V4__ = true;
 
   const KEYS = {
     students: ["eqWritingAdvancedStudents_v3","eqWritingAdvancedStudents_v2","eqWritingAdvancedStudents_v1"],
@@ -7419,6 +7418,13 @@ document.addEventListener("click", function(e){
   function clName(id){ const c=allClasses().find(x=>String(x.id)===String(id)||String(x.name)===String(id)); return c?String(c.name||c.grade||c.id):""; }
   function aliasesOf(u){
     const set=new Set();
+    try{
+      const saved = localStorage.getItem("eqWritingStudentNumber_v4") || "";
+      if(saved){
+        set.add(saved);
+        if(/^\d+$/.test(saved)) set.add("student_"+saved);
+      }
+    }catch(e){}
     [u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{
       set.add(x); if(/^\d+$/.test(x)) set.add("student_"+x);
       const m=x.match(/student_(\d+)/); if(m) set.add(m[1]);
@@ -7535,7 +7541,9 @@ document.addEventListener("click", function(e){
     const u=getCurrentUser();
     const selected=studentMatchesSelected(u,CACHE.students);
     if(!selected){
-      body.innerHTML='<div class="wri-v3-card" style="color:#64748b">لا توجد مهام كتابة مخصصة لك الآن.</div>';
+      body.innerHTML='<div class="wri-v3-card"><b>تأكيد رقم الطالب</b><div style="font-size:13px;color:#64748b;margin:6px 0 10px">اكتب رقم الطالب مرة واحدة، مثل 3136. إذا كان الطالب ضمن Advanced Students ستظهر له المهمة مباشرة.</div><input id="wri-student-number" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;font-size:16px"><button id="wri-save-student-number" class="wri-v3-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button><div style="font-size:12px;color:#64748b;margin-top:8px">إذا لم تظهر المهمة بعد إدخال الرقم، تأكد من أن المعلم أضاف نفس الرقم في Advanced Students وأنشأ Writing Task.</div></div>';
+      const btn=body.querySelector("#wri-save-student-number");
+      btn.onclick=async()=>{ const val=(body.querySelector("#wri-student-number").value||"").trim(); if(!val) return alert("اكتب رقم الطالب أولاً"); localStorage.setItem("eqWritingStudentNumber_v4", val); await loadAll(); student(); };
       return;
     }
     const al=aliasesOf(u);
@@ -7545,15 +7553,14 @@ document.addEventListener("click", function(e){
       return;
     }
     body.innerHTML=list.map(t=>{ const old=CACHE.submissions.find(s=>String(s.taskId)===String(t.id)&&al.has(String(s.studentId))); if(old){ const score=old.finalScore!=null?old.finalScore:(old.auto&&old.auto.score)||"Pending"; return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>'+esc(score)+' / '+esc(t.totalMarks||10)+'</b> — Status: '+esc(old.status||"pending_review")+'</div></div>'; } return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — Minimum: '+esc(t.minSentences||6)+' sentences</div><textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="wri-v3-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Submit Writing</button></div>'; }).join("");
-    body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(btn.dataset.submit)); const ta=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]'); const text=(ta.value||"").trim(); if(!text)return alert("Write your paragraph first."); const a=autoMark(text,t); const sid=Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al).find(x=>/^\d+$/.test(x))||"student"; const id=uid("wsub"); await save("submissions",FIRE.submissions,{id,taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||greetingName()||"Student",text,auto:a,status:t.mode==="auto"?"accepted":"pending_review",finalScore:t.mode==="auto"?a.score:null,createdAt:new Date().toISOString()}); alert("Writing submitted."); student(); });
+    body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(btn.dataset.submit)); const ta=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]'); const text=(ta.value||"").trim(); if(!text)return alert("Write your paragraph first."); const a=autoMark(text,t); const savedSid=localStorage.getItem("eqWritingStudentNumber_v4")||""; const sid=savedSid ? (/^\d+$/.test(savedSid) ? "student_"+savedSid : savedSid) : (Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al).find(x=>/^\d+$/.test(x))||"student"); const id=uid("wsub"); await save("submissions",FIRE.submissions,{id,taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||greetingName()||"Student",text,auto:a,status:t.mode==="auto"?"accepted":"pending_review",finalScore:t.mode==="auto"?a.score:null,createdAt:new Date().toISOString()}); alert("Writing submitted."); student(); });
   }
 
   setInterval(fab,1200);
   setTimeout(fab,1500);
 })();
 </script>
-<!-- END_WRITING_INDEPENDENT_FULL_V3_20260626 -->
-
+<!-- END_WRITING_INDEPENDENT_FULL_V4_20260626 -->
 </body>
 </html>
 
