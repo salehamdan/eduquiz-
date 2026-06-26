@@ -7263,46 +7263,297 @@ document.addEventListener("click", function(e){
 })();
 </script>
 
+
 <!-- WRITING_INDEPENDENT_FULL_V3_20260626 -->
+<style>
+  #wri-v3-panel, #wri-v3-panel * { box-sizing: border-box; }
+  #wri-v3-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: max(72px, env(safe-area-inset-top, 0px) + 64px);
+    bottom: 0;
+    z-index: 2147483000;
+    background: rgba(15,23,42,.45);
+    font-family: system-ui,-apple-system,sans-serif;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  #wri-v3-card {
+    width: min(1020px, 100%);
+    height: 100%;
+    background: #f8fafc;
+    border-radius: 22px 22px 0 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 -18px 38px rgba(0,0,0,.25);
+  }
+  #wri-v3-head {
+    background:#0f172a;color:#fff;padding:12px 14px;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    flex-shrink:0;
+  }
+  #wri-v3-body { flex:1; overflow:auto; padding:12px; }
+  .wri-v3-btn { border:1px solid #cbd5e1; border-radius:12px; background:#fff; color:#0f172a; font-weight:900; padding:10px 12px; }
+  .wri-v3-card { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:12px; margin-bottom:10px; }
+</style>
 <script>
 (function(){
-if(window.__WRITING_INDEPENDENT_FULL_V3__)return;window.__WRITING_INDEPENDENT_FULL_V3__=true;
-const C={adv:'writingAdvancedStudents',tasks:'writingTasks',subs:'writingSubmissions'},L={adv:'eqWritingAdvancedStudents_v3',tasks:'eqWritingTasks_v3',subs:'eqWritingSubmissions_v3'};let D={adv:[],tasks:[],subs:[]};
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function uid(p){return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)}
-function gj(k){try{return JSON.parse(localStorage.getItem(k)||'[]')}catch(e){return[]}}function sj(k,v){localStorage.setItem(k,JSON.stringify(v))}
-function db(){try{return firebase&&firebase.apps&&firebase.apps.length&&firebase.firestore?firebase.firestore():null}catch(e){return null}}
-function merge(a,b){let m=new Map();[...(a||[]),...(b||[])].forEach(x=>{if(!x)return;let id=String(x.id||x.studentId||'');if(id)m.set(id,Object.assign({},m.get(id)||{},x))});return [...m.values()].filter(x=>!x.deleted)}
-async function all(col,key){let loc=gj(key),d=db();if(!d)return loc;try{let s=await d.collection(col).get(),arr=[];s.forEach(doc=>arr.push(Object.assign({id:doc.id},doc.data()||{})));return merge(arr,loc)}catch(e){return loc}}
-async function save(col,key,id,rec){let loc=gj(key).filter(x=>String(x.id||x.studentId)!==String(id));if(!rec.deleted)loc.push(Object.assign({},rec,{id}));sj(key,loc);let d=db();if(d)try{await d.collection(col).doc(String(id)).set(Object.assign({},rec,{id}),{merge:true})}catch(e){}}
-async function load(){D.adv=await all(C.adv,L.adv);D.tasks=await all(C.tasks,L.tasks);D.subs=await all(C.subs,L.subs);return D}
-function cur(){let ks=['currentUser','eduquizCurrentUser','eq_current_user','session','eq_session','user'];for(let k of ks){try{let v=JSON.parse(localStorage.getItem(k)||'null');if(v&&(v.role||v.name||v.studentId||v.id||v.password))return v}catch(e){}}return window.currentUser||window.user||{}}
-function aliases(u){let S=new Set();[u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{S.add(x);if(/^\d+$/.test(x))S.add('student_'+x);let m=x.match(/^student_(\d+)$/);if(m)S.add(m[1])});return S}
-function teacher(){let u=cur(),r=String(u.role||u.type||'').toLowerCase(),t=document.body?.innerText||'';return r.includes('teacher')||t.includes('Teacher Dashboard')||t.includes('TEACHER')||t.includes('لوحة المعلم')}
-function student(){let u=cur(),r=String(u.role||u.type||'').toLowerCase();return r.includes('student')||((u.studentId||u.password||u.id)&&!teacher())}
-function studs(){let a=[];try{if(Array.isArray(PRELOADED_USERS))a=a.concat(PRELOADED_USERS)}catch(e){}try{if(Array.isArray(window.users))a=a.concat(window.users)}catch(e){}a=a.concat(gj('users'));let m=new Map();a.forEach(u=>{if(!u||u.role!=='student')return;let id=String(u.id||('student_'+(u.studentId||u.password||u.name)));if(!m.has(id))m.set(id,Object.assign({},u,{id}))});return[...m.values()]}
-function cls(){let a=[];try{if(Array.isArray(PRELOADED_CLASSES))a=a.concat(PRELOADED_CLASSES)}catch(e){}try{if(Array.isArray(window.classes))a=a.concat(window.classes)}catch(e){}a=a.concat(gj('classes'));let m=new Map();a.forEach(c=>{if(c){let id=String(c.id||c.name);if(!m.has(id))m.set(id,Object.assign({},c,{id}))}});return[...m.values()]}
-function sn(u){return String(u.name||u.fullName||u.shortName||u.id||'Student')}function sno(u){return String(u.studentId||u.studentNo||u.studentNumber||u.password||u.id||'')}function cn(id){let c=cls().find(x=>String(x.id)===String(id)||String(x.name)===String(id));return c?String(c.name||c.grade||c.id):''}
-function norm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g,' ').trim()}function wc(t){return(String(t||'').match(/\b[\w']+\b/g)||[]).length}function sc(t){t=String(t||'').trim();if(!t)return 0;let p=(t.match(/[.!?]+/g)||[]).length;return p||Math.max(1,t.split(/\n+|(?=\s+i\s+)/i).filter(x=>x.trim()).length)}
-function mark(text,task){let issues=[],rules=[[/\bi\b/g,'I','Capital I'],[/\blke\b/gi,'like','Spelling'],[/\blik\b/gi,'like','Spelling'],[/\bfotbal\b/gi,'football','Spelling'],[/\bskol\b/gi,'school','Spelling'],[/\bpitza\b/gi,'pizza','Spelling']];rules.forEach(([re,fix,msg])=>{let m,r=new RegExp(re.source,re.flags);while((m=r.exec(text)))issues.push({start:m.index,end:m.index+m[0].length,type:'error',fix,msg})});let words=wc(text),sents=sc(text),min=Number(task.minSentences||6),total=Number(task.totalMarks||10);if(sents<min)issues.push({type:'warning',msg:'Less than minimum sentences: '+sents+'/'+min});if(words<25)issues.push({type:'warning',msg:'Short writing: '+words+' words'});if(!/[.!?]/.test(text))issues.push({type:'warning',msg:'Missing punctuation'});let ai=words>=55&&!issues.some(i=>i.type==='error')&&/I like|I enjoy|I am|free time|family and friends/i.test(text);if(ai)issues.push({type:'ai',msg:'Very clean/general paragraph. AI review recommended.'});let e=issues.filter(i=>i.type==='error').length,score=Math.max(0,Math.min(total,Math.round(((words>=35?2:words>=20?1.5:1)+(sents>=min?2:sents>=4?1.5:1)+(Math.max(0,2-e*.35))+(new Set(norm(text).split(' ').filter(Boolean)).size>=18?2:1.25)+(/[.!?]/.test(text)?1:.25)+(ai?.5:1))*10)/10));return{score,total,wordCount:words,sentenceCount:sents,issues}}
-function hl(t,is){let r=(is||[]).filter(x=>Number.isInteger(x.start)).sort((a,b)=>a.start-b.start),o='',p=0;r.forEach(x=>{if(x.start<p)return;o+=esc(t.slice(p,x.start));let bg=x.type==='error'?'#fecaca':x.type==='ai'?'#ddd6fe':'#fef3c7',bd=x.type==='error'?'#dc2626':x.type==='ai'?'#7c3aed':'#f59e0b';o+=`<mark title="${esc((x.msg||'')+(x.fix?' → '+x.fix:''))}" style="background:${bg};border-bottom:2px solid ${bd};padding:1px 2px;border-radius:3px">${esc(t.slice(x.start,x.end))}</mark>`;p=x.end});return(o+esc(t.slice(p))).replace(/\n/g,'<br>')}
-function sim(a,b){let A=new Set(norm(a).split(' ').filter(w=>w.length>2)),B=new Set(norm(b).split(' ').filter(w=>w.length>2));if(!A.size||!B.size)return 0;let h=0;A.forEach(w=>B.has(w)&&h++);return Math.round(h/Math.min(A.size,B.size)*100)}
-function shell(title){document.getElementById('writing-independent-panel')?.remove();let w=document.createElement('div');w.id='writing-independent-panel';w.style.cssText='position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.5);display:flex;align-items:flex-end;justify-content:center;font-family:system-ui';w.innerHTML=`<div style="width:min(1020px,100%);height:min(88vh,780px);background:#fff;border-radius:22px 22px 0 0;box-shadow:0 -20px 45px #0005;display:flex;flex-direction:column;overflow:hidden"><div style="background:#0f172a;color:#fff;padding:12px 14px;display:flex;justify-content:space-between;align-items:center"><div><b>${esc(title)}</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — shared through Firebase</div></div><button id="wclose" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="writing-body" style="flex:1;overflow:auto;background:#f8fafc;padding:12px"></div></div>`;document.body.appendChild(w);w.querySelector('#wclose').onclick=()=>w.remove();return w.querySelector('#writing-body')}
-function fab(){if(document.getElementById('writing-independent-fab')||(!teacher()&&!student()))return;let b=document.createElement('button');b.id='writing-independent-fab';b.innerHTML='✍️ Writing';b.style.cssText='position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px #0f172a55';b.onclick=open;document.body.appendChild(b)}
-function topbtn(){if(document.getElementById('writing-independent-top')||!teacher())return;let e=[...document.querySelectorAll('button,div,span,a')].filter(x=>['Reading Theory','Reading Progress','Quizzes'].includes((x.innerText||'').trim())).pop();if(!e||!e.parentElement)return;let b=document.createElement('button');b.id='writing-independent-top';b.innerHTML='✍️ Writing';b.style.cssText='margin:4px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font-weight:900;padding:9px 11px';b.onclick=open;e.parentElement.appendChild(b)}
-async function open(){teacher()?panelT():panelS()}
-async function panelT(){let b=shell('✍️ Writing — Teacher');b.innerHTML='<div style="background:#fff;border-radius:14px;padding:14px;color:#64748b">Loading...</div>';await load();b.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="wt" data-t="students">Advanced Students</button><button class="wt" data-t="tasks">Writing Tasks</button><button class="wt" data-t="subs">Submissions / Marking</button><button class="wt" data-t="scores">Writing Scores</button></div><div id="wc"></div>';b.querySelectorAll('.wt').forEach(x=>{x.style.cssText='border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font-weight:900;padding:10px 12px';x.onclick=()=>draw(x.dataset.t)});draw('students')}
-function draw(t){let box=document.querySelector('#wc');if(t==='students')return drawStudents(box);if(t==='tasks')return drawTasks(box);if(t==='subs')return drawSubs(box);drawScores(box)}
-function drawStudents(box){let ids=new Set(D.adv.flatMap(x=>[String(x.id||''),String(x.studentId||''),String(x.studentNumber||'')])),cs=cls();box.innerHTML=`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>Advanced Writing Students</b><div style="font-size:12px;color:#64748b">القائمة محفوظة وتظهر للطالب بعد تحديث الصفحة.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><input id="wq" placeholder="Search name or number" style="flex:1;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="wcl" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All classes</option>${cs.map(c=>`<option value="${esc(c.id)}">${esc(c.name||c.grade||c.id)}</option>`).join('')}</select></div></div><div id="wl"></div>`;let q=box.querySelector('#wq'),sel=box.querySelector('#wcl'),list=box.querySelector('#wl');function rd(){let qq=norm(q.value),cid=sel.value;let arr=studs().filter(u=>(!cid||String(u.classId)===cid)&&(!qq||norm(sn(u)+' '+sno(u)).includes(qq)));list.innerHTML=arr.map(u=>{let al=aliases(u),chk=[...al].some(a=>ids.has(a));return`<label style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-bottom:7px"><input type="checkbox" data-id="${esc(u.id)}" ${chk?'checked':''} style="width:20px;height:20px"><div style="flex:1"><b>${esc(sn(u))}</b><div style="font-size:12px;color:#64748b">${esc(sno(u))} — ${esc(cn(u.classId))}</div></div><span style="font-size:11px;color:${chk?'#16a34a':'#64748b'};font-weight:900">${chk?'Selected':'Not selected'}</span></label>`}).join('')||'<div style="background:#fff;border-radius:14px;padding:16px;color:#64748b">No students found.</div>';list.querySelectorAll('input').forEach(ch=>ch.onchange=async()=>{let u=studs().find(x=>String(x.id)===ch.dataset.id);if(ch.checked)await save(C.adv,L.adv,u.id,{id:u.id,studentId:u.id,studentNumber:sno(u),name:sn(u),classId:u.classId||'',createdAt:new Date().toISOString()});else await save(C.adv,L.adv,u.id,{id:u.id,studentId:u.id,studentNumber:sno(u),deleted:true});await load();drawStudents(box)})}q.oninput=rd;sel.onchange=rd;rd()}
-function drawTasks(box){box.innerHTML=`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>Create Writing Task</b><div style="font-size:12px;color:#64748b">تظهر فقط للطلاب المختارين.</div><div style="display:grid;grid-template-columns:1fr 120px 120px;gap:8px;margin-top:10px"><input id="title" placeholder="Write about yourself" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="min" type="number" value="6" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="marks" type="number" value="10" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div><textarea id="inst" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:70px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><select id="mode" style="margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="both">Auto + Teacher review</option><option value="manual">Teacher manual correction</option><option value="auto">Auto only</option></select><button id="create" style="margin-top:8px;margin-left:8px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;padding:10px 14px">Create Task</button></div><div>${D.tasks.map(t=>`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px;margin-bottom:8px"><b>${esc(t.title)}</b><div style="font-size:12px;color:#64748b">${esc(t.instructions||'')} — ${esc(t.minSentences||6)} sentences — ${esc(t.totalMarks||10)} marks</div><button data-del="${esc(t.id)}" style="margin-top:8px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:900;padding:8px 10px">Delete</button></div>`).join('')}</div>`;box.querySelector('#create').onclick=async()=>{let id=uid('wtask'),rec={id,title:box.querySelector('#title').value.trim()||'Writing Task',instructions:box.querySelector('#inst').value.trim(),minSentences:Number(box.querySelector('#min').value||6),totalMarks:Number(box.querySelector('#marks').value||10),mode:box.querySelector('#mode').value,createdAt:new Date().toISOString()};await save(C.tasks,L.tasks,id,rec);await load();drawTasks(box)};box.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(confirm('Delete task?')){await save(C.tasks,L.tasks,b.dataset.del,{id:b.dataset.del,deleted:true});await load();drawTasks(box)}})}
-function drawSubs(box){let sub=D.subs.slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));box.innerHTML=sub.map(s=>{let t=D.tasks.find(x=>x.id===s.taskId)||{},a=s.auto||mark(s.text,t),best=sub.filter(x=>x.id!==s.id&&x.taskId===s.taskId).map(x=>({name:x.studentName||'Student',pct:sim(s.text,x.text)})).sort((a,b)=>b.pct-a.pct)[0]||{pct:0};return`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between"><div><b>${esc(s.studentName)}</b><div style="font-size:12px;color:#64748b">${esc(t.title||s.taskTitle||'Writing Task')}</div></div><div style="text-align:right"><b>${esc(s.finalScore??a.score)} / ${esc(a.total)}</b><div style="font-size:11px;color:${best.pct>=70?'#dc2626':'#64748b'}">Similarity: ${best.pct}%</div></div></div><div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">${hl(s.text||'',a.issues)}</div><div style="font-size:12px;color:#64748b;margin-top:8px">Words: ${a.wordCount} — Sentences: ${a.sentenceCount} — Status: <b>${esc(s.status||'pending_review')}</b></div>${(a.issues||[]).filter(i=>!Number.isInteger(i.start)).map(i=>`<div style="font-size:12px;color:${i.type==='ai'?'#7c3aed':'#b45309'};margin-top:4px">⚠️ ${esc(i.msg)}</div>`).join('')}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button data-ac="${esc(s.id)}" style="border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900;padding:8px 10px">Accept</button><button data-re="${esc(s.id)}" style="border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:900;padding:8px 10px">Retake</button><button data-ze="${esc(s.id)}" style="border:0;border-radius:10px;background:#dc2626;color:white;font-weight:900;padding:8px 10px">Cancel / 0</button></div></div>`}).join('')||'<div style="background:#fff;border-radius:14px;padding:16px;color:#64748b">No submissions yet.</div>';box.querySelectorAll('[data-ac]').forEach(b=>b.onclick=()=>chg(b.dataset.ac,'accepted'));box.querySelectorAll('[data-re]').forEach(b=>b.onclick=()=>chg(b.dataset.re,'retake_required'));box.querySelectorAll('[data-ze]').forEach(b=>b.onclick=()=>chg(b.dataset.ze,'cancelled',0))}
-async function chg(id,status,score){let s=D.subs.find(x=>x.id===id);if(!s)return;let t=D.tasks.find(x=>x.id===s.taskId)||{},a=s.auto||mark(s.text,t),rec=Object.assign({},s,{status,finalScore:score??a.score,updatedAt:new Date().toISOString()});await save(C.subs,L.subs,id,rec);await load();draw('subs')}
-function drawScores(box){let ids=new Set(D.adv.flatMap(x=>[String(x.id||''),String(x.studentId||''),String(x.studentNumber||'')])),arr=studs().filter(u=>[...aliases(u)].some(a=>ids.has(a)));box.innerHTML=`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;overflow:auto"><b>Writing Scores / 10</b><div style="font-size:12px;color:#64748b">مستقلة ولا تدخل في Gradebook.</div><table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="text-align:left;padding:8px">Student</th><th style="text-align:left;padding:8px">No.</th><th style="text-align:left;padding:8px">Class</th><th style="text-align:left;padding:8px">Score</th><th style="text-align:left;padding:8px">Status</th></tr></thead><tbody>${arr.map(u=>{let al=aliases(u),ss=D.subs.filter(s=>[...al].some(a=>String(s.studentId)===String(a))),best=ss.sort((a,b)=>Number(b.finalScore??b.auto?.score??0)-Number(a.finalScore??a.auto?.score??0))[0];return`<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px">${esc(sn(u))}</td><td style="padding:8px">${esc(sno(u))}</td><td style="padding:8px">${esc(cn(u.classId))}</td><td style="padding:8px"><b>${best?esc(best.finalScore??best.auto?.score??'Pending'):'-'}</b></td><td style="padding:8px">${esc(best?best.status||'pending_review':'No submission')}</td></tr>`}).join('')||'<tr><td colspan="5" style="padding:14px;color:#64748b">No advanced writing students selected.</td></tr>'}</tbody></table></div>`}
-async function panelS(){let b=shell('✍️ Writing — Student');b.innerHTML='<div style="background:#fff;border-radius:14px;padding:14px;color:#64748b">Loading...</div>';await load();let u=cur(),al=aliases(u),selected=D.adv.some(x=>[x.id,x.studentId,x.studentNumber].filter(Boolean).map(String).some(v=>al.has(v)||(v.match(/^student_(\d+)$/)&&al.has(v.match(/^student_(\d+)$/)[1]))));if(!selected){b.innerHTML='<div style="background:#fff;border-radius:16px;padding:16px;color:#64748b">لا توجد مهام كتابة مخصصة لك الآن.</div>';return}b.innerHTML=(D.tasks.map(t=>{let old=D.subs.find(s=>s.taskId===t.id&&al.has(String(s.studentId)));if(old)return`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>${esc(t.title)}</b><div style="font-size:12px;color:#64748b">${esc(t.instructions||'')}</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>${esc(old.finalScore??old.auto?.score??'Pending')} / ${esc(t.totalMarks||10)}</b> — Status: ${esc(old.status||'pending_review')}</div></div>`;return`<div style="background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px"><b>${esc(t.title)}</b><div style="font-size:12px;color:#64748b">${esc(t.instructions||'')} — Minimum: ${esc(t.minSentences||6)} sentences</div><textarea data-task="${esc(t.id)}" style="width:100%;box-sizing:border-box;min-height:160px;border:1px solid #cbd5e1;border-radius:12px;padding:10px;margin-top:8px" placeholder="Write here..."></textarea><button data-submit="${esc(t.id)}" style="margin-top:8px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;padding:10px 14px;width:100%">Submit Writing</button></div>`}).join(''))||'<div style="background:#fff;border-radius:16px;padding:16px;color:#64748b">أنت ضمن طلاب الكتابة، لكن لا توجد مهمة منشأة من المعلم حتى الآن.</div>';b.querySelectorAll('[data-submit]').forEach(btn=>btn.onclick=async()=>{let t=D.tasks.find(x=>x.id===btn.dataset.submit),ta=b.querySelector('[data-task="'+CSS.escape(t.id)+'"]'),text=(ta.value||'').trim();if(!text)return alert('Write your paragraph first.');let a=mark(text,t),sid=[...al].find(x=>/^student_\d+$/.test(x))||[...al][0]||'',id=uid('wsub'),rec={id,taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||u.shortName||'Student',text,auto:a,status:t.mode==='auto'?'accepted':'pending_review',finalScore:t.mode==='auto'?a.score:null,createdAt:new Date().toISOString()};await save(C.subs,L.subs,id,rec);await load();alert('Writing submitted.');panelS()})}
-setInterval(()=>{fab();topbtn()},1200);setTimeout(()=>{fab();topbtn()},1500);
+  if(window.__WRITING_INDEPENDENT_FULL_V3__) return;
+  window.__WRITING_INDEPENDENT_FULL_V3__ = true;
+
+  const KEYS = {
+    students: ["eqWritingAdvancedStudents_v3","eqWritingAdvancedStudents_v2","eqWritingAdvancedStudents_v1"],
+    tasks: ["eqWritingTasks_v3","eqWritingTasks_v2","eqWritingTasks_v1"],
+    submissions: ["eqWritingSubmissions_v3","eqWritingSubmissions_v2","eqWritingSubmissions_v1"]
+  };
+  const PRIMARY = {
+    students: "eqWritingAdvancedStudents_v3",
+    tasks: "eqWritingTasks_v3",
+    submissions: "eqWritingSubmissions_v3"
+  };
+  const FIRE = { students:"writingAdvancedStudents", tasks:"writingTasks", submissions:"writingSubmissions" };
+  let CACHE = { students:[], tasks:[], submissions:[], loaded:false };
+
+  function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+  function uid(p){ return (p||"id")+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,8); }
+  function readJSON(k){ try{return JSON.parse(localStorage.getItem(k)||"[]")||[]}catch(e){return[]} }
+  function writeJSON(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
+  function merge(arrs){
+    const m=new Map();
+    (arrs||[]).flat().forEach(x=>{
+      if(!x) return;
+      const id=String(x.id||x.studentId||x.taskId||"");
+      if(id) m.set(id,Object.assign({},m.get(id)||{},x));
+    });
+    return Array.from(m.values()).filter(x=>!x.deleted);
+  }
+  function hasDB(){
+    try { return typeof firebase!=="undefined" && firebase.apps && firebase.apps.length && firebase.firestore; }
+    catch(e){ return false; }
+  }
+  async function loadLocal(kind){
+    return merge(KEYS[kind].map(readJSON));
+  }
+  async function readFire(col){
+    if(!hasDB()) return [];
+    try{
+      const snap = await firebase.firestore().collection(col).get();
+      const out=[]; snap.forEach(d=>out.push(Object.assign({id:d.id}, d.data()||{})));
+      return out;
+    }catch(e){ return []; }
+  }
+  async function loadAll(){
+    const localS=await loadLocal("students"), localT=await loadLocal("tasks"), localSub=await loadLocal("submissions");
+    const [fs,ft,fsub]=await Promise.all([readFire(FIRE.students),readFire(FIRE.tasks),readFire(FIRE.submissions)]);
+    CACHE.students=merge([fs,localS]);
+    CACHE.tasks=merge([ft,localT]);
+    CACHE.submissions=merge([fsub,localSub]);
+    writeJSON(PRIMARY.students,CACHE.students);
+    writeJSON(PRIMARY.tasks,CACHE.tasks);
+    writeJSON(PRIMARY.submissions,CACHE.submissions);
+    CACHE.loaded=true;
+    return CACHE;
+  }
+  async function save(kind, col, rec){
+    const key=PRIMARY[kind];
+    let arr=readJSON(key).filter(x=>String(x.id||x.studentId)!==String(rec.id||rec.studentId));
+    if(!rec.deleted) arr.push(rec);
+    writeJSON(key, arr);
+    try{
+      if(hasDB()) await firebase.firestore().collection(col).doc(String(rec.id||rec.studentId)).set(rec,{merge:true});
+    }catch(e){}
+    await loadAll();
+  }
+
+  function getCurrentUser(){
+    const names=["currentUser","eduquizCurrentUser","eq_current_user","session","eq_session","user"];
+    for(const k of names){
+      try{ const v=JSON.parse(localStorage.getItem(k)||"null"); if(v && (v.id||v.name||v.studentId||v.role||v.password)) return v; }catch(e){}
+    }
+    try{ if(window.currentUser) return window.currentUser; if(window.user) return window.user; }catch(e){}
+    return {};
+  }
+  function greetingName(){
+    const txt=(document.body&&document.body.innerText)||"";
+    let m=txt.match(/Hi,\s*([^!\n\r]+)!/i);
+    if(m) return m[1].trim();
+    return "";
+  }
+  function isTeacher(){
+    const u=getCurrentUser(); const r=String(u.role||u.type||"").toLowerCase();
+    const txt=(document.body&&document.body.innerText)||"";
+    return r.includes("teacher") || txt.includes("TEACHER DASHBOARD") || txt.includes("Teacher Dashboard");
+  }
+  function isStudent(){
+    const u=getCurrentUser(); const r=String(u.role||u.type||"").toLowerCase();
+    return r.includes("student") || (!isTeacher() && (u.studentId||u.password||u.id||greetingName()));
+  }
+
+  function allStudents(){
+    let arr=[];
+    try{ if(Array.isArray(PRELOADED_USERS)) arr=arr.concat(PRELOADED_USERS); }catch(e){}
+    try{ if(Array.isArray(window.users)) arr=arr.concat(window.users); }catch(e){}
+    arr=arr.concat(readJSON("users"));
+    const m=new Map();
+    arr.forEach(u=>{
+      if(!u || u.role!=="student") return;
+      const id=String(u.id||("student_"+(u.studentId||u.password||u.name)));
+      if(!m.has(id)) m.set(id,Object.assign({},u,{id}));
+    });
+    return Array.from(m.values());
+  }
+  function allClasses(){
+    let arr=[];
+    try{ if(Array.isArray(PRELOADED_CLASSES)) arr=arr.concat(PRELOADED_CLASSES); }catch(e){}
+    try{ if(Array.isArray(window.classes)) arr=arr.concat(window.classes); }catch(e){}
+    arr=arr.concat(readJSON("classes"));
+    const m=new Map();
+    arr.forEach(c=>{ if(!c)return; const id=String(c.id||c.name||Math.random()); if(!m.has(id))m.set(id,Object.assign({},c,{id})); });
+    return Array.from(m.values());
+  }
+  function stName(u){ return String(u.name||u.fullName||u.shortName||u.studentName||u.id||"Student"); }
+  function stNo(u){ return String(u.studentId||u.studentNo||u.studentNumber||u.password||u.id||""); }
+  function clName(id){ const c=allClasses().find(x=>String(x.id)===String(id)||String(x.name)===String(id)); return c?String(c.name||c.grade||c.id):""; }
+  function aliasesOf(u){
+    const set=new Set();
+    [u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{
+      set.add(x); if(/^\d+$/.test(x)) set.add("student_"+x);
+      const m=x.match(/student_(\d+)/); if(m) set.add(m[1]);
+    });
+    const gn=greetingName(); if(gn) set.add("name:"+gn);
+    if(u.name) set.add("name:"+String(u.name).trim());
+    return set;
+  }
+  function studentMatchesSelected(userLike, selected){
+    const al=aliasesOf(userLike);
+    const gn=greetingName();
+    return (selected||[]).some(s=>{
+      const vals=[s.id,s.studentId,s.studentNumber,s.password].filter(Boolean).map(String);
+      for(const v of vals){
+        if(al.has(v)) return true;
+        const m=v.match(/student_(\d+)/); if(m && al.has(m[1])) return true;
+        if(/^\d+$/.test(v) && al.has("student_"+v)) return true;
+      }
+      if(gn && s.name && String(s.name).includes(gn)) return true;
+      if(userLike.name && s.name && String(s.name).includes(String(userLike.name).split(" ")[0])) return true;
+      return false;
+    });
+  }
+
+  function norm(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g," ").trim(); }
+  function wc(t){ return (String(t||"").match(/\b[\w']+\b/g)||[]).length; }
+  function sc(t){ const x=String(t||"").trim(); if(!x)return 0; const p=(x.match(/[.!?]+/g)||[]).length; if(p)return p; return Math.max(1,x.split(/\n+|(?=\s+i\s+)/i).filter(Boolean).length); }
+  const ERR=[
+    [/\bi\b/g,"I","Capital I"],[/\blke\b/gi,"like","Spelling"],[/\blik\b/gi,"like","Spelling"],[/\bfotbal\b/gi,"football","Spelling"],[/\bskol\b/gi,"school","Spelling"],[/\bpitza\b/gi,"pizza","Spelling"],[/\bfamly\b/gi,"family","Spelling"],[/\bfrend\b/gi,"friend","Spelling"]
+  ];
+  function autoMark(text,task){
+    const min=Number(task.minSentences||6), total=Number(task.totalMarks||10);
+    const issues=[]; ERR.forEach(([re,fix,msg])=>{ let m,r=new RegExp(re.source,re.flags); while((m=r.exec(text))!==null) issues.push({start:m.index,end:m.index+m[0].length,fix,msg,type:"error"}); });
+    const words=wc(text), sents=sc(text);
+    if(sents<min) issues.push({msg:"Less than minimum sentences: "+sents+"/"+min,type:"warning"});
+    if(words<25) issues.push({msg:"Short writing: "+words+" words",type:"warning"});
+    if(!/[.!?]/.test(text)) issues.push({msg:"Missing punctuation",type:"warning"});
+    const clean=words>=55 && issues.filter(i=>i.type==="error").length===0 && /\b(I like|I enjoy|I am|family and friends|free time)\b/i.test(text);
+    if(clean) issues.push({msg:"Very clean/general paragraph. AI review recommended.",type:"ai"});
+    const err=issues.filter(i=>i.type==="error").length;
+    const score=Math.max(0,Math.min(total,Math.round(((words>=35?2:words>=20?1.5:1)+(sents>=min?2:sents>=4?1.5:1)+(Math.max(0,2-err*.35))+(new Set(norm(text).split(" ").filter(Boolean)).size>=18?2:1.25)+(/[.!?]/.test(text)?1:.25)+(clean?.5:1))*10)/10));
+    return {score,total,wordCount:words,sentenceCount:sents,issues};
+  }
+  function hl(text,issues){
+    const ranges=(issues||[]).filter(i=>Number.isInteger(i.start)).sort((a,b)=>a.start-b.start); let out="",p=0;
+    ranges.forEach(r=>{ if(r.start<p)return; out+=esc(text.slice(p,r.start)); const bg=r.type==="ai"?"#ddd6fe":"#fecaca", bd=r.type==="ai"?"#7c3aed":"#dc2626"; out+='<mark style="background:'+bg+';border-bottom:2px solid '+bd+';padding:1px 2px;border-radius:3px" title="'+esc((r.msg||"")+(r.fix?" → "+r.fix:""))+'">'+esc(text.slice(r.start,r.end))+'</mark>'; p=r.end; });
+    return (out+esc(text.slice(p))).replace(/\n/g,"<br>");
+  }
+  function sim(a,b){ const A=new Set(norm(a).split(" ").filter(w=>w.length>2)),B=new Set(norm(b).split(" ").filter(w=>w.length>2)); if(!A.size||!B.size)return 0; let h=0; A.forEach(w=>{if(B.has(w))h++}); return Math.round(h/Math.min(A.size,B.size)*100); }
+
+  function shell(title){
+    const old=document.getElementById("wri-v3-panel"); if(old)old.remove();
+    const w=document.createElement("div"); w.id="wri-v3-panel";
+    w.innerHTML='<div id="wri-v3-card"><div id="wri-v3-head"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — no Gradebook</div></div><button id="wri-v3-close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="wri-v3-body"></div></div>';
+    document.body.appendChild(w); w.querySelector("#wri-v3-close").onclick=()=>w.remove(); return w.querySelector("#wri-v3-body");
+  }
+  async function openWriting(){ if(isTeacher())return teacher(); if(isStudent())return student(); alert("Login first."); }
+  function fab(){
+    if(document.getElementById("wri-v3-fab")) return;
+    if(!isTeacher()&&!isStudent()) return;
+    const b=document.createElement("button"); b.id="wri-v3-fab"; b.innerHTML="✍️ Writing"; b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui"; b.onclick=openWriting; document.body.appendChild(b);
+  }
+
+  async function teacher(){
+    const body=shell("✍️ Writing — Teacher");
+    body.innerHTML='<div class="wri-v3-card">Loading...</div>';
+    await loadAll();
+    body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="wri-v3-btn" data-tab="students">Advanced Students</button><button class="wri-v3-btn" data-tab="tasks">Writing Tasks</button><button class="wri-v3-btn" data-tab="subs">Submissions / Marking</button><button class="wri-v3-btn" data-tab="scores">Writing Scores</button></div><div id="wri-v3-content"></div>';
+    body.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>draw(b.dataset.tab));
+    draw("students");
+  }
+  function draw(tab){ const box=document.getElementById("wri-v3-content"); if(tab==="students")studentsTab(box); if(tab==="tasks")tasksTab(box); if(tab==="subs")subsTab(box); if(tab==="scores")scoresTab(box); }
+
+  function studentsTab(box){
+    const studs=allStudents(), ids=new Set(CACHE.students.flatMap(x=>[String(x.id||""),String(x.studentId||""),String(x.studentNumber||"")]));
+    const classes=allClasses();
+    box.innerHTML='<div class="wri-v3-card"><b>Advanced Writing Students</b><div style="font-size:12px;color:#64748b;margin-top:4px">اختر الطلاب المتفوقين. القائمة محفوظة للكتابة فقط.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><input id="wri-search" placeholder="Search name or number" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="wri-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All classes</option>'+classes.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select></div></div><div id="wri-list"></div>';
+    const q=box.querySelector("#wri-search"), sel=box.querySelector("#wri-class"), list=box.querySelector("#wri-list");
+    function redraw(){
+      const n=norm(q.value), cid=sel.value;
+      const arr=studs.filter(u=>(!cid||String(u.classId)===String(cid))&&(!n||norm(stName(u)+" "+stNo(u)).includes(n)));
+      list.innerHTML=arr.map(u=>{ const checked=Array.from(aliasesOf(u)).some(a=>ids.has(a)); return '<label class="wri-v3-card" style="display:flex;gap:10px;align-items:center"><input type="checkbox" data-id="'+esc(u.id)+'" '+(checked?"checked":"")+' style="width:20px;height:20px"><div style="flex:1"><b>'+esc(stName(u))+'</b><div style="font-size:12px;color:#64748b">'+esc(stNo(u))+' — '+esc(clName(u.classId))+'</div></div><span style="font-size:11px;color:'+(checked?"#16a34a":"#64748b")+';font-weight:900">'+(checked?"Selected":"Not selected")+'</span></label>'; }).join("")||'<div class="wri-v3-card" style="color:#64748b">No students found.</div>';
+      list.querySelectorAll("input[type=checkbox]").forEach(ch=>ch.onchange=async()=>{ const u=studs.find(x=>String(x.id)===String(ch.dataset.id)); if(ch.checked) await save("students",FIRE.students,{id:u.id,studentId:u.id,studentNumber:stNo(u),name:stName(u),classId:u.classId||"",createdAt:new Date().toISOString()}); else await save("students",FIRE.students,{id:u.id,studentId:u.id,studentNumber:stNo(u),deleted:true,updatedAt:new Date().toISOString()}); studentsTab(box); });
+    }
+    q.oninput=redraw; sel.onchange=redraw; redraw();
+  }
+
+  function tasksTab(box){
+    box.innerHTML='<div class="wri-v3-card"><b>Create Writing Task</b><div style="display:grid;grid-template-columns:1fr 105px 105px;gap:8px;margin-top:10px"><input id="wri-title" placeholder="Title" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri-min" type="number" value="6" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri-mark" type="number" value="10" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div><textarea id="wri-inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><select id="wri-mode" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="both">Auto + Teacher review</option><option value="auto">Auto only</option><option value="manual">Manual</option></select><button id="wri-create" class="wri-v3-btn" style="background:#2563eb;color:white;margin-left:8px">Create</button></div>'+CACHE.tasks.map(t=>'<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — '+esc(t.minSentences||6)+' sentences</div><button data-del="'+esc(t.id)+'" class="wri-v3-btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");
+    box.querySelector("#wri-create").onclick=async()=>{ const id=uid("wtask"); await save("tasks",FIRE.tasks,{id,title:box.querySelector("#wri-title").value.trim()||"Writing Task",instructions:box.querySelector("#wri-inst").value.trim(),minSentences:Number(box.querySelector("#wri-min").value||6),totalMarks:Number(box.querySelector("#wri-mark").value||10),mode:box.querySelector("#wri-mode").value,createdAt:new Date().toISOString()}); tasksTab(box); };
+    box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ if(confirm("Delete task?")){ await save("tasks",FIRE.tasks,{id:b.dataset.del,deleted:true}); tasksTab(box); }});
+  }
+
+  function subsTab(box){
+    const sub=CACHE.submissions.slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+    box.innerHTML=sub.map(s=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(s.taskId))||{}; const a=s.auto||autoMark(s.text,t); const best=sub.filter(x=>x.id!==s.id&&x.taskId===s.taskId).map(x=>({name:x.studentName,pct:sim(s.text,x.text)})).sort((a,b)=>b.pct-a.pct)[0]||{pct:0}; return '<div class="wri-v3-card"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>'+esc(s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(t.title||s.taskTitle||"Writing Task")+'</div></div><div><b>'+esc(s.finalScore!=null?s.finalScore:a.score)+' / '+esc(a.total)+'</b><div style="font-size:11px;color:'+(best.pct>=70?"#dc2626":"#64748b")+'">Similarity: '+best.pct+'%</div></div></div><div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+hl(s.text||"",a.issues)+'</div><div style="font-size:12px;color:#64748b;margin-top:8px">Words: '+a.wordCount+' — Sentences: '+a.sentenceCount+' — Status: <b>'+esc(s.status||"pending_review")+'</b></div>'+(a.issues||[]).filter(i=>!Number.isInteger(i.start)).map(i=>'<div style="font-size:12px;color:#b45309">⚠️ '+esc(i.msg)+'</div>').join("")+'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button data-accept="'+esc(s.id)+'" class="wri-v3-btn" style="background:#16a34a;color:white">Accept</button><button data-zero="'+esc(s.id)+'" class="wri-v3-btn" style="background:#dc2626;color:white">Cancel / 0</button></div></div>'; }).join("")||'<div class="wri-v3-card" style="color:#64748b">No submissions yet.</div>';
+    box.querySelectorAll("[data-accept]").forEach(b=>b.onclick=()=>statusSub(b.dataset.accept,"accepted"));
+    box.querySelectorAll("[data-zero]").forEach(b=>b.onclick=()=>statusSub(b.dataset.zero,"cancelled",0));
+  }
+  async function statusSub(id,status,score){
+    const s=CACHE.submissions.find(x=>String(x.id)===String(id)); if(!s)return;
+    const t=CACHE.tasks.find(x=>String(x.id)===String(s.taskId))||{}; const a=s.auto||autoMark(s.text,t);
+    await save("submissions",FIRE.submissions,Object.assign({},s,{status,finalScore:score!=null?score:a.score,updatedAt:new Date().toISOString()})); draw("subs");
+  }
+  function scoresTab(box){
+    const studs=allStudents().filter(u=>studentMatchesSelected(u,CACHE.students));
+    box.innerHTML='<div class="wri-v3-card"><b>Writing Scores / 10</b><div style="font-size:12px;color:#64748b">مستقلة ولا تدخل في Gradebook.</div><table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Student</th><th style="padding:8px;text-align:left">No.</th><th style="padding:8px;text-align:left">Score</th><th style="padding:8px;text-align:left">Status</th></tr></thead><tbody>'+studs.map(u=>{ const al=aliasesOf(u); const ss=CACHE.submissions.filter(s=>al.has(String(s.studentId))||(String(s.studentId).match(/student_(\d+)/)&&al.has(String(s.studentId).match(/student_(\d+)/)[1]))); const best=ss[0]; return '<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px">'+esc(stName(u))+'</td><td style="padding:8px">'+esc(stNo(u))+'</td><td style="padding:8px"><b>'+(best?esc(best.finalScore!=null?best.finalScore:(best.auto&&best.auto.score)||"Pending"):"-")+'</b></td><td style="padding:8px">'+esc(best?best.status||"pending_review":"No submission")+'</td></tr>'; }).join("")+'</tbody></table></div>';
+  }
+
+  async function student(){
+    const body=shell("✍️ Writing — Student");
+    body.innerHTML='<div class="wri-v3-card">Loading Writing tasks...</div>';
+    await loadAll();
+    const u=getCurrentUser();
+    const selected=studentMatchesSelected(u,CACHE.students);
+    if(!selected){
+      body.innerHTML='<div class="wri-v3-card" style="color:#64748b">لا توجد مهام كتابة مخصصة لك الآن.</div>';
+      return;
+    }
+    const al=aliasesOf(u);
+    const list=CACHE.tasks;
+    if(!list.length){
+      body.innerHTML='<div class="wri-v3-card" style="color:#64748b">أنت ضمن طلاب الكتابة، لكن لا توجد مهمة منشأة حتى الآن.</div>';
+      return;
+    }
+    body.innerHTML=list.map(t=>{ const old=CACHE.submissions.find(s=>String(s.taskId)===String(t.id)&&al.has(String(s.studentId))); if(old){ const score=old.finalScore!=null?old.finalScore:(old.auto&&old.auto.score)||"Pending"; return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>'+esc(score)+' / '+esc(t.totalMarks||10)+'</b> — Status: '+esc(old.status||"pending_review")+'</div></div>'; } return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — Minimum: '+esc(t.minSentences||6)+' sentences</div><textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="wri-v3-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Submit Writing</button></div>'; }).join("");
+    body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(btn.dataset.submit)); const ta=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]'); const text=(ta.value||"").trim(); if(!text)return alert("Write your paragraph first."); const a=autoMark(text,t); const sid=Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al).find(x=>/^\d+$/.test(x))||"student"; const id=uid("wsub"); await save("submissions",FIRE.submissions,{id,taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||greetingName()||"Student",text,auto:a,status:t.mode==="auto"?"accepted":"pending_review",finalScore:t.mode==="auto"?a.score:null,createdAt:new Date().toISOString()}); alert("Writing submitted."); student(); });
+  }
+
+  setInterval(fab,1200);
+  setTimeout(fab,1500);
 })();
 </script>
 <!-- END_WRITING_INDEPENDENT_FULL_V3_20260626 -->
+
 </body>
 </html>
 
