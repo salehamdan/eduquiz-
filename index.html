@@ -7263,304 +7263,85 @@ document.addEventListener("click", function(e){
 })();
 </script>
 
-<!-- WRITING_INDEPENDENT_FULL_V4_20260626 -->
+
+<!-- WRITING_INDEPENDENT_FULL_V5_20260626 -->
 <style>
-  #wri-v3-panel, #wri-v3-panel * { box-sizing: border-box; }
-  #wri-v3-panel {
-    position: fixed;
-    left: 0;
-    right: 0;
-    top: max(72px, env(safe-area-inset-top, 0px) + 64px);
-    bottom: 0;
-    z-index: 2147483000;
-    background: rgba(15,23,42,.45);
-    font-family: system-ui,-apple-system,sans-serif;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-  }
-  #wri-v3-card {
-    width: min(1020px, 100%);
-    height: 100%;
-    background: #f8fafc;
-    border-radius: 22px 22px 0 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 -18px 38px rgba(0,0,0,.25);
-  }
-  #wri-v3-head {
-    background:#0f172a;color:#fff;padding:12px 14px;
-    display:flex;align-items:center;justify-content:space-between;gap:10px;
-    flex-shrink:0;
-  }
-  #wri-v3-body { flex:1; overflow:auto; padding:12px; }
-  .wri-v3-btn { border:1px solid #cbd5e1; border-radius:12px; background:#fff; color:#0f172a; font-weight:900; padding:10px 12px; }
-  .wri-v3-card { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:12px; margin-bottom:10px; }
+#wri5-panel,*#wri5-panel{box-sizing:border-box}
+#wri5-panel{position:fixed;left:0;right:0;top:max(74px,calc(env(safe-area-inset-top,0px) + 64px));bottom:0;z-index:2147483000;background:rgba(15,23,42,.45);font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:flex-start;justify-content:center}
+#wri5-card{width:min(1020px,100%);height:100%;background:#f8fafc;border-radius:22px 22px 0 0;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 -18px 38px rgba(0,0,0,.25)}
+#wri5-head{background:#0f172a;color:white;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0}
+#wri5-body{flex:1;overflow:auto;padding:12px}
+.wri5-btn{border:1px solid #cbd5e1;border-radius:12px;background:white;color:#0f172a;font-weight:900;padding:10px 12px}
+.wri5-box{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px}
 </style>
 <script>
 (function(){
-  if(window.__WRITING_INDEPENDENT_FULL_V4__) return;
-  window.__WRITING_INDEPENDENT_FULL_V4__ = true;
-
-  const KEYS = {
-    students: ["eqWritingAdvancedStudents_v3","eqWritingAdvancedStudents_v2","eqWritingAdvancedStudents_v1"],
-    tasks: ["eqWritingTasks_v3","eqWritingTasks_v2","eqWritingTasks_v1"],
-    submissions: ["eqWritingSubmissions_v3","eqWritingSubmissions_v2","eqWritingSubmissions_v1"]
-  };
-  const PRIMARY = {
-    students: "eqWritingAdvancedStudents_v3",
-    tasks: "eqWritingTasks_v3",
-    submissions: "eqWritingSubmissions_v3"
-  };
-  const FIRE = { students:"writingAdvancedStudents", tasks:"writingTasks", submissions:"writingSubmissions" };
-  let CACHE = { students:[], tasks:[], submissions:[], loaded:false };
-
-  function esc(v){ return String(v==null?"":v).replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-  function uid(p){ return (p||"id")+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,8); }
-  function readJSON(k){ try{return JSON.parse(localStorage.getItem(k)||"[]")||[]}catch(e){return[]} }
-  function writeJSON(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
-  function merge(arrs){
-    const m=new Map();
-    (arrs||[]).flat().forEach(x=>{
-      if(!x) return;
-      const id=String(x.id||x.studentId||x.taskId||"");
-      if(id) m.set(id,Object.assign({},m.get(id)||{},x));
-    });
-    return Array.from(m.values()).filter(x=>!x.deleted);
-  }
-  function hasDB(){
-    try { return typeof firebase!=="undefined" && firebase.apps && firebase.apps.length && firebase.firestore; }
-    catch(e){ return false; }
-  }
-  async function loadLocal(kind){
-    return merge(KEYS[kind].map(readJSON));
-  }
-  async function readFire(col){
-    if(!hasDB()) return [];
-    try{
-      const snap = await firebase.firestore().collection(col).get();
-      const out=[]; snap.forEach(d=>out.push(Object.assign({id:d.id}, d.data()||{})));
-      return out;
-    }catch(e){ return []; }
-  }
-  async function loadAll(){
-    const localS=await loadLocal("students"), localT=await loadLocal("tasks"), localSub=await loadLocal("submissions");
-    const [fs,ft,fsub]=await Promise.all([readFire(FIRE.students),readFire(FIRE.tasks),readFire(FIRE.submissions)]);
-    CACHE.students=merge([fs,localS]);
-    CACHE.tasks=merge([ft,localT]);
-    CACHE.submissions=merge([fsub,localSub]);
-    writeJSON(PRIMARY.students,CACHE.students);
-    writeJSON(PRIMARY.tasks,CACHE.tasks);
-    writeJSON(PRIMARY.submissions,CACHE.submissions);
-    CACHE.loaded=true;
-    return CACHE;
-  }
-  async function save(kind, col, rec){
-    const key=PRIMARY[kind];
-    let arr=readJSON(key).filter(x=>String(x.id||x.studentId)!==String(rec.id||rec.studentId));
-    if(!rec.deleted) arr.push(rec);
-    writeJSON(key, arr);
-    try{
-      if(hasDB()) await firebase.firestore().collection(col).doc(String(rec.id||rec.studentId)).set(rec,{merge:true});
-    }catch(e){}
-    await loadAll();
-  }
-
-  function getCurrentUser(){
-    const names=["currentUser","eduquizCurrentUser","eq_current_user","session","eq_session","user"];
-    for(const k of names){
-      try{ const v=JSON.parse(localStorage.getItem(k)||"null"); if(v && (v.id||v.name||v.studentId||v.role||v.password)) return v; }catch(e){}
-    }
-    try{ if(window.currentUser) return window.currentUser; if(window.user) return window.user; }catch(e){}
-    return {};
-  }
-  function greetingName(){
-    const txt=(document.body&&document.body.innerText)||"";
-    let m=txt.match(/Hi,\s*([^!\n\r]+)!/i);
-    if(m) return m[1].trim();
-    return "";
-  }
-  function isTeacher(){
-    const u=getCurrentUser(); const r=String(u.role||u.type||"").toLowerCase();
-    const txt=(document.body&&document.body.innerText)||"";
-    return r.includes("teacher") || txt.includes("TEACHER DASHBOARD") || txt.includes("Teacher Dashboard");
-  }
-  function isStudent(){
-    const u=getCurrentUser(); const r=String(u.role||u.type||"").toLowerCase();
-    return r.includes("student") || (!isTeacher() && (u.studentId||u.password||u.id||greetingName()));
-  }
-
-  function allStudents(){
-    let arr=[];
-    try{ if(Array.isArray(PRELOADED_USERS)) arr=arr.concat(PRELOADED_USERS); }catch(e){}
-    try{ if(Array.isArray(window.users)) arr=arr.concat(window.users); }catch(e){}
-    arr=arr.concat(readJSON("users"));
-    const m=new Map();
-    arr.forEach(u=>{
-      if(!u || u.role!=="student") return;
-      const id=String(u.id||("student_"+(u.studentId||u.password||u.name)));
-      if(!m.has(id)) m.set(id,Object.assign({},u,{id}));
-    });
-    return Array.from(m.values());
-  }
-  function allClasses(){
-    let arr=[];
-    try{ if(Array.isArray(PRELOADED_CLASSES)) arr=arr.concat(PRELOADED_CLASSES); }catch(e){}
-    try{ if(Array.isArray(window.classes)) arr=arr.concat(window.classes); }catch(e){}
-    arr=arr.concat(readJSON("classes"));
-    const m=new Map();
-    arr.forEach(c=>{ if(!c)return; const id=String(c.id||c.name||Math.random()); if(!m.has(id))m.set(id,Object.assign({},c,{id})); });
-    return Array.from(m.values());
-  }
-  function stName(u){ return String(u.name||u.fullName||u.shortName||u.studentName||u.id||"Student"); }
-  function stNo(u){ return String(u.studentId||u.studentNo||u.studentNumber||u.password||u.id||""); }
-  function clName(id){ const c=allClasses().find(x=>String(x.id)===String(id)||String(x.name)===String(id)); return c?String(c.name||c.grade||c.id):""; }
-  function aliasesOf(u){
-    const set=new Set();
-    try{
-      const saved = localStorage.getItem("eqWritingStudentNumber_v4") || "";
-      if(saved){
-        set.add(saved);
-        if(/^\d+$/.test(saved)) set.add("student_"+saved);
-      }
-    }catch(e){}
-    [u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{
-      set.add(x); if(/^\d+$/.test(x)) set.add("student_"+x);
-      const m=x.match(/student_(\d+)/); if(m) set.add(m[1]);
-    });
-    const gn=greetingName(); if(gn) set.add("name:"+gn);
-    if(u.name) set.add("name:"+String(u.name).trim());
-    return set;
-  }
-  function studentMatchesSelected(userLike, selected){
-    const al=aliasesOf(userLike);
-    const gn=greetingName();
-    return (selected||[]).some(s=>{
-      const vals=[s.id,s.studentId,s.studentNumber,s.password].filter(Boolean).map(String);
-      for(const v of vals){
-        if(al.has(v)) return true;
-        const m=v.match(/student_(\d+)/); if(m && al.has(m[1])) return true;
-        if(/^\d+$/.test(v) && al.has("student_"+v)) return true;
-      }
-      if(gn && s.name && String(s.name).includes(gn)) return true;
-      if(userLike.name && s.name && String(s.name).includes(String(userLike.name).split(" ")[0])) return true;
-      return false;
-    });
-  }
-
-  function norm(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g," ").trim(); }
-  function wc(t){ return (String(t||"").match(/\b[\w']+\b/g)||[]).length; }
-  function sc(t){ const x=String(t||"").trim(); if(!x)return 0; const p=(x.match(/[.!?]+/g)||[]).length; if(p)return p; return Math.max(1,x.split(/\n+|(?=\s+i\s+)/i).filter(Boolean).length); }
-  const ERR=[
-    [/\bi\b/g,"I","Capital I"],[/\blke\b/gi,"like","Spelling"],[/\blik\b/gi,"like","Spelling"],[/\bfotbal\b/gi,"football","Spelling"],[/\bskol\b/gi,"school","Spelling"],[/\bpitza\b/gi,"pizza","Spelling"],[/\bfamly\b/gi,"family","Spelling"],[/\bfrend\b/gi,"friend","Spelling"]
-  ];
-  function autoMark(text,task){
-    const min=Number(task.minSentences||6), total=Number(task.totalMarks||10);
-    const issues=[]; ERR.forEach(([re,fix,msg])=>{ let m,r=new RegExp(re.source,re.flags); while((m=r.exec(text))!==null) issues.push({start:m.index,end:m.index+m[0].length,fix,msg,type:"error"}); });
-    const words=wc(text), sents=sc(text);
-    if(sents<min) issues.push({msg:"Less than minimum sentences: "+sents+"/"+min,type:"warning"});
-    if(words<25) issues.push({msg:"Short writing: "+words+" words",type:"warning"});
-    if(!/[.!?]/.test(text)) issues.push({msg:"Missing punctuation",type:"warning"});
-    const clean=words>=55 && issues.filter(i=>i.type==="error").length===0 && /\b(I like|I enjoy|I am|family and friends|free time)\b/i.test(text);
-    if(clean) issues.push({msg:"Very clean/general paragraph. AI review recommended.",type:"ai"});
-    const err=issues.filter(i=>i.type==="error").length;
-    const score=Math.max(0,Math.min(total,Math.round(((words>=35?2:words>=20?1.5:1)+(sents>=min?2:sents>=4?1.5:1)+(Math.max(0,2-err*.35))+(new Set(norm(text).split(" ").filter(Boolean)).size>=18?2:1.25)+(/[.!?]/.test(text)?1:.25)+(clean?.5:1))*10)/10));
-    return {score,total,wordCount:words,sentenceCount:sents,issues};
-  }
-  function hl(text,issues){
-    const ranges=(issues||[]).filter(i=>Number.isInteger(i.start)).sort((a,b)=>a.start-b.start); let out="",p=0;
-    ranges.forEach(r=>{ if(r.start<p)return; out+=esc(text.slice(p,r.start)); const bg=r.type==="ai"?"#ddd6fe":"#fecaca", bd=r.type==="ai"?"#7c3aed":"#dc2626"; out+='<mark style="background:'+bg+';border-bottom:2px solid '+bd+';padding:1px 2px;border-radius:3px" title="'+esc((r.msg||"")+(r.fix?" → "+r.fix:""))+'">'+esc(text.slice(r.start,r.end))+'</mark>'; p=r.end; });
-    return (out+esc(text.slice(p))).replace(/\n/g,"<br>");
-  }
-  function sim(a,b){ const A=new Set(norm(a).split(" ").filter(w=>w.length>2)),B=new Set(norm(b).split(" ").filter(w=>w.length>2)); if(!A.size||!B.size)return 0; let h=0; A.forEach(w=>{if(B.has(w))h++}); return Math.round(h/Math.min(A.size,B.size)*100); }
-
-  function shell(title){
-    const old=document.getElementById("wri-v3-panel"); if(old)old.remove();
-    const w=document.createElement("div"); w.id="wri-v3-panel";
-    w.innerHTML='<div id="wri-v3-card"><div id="wri-v3-head"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — no Gradebook</div></div><button id="wri-v3-close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="wri-v3-body"></div></div>';
-    document.body.appendChild(w); w.querySelector("#wri-v3-close").onclick=()=>w.remove(); return w.querySelector("#wri-v3-body");
-  }
-  async function openWriting(){ if(isTeacher())return teacher(); if(isStudent())return student(); alert("Login first."); }
-  function fab(){
-    if(document.getElementById("wri-v3-fab")) return;
-    if(!isTeacher()&&!isStudent()) return;
-    const b=document.createElement("button"); b.id="wri-v3-fab"; b.innerHTML="✍️ Writing"; b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui"; b.onclick=openWriting; document.body.appendChild(b);
-  }
-
-  async function teacher(){
-    const body=shell("✍️ Writing — Teacher");
-    body.innerHTML='<div class="wri-v3-card">Loading...</div>';
-    await loadAll();
-    body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="wri-v3-btn" data-tab="students">Advanced Students</button><button class="wri-v3-btn" data-tab="tasks">Writing Tasks</button><button class="wri-v3-btn" data-tab="subs">Submissions / Marking</button><button class="wri-v3-btn" data-tab="scores">Writing Scores</button></div><div id="wri-v3-content"></div>';
-    body.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>draw(b.dataset.tab));
-    draw("students");
-  }
-  function draw(tab){ const box=document.getElementById("wri-v3-content"); if(tab==="students")studentsTab(box); if(tab==="tasks")tasksTab(box); if(tab==="subs")subsTab(box); if(tab==="scores")scoresTab(box); }
-
-  function studentsTab(box){
-    const studs=allStudents(), ids=new Set(CACHE.students.flatMap(x=>[String(x.id||""),String(x.studentId||""),String(x.studentNumber||"")]));
-    const classes=allClasses();
-    box.innerHTML='<div class="wri-v3-card"><b>Advanced Writing Students</b><div style="font-size:12px;color:#64748b;margin-top:4px">اختر الطلاب المتفوقين. القائمة محفوظة للكتابة فقط.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><input id="wri-search" placeholder="Search name or number" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="wri-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All classes</option>'+classes.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select></div></div><div id="wri-list"></div>';
-    const q=box.querySelector("#wri-search"), sel=box.querySelector("#wri-class"), list=box.querySelector("#wri-list");
-    function redraw(){
-      const n=norm(q.value), cid=sel.value;
-      const arr=studs.filter(u=>(!cid||String(u.classId)===String(cid))&&(!n||norm(stName(u)+" "+stNo(u)).includes(n)));
-      list.innerHTML=arr.map(u=>{ const checked=Array.from(aliasesOf(u)).some(a=>ids.has(a)); return '<label class="wri-v3-card" style="display:flex;gap:10px;align-items:center"><input type="checkbox" data-id="'+esc(u.id)+'" '+(checked?"checked":"")+' style="width:20px;height:20px"><div style="flex:1"><b>'+esc(stName(u))+'</b><div style="font-size:12px;color:#64748b">'+esc(stNo(u))+' — '+esc(clName(u.classId))+'</div></div><span style="font-size:11px;color:'+(checked?"#16a34a":"#64748b")+';font-weight:900">'+(checked?"Selected":"Not selected")+'</span></label>'; }).join("")||'<div class="wri-v3-card" style="color:#64748b">No students found.</div>';
-      list.querySelectorAll("input[type=checkbox]").forEach(ch=>ch.onchange=async()=>{ const u=studs.find(x=>String(x.id)===String(ch.dataset.id)); if(ch.checked) await save("students",FIRE.students,{id:u.id,studentId:u.id,studentNumber:stNo(u),name:stName(u),classId:u.classId||"",createdAt:new Date().toISOString()}); else await save("students",FIRE.students,{id:u.id,studentId:u.id,studentNumber:stNo(u),deleted:true,updatedAt:new Date().toISOString()}); studentsTab(box); });
-    }
-    q.oninput=redraw; sel.onchange=redraw; redraw();
-  }
-
-  function tasksTab(box){
-    box.innerHTML='<div class="wri-v3-card"><b>Create Writing Task</b><div style="display:grid;grid-template-columns:1fr 105px 105px;gap:8px;margin-top:10px"><input id="wri-title" placeholder="Title" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri-min" type="number" value="6" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri-mark" type="number" value="10" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div><textarea id="wri-inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><select id="wri-mode" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="both">Auto + Teacher review</option><option value="auto">Auto only</option><option value="manual">Manual</option></select><button id="wri-create" class="wri-v3-btn" style="background:#2563eb;color:white;margin-left:8px">Create</button></div>'+CACHE.tasks.map(t=>'<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — '+esc(t.minSentences||6)+' sentences</div><button data-del="'+esc(t.id)+'" class="wri-v3-btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");
-    box.querySelector("#wri-create").onclick=async()=>{ const id=uid("wtask"); await save("tasks",FIRE.tasks,{id,title:box.querySelector("#wri-title").value.trim()||"Writing Task",instructions:box.querySelector("#wri-inst").value.trim(),minSentences:Number(box.querySelector("#wri-min").value||6),totalMarks:Number(box.querySelector("#wri-mark").value||10),mode:box.querySelector("#wri-mode").value,createdAt:new Date().toISOString()}); tasksTab(box); };
-    box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{ if(confirm("Delete task?")){ await save("tasks",FIRE.tasks,{id:b.dataset.del,deleted:true}); tasksTab(box); }});
-  }
-
-  function subsTab(box){
-    const sub=CACHE.submissions.slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
-    box.innerHTML=sub.map(s=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(s.taskId))||{}; const a=s.auto||autoMark(s.text,t); const best=sub.filter(x=>x.id!==s.id&&x.taskId===s.taskId).map(x=>({name:x.studentName,pct:sim(s.text,x.text)})).sort((a,b)=>b.pct-a.pct)[0]||{pct:0}; return '<div class="wri-v3-card"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>'+esc(s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(t.title||s.taskTitle||"Writing Task")+'</div></div><div><b>'+esc(s.finalScore!=null?s.finalScore:a.score)+' / '+esc(a.total)+'</b><div style="font-size:11px;color:'+(best.pct>=70?"#dc2626":"#64748b")+'">Similarity: '+best.pct+'%</div></div></div><div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+hl(s.text||"",a.issues)+'</div><div style="font-size:12px;color:#64748b;margin-top:8px">Words: '+a.wordCount+' — Sentences: '+a.sentenceCount+' — Status: <b>'+esc(s.status||"pending_review")+'</b></div>'+(a.issues||[]).filter(i=>!Number.isInteger(i.start)).map(i=>'<div style="font-size:12px;color:#b45309">⚠️ '+esc(i.msg)+'</div>').join("")+'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button data-accept="'+esc(s.id)+'" class="wri-v3-btn" style="background:#16a34a;color:white">Accept</button><button data-zero="'+esc(s.id)+'" class="wri-v3-btn" style="background:#dc2626;color:white">Cancel / 0</button></div></div>'; }).join("")||'<div class="wri-v3-card" style="color:#64748b">No submissions yet.</div>';
-    box.querySelectorAll("[data-accept]").forEach(b=>b.onclick=()=>statusSub(b.dataset.accept,"accepted"));
-    box.querySelectorAll("[data-zero]").forEach(b=>b.onclick=()=>statusSub(b.dataset.zero,"cancelled",0));
-  }
-  async function statusSub(id,status,score){
-    const s=CACHE.submissions.find(x=>String(x.id)===String(id)); if(!s)return;
-    const t=CACHE.tasks.find(x=>String(x.id)===String(s.taskId))||{}; const a=s.auto||autoMark(s.text,t);
-    await save("submissions",FIRE.submissions,Object.assign({},s,{status,finalScore:score!=null?score:a.score,updatedAt:new Date().toISOString()})); draw("subs");
-  }
-  function scoresTab(box){
-    const studs=allStudents().filter(u=>studentMatchesSelected(u,CACHE.students));
-    box.innerHTML='<div class="wri-v3-card"><b>Writing Scores / 10</b><div style="font-size:12px;color:#64748b">مستقلة ولا تدخل في Gradebook.</div><table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Student</th><th style="padding:8px;text-align:left">No.</th><th style="padding:8px;text-align:left">Score</th><th style="padding:8px;text-align:left">Status</th></tr></thead><tbody>'+studs.map(u=>{ const al=aliasesOf(u); const ss=CACHE.submissions.filter(s=>al.has(String(s.studentId))||(String(s.studentId).match(/student_(\d+)/)&&al.has(String(s.studentId).match(/student_(\d+)/)[1]))); const best=ss[0]; return '<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px">'+esc(stName(u))+'</td><td style="padding:8px">'+esc(stNo(u))+'</td><td style="padding:8px"><b>'+(best?esc(best.finalScore!=null?best.finalScore:(best.auto&&best.auto.score)||"Pending"):"-")+'</b></td><td style="padding:8px">'+esc(best?best.status||"pending_review":"No submission")+'</td></tr>'; }).join("")+'</tbody></table></div>';
-  }
-
-  async function student(){
-    const body=shell("✍️ Writing — Student");
-    body.innerHTML='<div class="wri-v3-card">Loading Writing tasks...</div>';
-    await loadAll();
-    const u=getCurrentUser();
-    const selected=studentMatchesSelected(u,CACHE.students);
-    if(!selected){
-      body.innerHTML='<div class="wri-v3-card"><b>تأكيد رقم الطالب</b><div style="font-size:13px;color:#64748b;margin:6px 0 10px">اكتب رقم الطالب مرة واحدة، مثل 3136. إذا كان الطالب ضمن Advanced Students ستظهر له المهمة مباشرة.</div><input id="wri-student-number" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;font-size:16px"><button id="wri-save-student-number" class="wri-v3-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button><div style="font-size:12px;color:#64748b;margin-top:8px">إذا لم تظهر المهمة بعد إدخال الرقم، تأكد من أن المعلم أضاف نفس الرقم في Advanced Students وأنشأ Writing Task.</div></div>';
-      const btn=body.querySelector("#wri-save-student-number");
-      btn.onclick=async()=>{ const val=(body.querySelector("#wri-student-number").value||"").trim(); if(!val) return alert("اكتب رقم الطالب أولاً"); localStorage.setItem("eqWritingStudentNumber_v4", val); await loadAll(); student(); };
-      return;
-    }
-    const al=aliasesOf(u);
-    const list=CACHE.tasks;
-    if(!list.length){
-      body.innerHTML='<div class="wri-v3-card" style="color:#64748b">أنت ضمن طلاب الكتابة، لكن لا توجد مهمة منشأة حتى الآن.</div>';
-      return;
-    }
-    body.innerHTML=list.map(t=>{ const old=CACHE.submissions.find(s=>String(s.taskId)===String(t.id)&&al.has(String(s.studentId))); if(old){ const score=old.finalScore!=null?old.finalScore:(old.auto&&old.auto.score)||"Pending"; return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>'+esc(score)+' / '+esc(t.totalMarks||10)+'</b> — Status: '+esc(old.status||"pending_review")+'</div></div>'; } return '<div class="wri-v3-card"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — Minimum: '+esc(t.minSentences||6)+' sentences</div><textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="wri-v3-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Submit Writing</button></div>'; }).join("");
-    body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{ const t=CACHE.tasks.find(x=>String(x.id)===String(btn.dataset.submit)); const ta=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]'); const text=(ta.value||"").trim(); if(!text)return alert("Write your paragraph first."); const a=autoMark(text,t); const savedSid=localStorage.getItem("eqWritingStudentNumber_v4")||""; const sid=savedSid ? (/^\d+$/.test(savedSid) ? "student_"+savedSid : savedSid) : (Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al).find(x=>/^\d+$/.test(x))||"student"); const id=uid("wsub"); await save("submissions",FIRE.submissions,{id,taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||greetingName()||"Student",text,auto:a,status:t.mode==="auto"?"accepted":"pending_review",finalScore:t.mode==="auto"?a.score:null,createdAt:new Date().toISOString()}); alert("Writing submitted."); student(); });
-  }
-
-  setInterval(fab,1200);
-  setTimeout(fab,1500);
+ if(window.__WRITING_INDEPENDENT_FULL_V5__)return; window.__WRITING_INDEPENDENT_FULL_V5__=true;
+ const DOC="writing_independent_v5", LOCAL="eq_writing_independent_v5";
+ let DATA={students:[],tasks:[],submissions:[],updatedAt:""};
+ const esc=v=>String(v==null?"":v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+ const uid=p=>(p||"id")+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+ const jget=(k,f)=>{try{return JSON.parse(localStorage.getItem(k)||"null")||f}catch(e){return f}};
+ const jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+ function mergeData(a,b){return {students:merge(a.students,b.students),tasks:merge(a.tasks,b.tasks),submissions:merge(a.submissions,b.submissions),updatedAt:new Date().toISOString()}}
+ function merge(a,b){const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||x.studentId||"");if(id)m.set(id,Object.assign({},m.get(id)||{},x))});return Array.from(m.values()).filter(x=>!x.deleted)}
+ async function loadWriting(){
+   let local=jget(LOCAL,{students:[],tasks:[],submissions:[]}), cloud=null;
+   try{
+     if(typeof fsAll==="function"){
+       const arr=await fsAll("appSettings"); cloud=(arr||[]).find(x=>x.id===DOC||x._id===DOC)||null;
+     }else if(typeof db!=="undefined"&&db){
+       const d=await db.collection("appSettings").doc(DOC).get(); cloud=d.exists?d.data():null;
+     }
+   }catch(e){}
+   DATA=mergeData(cloud||{},local||{});
+   jset(LOCAL,DATA);
+   return DATA;
+ }
+ async function saveWriting(){
+   DATA.updatedAt=new Date().toISOString(); jset(LOCAL,DATA);
+   try{
+     if(typeof fsSet==="function") await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));
+     else if(typeof db!=="undefined"&&db) await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true});
+   }catch(e){}
+ }
+ function session(){
+   const keys=["eq_session","currentUser","eduquizCurrentUser","session","user"];
+   for(const k of keys){try{const v=JSON.parse(localStorage.getItem(k)||"null");if(v&&(v.id||v.name||v.studentId||v.role||v.password))return v}catch(e){}}
+   try{if(window.currentUser)return window.currentUser;if(window.user)return window.user}catch(e){}
+   return {};
+ }
+ function greet(){const t=(document.body&&document.body.innerText)||"";const m=t.match(/Hi,\s*([^!\n\r]+)!/i);return m?m[1].trim():""}
+ function teacher(){const u=session(),r=String(u.role||u.type||"").toLowerCase(),t=(document.body&&document.body.innerText)||"";return r.includes("teacher")||t.includes("TEACHER DASHBOARD")||t.includes("Teacher Dashboard")}
+ function student(){const u=session(),r=String(u.role||u.type||"").toLowerCase();return r.includes("student")||(!teacher()&&(u.studentId||u.password||u.id||greet()))}
+ function studentsAll(){let a=[];try{if(Array.isArray(PRELOADED_USERS))a=a.concat(PRELOADED_USERS)}catch(e){};try{if(Array.isArray(window.users))a=a.concat(window.users)}catch(e){};a=a.concat(jget("users",[]));const m=new Map();a.forEach(u=>{if(!u||u.role!=="student")return;const id=String(u.id||("student_"+(u.studentId||u.password||u.name)));if(!m.has(id))m.set(id,Object.assign({},u,{id}))});return Array.from(m.values())}
+ function classesAll(){let a=[];try{if(Array.isArray(PRELOADED_CLASSES))a=a.concat(PRELOADED_CLASSES)}catch(e){};try{if(Array.isArray(window.classes))a=a.concat(window.classes)}catch(e){};a=a.concat(jget("classes",[]));const m=new Map();a.forEach(c=>{if(!c)return;const id=String(c.id||c.name||Math.random());if(!m.has(id))m.set(id,Object.assign({},c,{id}))});return Array.from(m.values())}
+ const sname=u=>String(u.name||u.fullName||u.shortName||u.studentName||u.id||"Student");
+ const sno=u=>String(u.studentId||u.studentNo||u.studentNumber||u.password||u.id||"");
+ function cname(id){const c=classesAll().find(x=>String(x.id)===String(id));return c?String(c.name||c.grade||c.id):""}
+ function aliases(u){const set=new Set();const saved=localStorage.getItem("eqWritingStudentNumber_v5")||"";if(saved){set.add(saved);if(/^\d+$/.test(saved))set.add("student_"+saved)};[u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{set.add(x);if(/^\d+$/.test(x))set.add("student_"+x);const m=x.match(/student_(\d+)/);if(m)set.add(m[1])});const g=greet();if(g)set.add("name:"+g);if(u.name)set.add("name:"+String(u.name).trim());return set}
+ function matchSelected(u){const al=aliases(u),g=greet();return (DATA.students||[]).some(s=>{const vals=[s.id,s.studentId,s.studentNumber,s.password].filter(Boolean).map(String);for(const v of vals){if(al.has(v))return true;const m=v.match(/student_(\d+)/);if(m&&al.has(m[1]))return true;if(/^\d+$/.test(v)&&al.has("student_"+v))return true} if(g&&s.name&&String(s.name).includes(g))return true; return false})}
+ const norm=s=>String(s||"").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g," ").trim();
+ const wc=t=>(String(t||"").match(/\b[\w']+\b/g)||[]).length;
+ function sc(t){t=String(t||"").trim();if(!t)return 0;const p=(t.match(/[.!?]+/g)||[]).length;if(p)return p;return Math.max(1,t.split(/\n+|(?=\s+i\s+)/i).filter(Boolean).length)}
+ const ERR=[[/\bi\b/g,"I","Capital I"],[/\blke\b/gi,"like","Spelling"],[/\blik\b/gi,"like","Spelling"],[/\bfotbal\b/gi,"football","Spelling"],[/\bskol\b/gi,"school","Spelling"],[/\bpitza\b/gi,"pizza","Spelling"],[/\bfamly\b/gi,"family","Spelling"],[/\bfrend\b/gi,"friend","Spelling"]];
+ function mark(text,task){const min=Number(task.minSentences||6),total=Number(task.totalMarks||10),issues=[];ERR.forEach(([re,fix,msg])=>{let m,r=new RegExp(re.source,re.flags);while((m=r.exec(text))!==null)issues.push({start:m.index,end:m.index+m[0].length,fix,msg,type:"error"})});const words=wc(text),sents=sc(text);if(sents<min)issues.push({msg:"Less than minimum sentences: "+sents+"/"+min,type:"warning"});if(words<25)issues.push({msg:"Short writing: "+words+" words",type:"warning"});if(!/[.!?]/.test(text))issues.push({msg:"Missing punctuation",type:"warning"});const clean=words>=55&&issues.filter(i=>i.type==="error").length===0&&/\b(I like|I enjoy|I am|family and friends|free time)\b/i.test(text);if(clean)issues.push({msg:"Very clean/general paragraph. AI review recommended.",type:"ai"});const err=issues.filter(i=>i.type==="error").length;const score=Math.max(0,Math.min(total,Math.round(((words>=35?2:words>=20?1.5:1)+(sents>=min?2:sents>=4?1.5:1)+Math.max(0,2-err*.35)+(new Set(norm(text).split(" ").filter(Boolean)).size>=18?2:1.25)+(/[.!?]/.test(text)?1:.25)+(clean?.5:1))*10)/10));return{score,total,wordCount:words,sentenceCount:sents,issues}}
+ function high(text,issues){let ranges=(issues||[]).filter(i=>Number.isInteger(i.start)).sort((a,b)=>a.start-b.start),out="",p=0;ranges.forEach(r=>{if(r.start<p)return;out+=esc(text.slice(p,r.start));out+='<mark style="background:#fecaca;border-bottom:2px solid #dc2626;padding:1px 2px;border-radius:3px" title="'+esc((r.msg||"")+(r.fix?" → "+r.fix:""))+'">'+esc(text.slice(r.start,r.end))+'</mark>';p=r.end});return(out+esc(text.slice(p))).replace(/\n/g,"<br>")}
+ function shell(title){const old=document.getElementById("wri5-panel");if(old)old.remove();const w=document.createElement("div");w.id="wri5-panel";w.innerHTML='<div id="wri5-card"><div id="wri5-head"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — saved in appSettings</div></div><button id="wri5-close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="wri5-body"></div></div>';document.body.appendChild(w);w.querySelector("#wri5-close").onclick=()=>w.remove();return w.querySelector("#wri5-body")}
+ async function open(){if(teacher())return teacherPanel();if(student())return studentPanel();alert("Login first.")}
+ function fab(){if(document.getElementById("wri5-fab"))return;if(!teacher()&&!student())return;const b=document.createElement("button");b.id="wri5-fab";b.innerHTML="✍️ Writing";b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui";b.onclick=open;document.body.appendChild(b)}
+ async function teacherPanel(){const body=shell("✍️ Writing — Teacher");body.innerHTML='<div class="wri5-box">Loading...</div>';await loadWriting();body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="wri5-btn" data-tab="students">Advanced Students</button><button class="wri5-btn" data-tab="tasks">Writing Tasks</button><button class="wri5-btn" data-tab="subs">Submissions</button><button class="wri5-btn" data-tab="scores">Writing Scores</button></div><div id="wri5-content"></div>';body.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>draw(b.dataset.tab));draw("students")}
+ function draw(t){const box=document.getElementById("wri5-content");if(t==="students")tabStudents(box);if(t==="tasks")tabTasks(box);if(t==="subs")tabSubs(box);if(t==="scores")tabScores(box)}
+ function tabStudents(box){const studs=studentsAll(),ids=new Set(DATA.students.flatMap(x=>[String(x.id||""),String(x.studentId||""),String(x.studentNumber||"")])),cls=classesAll();box.innerHTML='<div class="wri5-box"><b>Advanced Writing Students</b><div style="font-size:12px;color:#64748b">اختر الطلاب المتفوقين. الحفظ مشترك مع الطالب.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><input id="wri5-search" placeholder="Search" style="flex:1;min-width:160px;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="wri5-class" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All classes</option>'+cls.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select></div></div><div id="wri5-list"></div>';const q=box.querySelector("#wri5-search"),sel=box.querySelector("#wri5-class"),list=box.querySelector("#wri5-list");function red(){const n=norm(q.value),cid=sel.value;const arr=studs.filter(u=>(!cid||String(u.classId)===String(cid))&&(!n||norm(sname(u)+" "+sno(u)).includes(n)));list.innerHTML=arr.map(u=>{const checked=Array.from(aliases(u)).some(a=>ids.has(a));return'<label class="wri5-box" style="display:flex;gap:10px;align-items:center"><input type="checkbox" data-id="'+esc(u.id)+'" '+(checked?"checked":"")+' style="width:20px;height:20px"><div style="flex:1"><b>'+esc(sname(u))+'</b><div style="font-size:12px;color:#64748b">'+esc(sno(u))+' — '+esc(cname(u.classId))+'</div></div><span style="font-size:11px;color:'+(checked?"#16a34a":"#64748b")+';font-weight:900">'+(checked?"Selected":"Not selected")+'</span></label>'}).join("")};q.oninput=red;sel.onchange=red;red();list.onclick=async e=>{const ch=e.target.closest("input[type=checkbox]");if(!ch)return;const u=studs.find(x=>String(x.id)===String(ch.dataset.id));DATA.students=DATA.students.filter(x=>String(x.id)!==String(u.id)&&String(x.studentId)!==String(u.id));if(ch.checked)DATA.students.push({id:u.id,studentId:u.id,studentNumber:sno(u),name:sname(u),classId:u.classId||""});await saveWriting();tabStudents(box)}}
+ function tabTasks(box){box.innerHTML='<div class="wri5-box"><b>Create Writing Task</b><div style="display:grid;grid-template-columns:1fr 105px 105px;gap:8px;margin-top:10px"><input id="wri5-title" placeholder="Title" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri5-min" type="number" value="6" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><input id="wri5-mark" type="number" value="10" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"></div><textarea id="wri5-inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><select id="wri5-mode" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="both">Auto + Teacher review</option><option value="auto">Auto only</option></select><button id="wri5-create" class="wri5-btn" style="background:#2563eb;color:white;margin-left:8px">Create</button></div>'+DATA.tasks.map(t=>'<div class="wri5-box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><button data-del="'+esc(t.id)+'" class="wri5-btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");box.querySelector("#wri5-create").onclick=async()=>{DATA.tasks.push({id:uid("wtask"),title:box.querySelector("#wri5-title").value.trim()||"Writing Task",instructions:box.querySelector("#wri5-inst").value.trim(),minSentences:Number(box.querySelector("#wri5-min").value||6),totalMarks:Number(box.querySelector("#wri5-mark").value||10),mode:box.querySelector("#wri5-mode").value,createdAt:new Date().toISOString()});await saveWriting();tabTasks(box)};box.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{DATA.tasks=DATA.tasks.filter(t=>String(t.id)!==String(b.dataset.del));await saveWriting();tabTasks(box)})}
+ function tabSubs(box){box.innerHTML=DATA.submissions.map(s=>{const t=DATA.tasks.find(x=>String(x.id)===String(s.taskId))||{},a=s.auto||mark(s.text,t);return'<div class="wri5-box"><b>'+esc(s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(t.title||s.taskTitle||"Writing")+'</div><div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+high(s.text||"",a.issues)+'</div><div style="font-size:12px;color:#64748b;margin-top:8px">Score: <b>'+esc(s.finalScore!=null?s.finalScore:a.score)+' / '+esc(a.total)+'</b> — '+esc(s.status||"pending_review")+'</div><button data-ok="'+esc(s.id)+'" class="wri5-btn" style="background:#16a34a;color:white;margin-top:8px">Accept</button><button data-zero="'+esc(s.id)+'" class="wri5-btn" style="background:#dc2626;color:white;margin-top:8px;margin-left:6px">0</button></div>'}).join("")||'<div class="wri5-box" style="color:#64748b">No submissions yet.</div>';box.querySelectorAll("[data-ok]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>x.id===b.dataset.ok),t=DATA.tasks.find(x=>x.id===s.taskId)||{},a=s.auto||mark(s.text,t);s.status="accepted";s.finalScore=a.score;await saveWriting();tabSubs(box)});box.querySelectorAll("[data-zero]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>x.id===b.dataset.zero);s.status="cancelled";s.finalScore=0;await saveWriting();tabSubs(box)})}
+ function tabScores(box){const studs=studentsAll().filter(u=>matchSelected(u));box.innerHTML='<div class="wri5-box"><b>Writing Scores / 10</b><div style="font-size:12px;color:#64748b">مستقلة عن Gradebook.</div><table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Student</th><th style="padding:8px;text-align:left">No.</th><th style="padding:8px;text-align:left">Score</th><th style="padding:8px;text-align:left">Status</th></tr></thead><tbody>'+studs.map(u=>{const al=aliases(u),ss=DATA.submissions.filter(s=>al.has(String(s.studentId)));const best=ss[0];return'<tr style="border-bottom:1px solid #e2e8f0"><td style="padding:8px">'+esc(sname(u))+'</td><td style="padding:8px">'+esc(sno(u))+'</td><td style="padding:8px"><b>'+(best?esc(best.finalScore!=null?best.finalScore:(best.auto&&best.auto.score)||"Pending"):"-")+'</b></td><td style="padding:8px">'+esc(best?best.status||"pending_review":"No submission")+'</td></tr>'}).join("")+'</tbody></table></div>'}
+ async function studentPanel(){const body=shell("✍️ Writing — Student");body.innerHTML='<div class="wri5-box">Loading...</div>';await loadWriting();const u=session();if(!matchSelected(u)){body.innerHTML='<div class="wri5-box"><b>تأكيد رقم الطالب</b><div style="font-size:13px;color:#64748b;margin:6px 0 10px">اكتب رقم الطالب مثل 3136 ثم اضغط الزر.</div><input id="wri5-sno" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px"><button id="wri5-show" class="wri5-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button></div>';body.querySelector("#wri5-show").onclick=async()=>{const v=(body.querySelector("#wri5-sno").value||"").trim();if(!v)return alert("اكتب رقم الطالب");localStorage.setItem("eqWritingStudentNumber_v5",v);await loadWriting();studentPanel()};return}const al=aliases(u);if(!DATA.tasks.length){body.innerHTML='<div class="wri5-box" style="color:#64748b">أنت ضمن طلاب الكتابة، لكن لا توجد مهمة منشأة حتى الآن.</div>';return}body.innerHTML=DATA.tasks.map(t=>{const old=DATA.submissions.find(s=>String(s.taskId)===String(t.id)&&al.has(String(s.studentId)));if(old)return'<div class="wri5-box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Score: <b>'+esc(old.finalScore!=null?old.finalScore:(old.auto&&old.auto.score)||"Pending")+' / '+esc(t.totalMarks||10)+'</b></div></div>';return'<div class="wri5-box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+' — Minimum: '+esc(t.minSentences||6)+' sentences</div><textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="wri5-btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Submit Writing</button></div>'}).join("");body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{const t=DATA.tasks.find(x=>x.id===btn.dataset.submit),text=(body.querySelector('[data-task="'+CSS.escape(t.id)+'"]').value||"").trim();if(!text)return alert("Write your paragraph first.");const a=mark(text,t),saved=localStorage.getItem("eqWritingStudentNumber_v5")||"",sid=saved?(/^\\d+$/.test(saved)?"student_"+saved:saved):(Array.from(al).find(x=>/^student_\\d+$/.test(x))||Array.from(al)[0]||"student");DATA.submissions.push({id:uid("wsub"),taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||greet()||"Student",text,auto:a,status:t.mode==="auto"?"accepted":"pending_review",finalScore:t.mode==="auto"?a.score:null,createdAt:new Date().toISOString()});await saveWriting();alert("Writing submitted.");studentPanel()})}
+ setInterval(fab,1200);setTimeout(fab,1500);
 })();
 </script>
-<!-- END_WRITING_INDEPENDENT_FULL_V4_20260626 -->
+<!-- END_WRITING_INDEPENDENT_FULL_V5_20260626 -->
+
 </body>
 </html>
 
