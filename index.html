@@ -1737,20 +1737,28 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const tickRef = useRef();
   const gameAudioRef = useRef();
   const [gameAudioPlayed,setGameAudioPlayed] = useState(false);
+  const [gameAudioLoading,setGameAudioLoading] = useState(false);
   const gameIsListening = quiz.type==="Listening" && quiz.audioFile;
   async function gamePlayAudio(){
+    if(gameAudioLoading) return;
     const a=gameAudioRef.current;
     if(!a){ alert("Audio player is not ready."); return; }
+    setGameAudioLoading(true);
     try{
       if(String(quiz.audioFile||"").startsWith("worker-tts:")){
-        a.src = await eqPlayWorkerTTS(quiz.audioFile, quiz.passage||"");
+        // Worker audio can take several seconds; load once and prevent repeated taps.
+        if(!a.src){
+          a.src = await eqPlayWorkerTTS(quiz.audioFile, quiz.passage||"");
+        }
       }
       a.currentTime=0;
       const p=a.play();
-      if(p && p.catch) p.catch(err=>alert("Audio could not play. Tap the audio controls, or try again."));
+      if(p && p.catch) await p.catch(err=>{ throw new Error("Audio could not play. Tap the audio controls, or try again."); });
       setGameAudioPlayed(true);
     }catch(e){
       alert(e.message || "Audio could not play. Try again.");
+    }finally{
+      setGameAudioLoading(false);
     }
   }
 
@@ -1883,10 +1891,11 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
           <audio ref={gameAudioRef} src={String(quiz.audioFile||"").startsWith("worker-tts:")?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
-          <button onClick={gamePlayAudio} style={{width:"100%",border:"0",borderRadius:"11px",background:"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
-            ▶ Play Listening
+          <button onClick={gamePlayAudio} disabled={gameAudioLoading} style={{width:"100%",border:"0",borderRadius:"11px",background:gameAudioLoading?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:gameAudioLoading?0.9:1}}>
+            {gameAudioLoading?"⏳ Loading audio… please wait":"▶ Play Listening"}
           </button>
-          {!gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>Listen first, then answer the questions.</div>}
+          {gameAudioLoading && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تحميل مقطع الاستماع… لا تضغط مرة أخرى.</div>}
+          {!gameAudioLoading && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>Listen first, then answer the questions.</div>}
         </div>
       </div>}
 
