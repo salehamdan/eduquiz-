@@ -850,12 +850,17 @@ Return ONLY valid JSON (no markdown) in this EXACT format:
 
 "matchAnswers" is the ordered list of answer choices (index 0 = a, 1 = b…). Each question's "correctLabel" is the lowercase letter of its correct answer. Keep the teacher's wording. Include any extra (distractor) answers in matchAnswers.`;
     } else {
-      prompt = `Create a LISTENING MATCHING exercise based on: "${source}". Difficulty ${difficulty}. 
+      prompt = `Create a LISTENING MATCHING exercise based on: "${source}". Difficulty ${difficulty}.
 
-Make ${count} questions. Also make an answer bank with ${count}+1 or ${count}+2 choices (a few MORE than the questions, so some are distractors). Each question matches exactly ONE answer.
+SCRIPT STYLE:
+Choose ONE varied style that fits the topic: dialogue, phone call, announcement, interview, instructions, short story, or public-place conversation. For dialogues, avoid gender-specific speaker labels such as Dad, Mom, boy, girl, man, woman unless essential; prefer neutral/role labels like Speaker A, Speaker B, Teacher, Student, Customer, Clerk.
+Do NOT start with "Hi, my name is..." unless it is necessary.
+Make it sound different from a personal diary.
+
+Make ${count} questions. Also make an answer bank with ${count}+1 or ${count}+2 choices, so some are distractors. Each question matches exactly ONE answer.
 
 Return ONLY valid JSON (no markdown) in this EXACT format:
-{"script":"a natural spoken script (a short dialogue or monologue) that contains the information needed to answer","matchAnswers":["answer choice 1","answer choice 2","answer choice 3","..."],"questions":[{"text":"question 1","correctLabel":"a","skill":"Listening Comprehension","difficulty":"${difficulty}"}]}
+{"script":"a natural spoken script that contains the information needed to answer","matchAnswers":["answer choice 1","answer choice 2","answer choice 3","..."],"questions":[{"text":"question 1","correctLabel":"a","skill":"Listening Comprehension","difficulty":"${difficulty}"}]}
 
 "matchAnswers" index 0 = letter a, 1 = b, etc. Each "correctLabel" is the lowercase letter of the matching answer. Vary which letters are correct. Add 1-2 extra distractor answers that are NOT used by any question.`;
     }
@@ -910,17 +915,41 @@ Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
       instruction = `Based ONLY on the following ${sourceType==="passage"?"passage":"document text"}, create ${count} multiple-choice questions. Quiz type ${type}, difficulty ${difficulty}.\n\nTEXT:\n"""${source.slice(0,8000)}"""`;
     }
     if (type === "Listening" && (sourceType === "topic")) {
-      // For Listening from a topic: generate a spoken script (monologue/dialogue) AND questions about it.
+      // For Listening from a topic: generate varied spoken scripts AND questions.
+      const listenGenre = (()=>{ 
+        const arr=["dialogue between two people","short phone call","school announcement","teacher instructions","radio-style announcement","interview","conversation in a shop or public place","short story/narrative"];
+        return arr[Math.floor(Math.random()*arr.length)];
+      })();
+      const levelRules = difficulty==="Easy"
+        ? "Use A1-A2 English: very clear sentences, common words, simple present/simple past, 70-95 words. Mostly direct information."
+        : difficulty==="Intermediate"
+          ? "Use B1 English: natural but clear speech, 120-170 words, time words, reasons, plans, and 2-3 specific details. Include at least one simple inference."
+          : "Use B1+/B2 English: realistic speech, 170-230 words, varied sentence structures, implied meaning, distractors, and 2 inference/detail ideas.";
       prompt = `Create a LISTENING comprehension exercise about: "${source}". Difficulty ${difficulty}.
 
-First write a natural spoken-style listening script that a student will LISTEN to (they will NOT see the text). Length: ${length==="short"?"about 70-90 words (~30 seconds when read aloud)":length==="long"?"about 200-250 words (~90 seconds when read aloud)":"about 130-160 words (~60 seconds when read aloud)"}. Then create ${count} multiple-choice questions about what was said in the script.
+SCRIPT REQUIREMENTS:
+- Use this format/style: ${listenGenre}.
+- ${levelRules}
+- Students will LISTEN only; they will NOT see the script.
+- Do NOT start with "Hi, my name is..." or "My name is Sarah" unless the topic specifically requires self-introduction.
+- Do NOT use the same diary/self-introduction template across topics.
+- Make the content match the topic exactly. If the topic is shopping, make it shopping. If it is travel, make it travel. If it is school, make it school.
+- Use natural spoken English suitable for text-to-speech.
+- For dialogues, avoid gender-specific speaker labels such as Dad, Mom, boy, girl, man, woman unless the topic requires them. Prefer neutral/role labels like Speaker A, Speaker B, Teacher, Student, Customer, Clerk, Announcer, Passenger. Do not make a female voice read a male role or a male voice read a female role.
+- For announcements/instructions, write it like a real announcement, not a personal diary.
+- Include enough information to answer all questions.
 
-Each question must have exactly 4 options with ONE correct answer. Skills from: ${skillsList}. Focus on: ${skillHint}.
+QUESTION REQUIREMENTS:
+- Create exactly ${count} multiple-choice questions about what was said in the script.
+- Each question must have exactly 4 options with ONE correct answer.
+- Include a mix of skills: Main Idea, Detail Recall, Inference, Sequencing, Cause & Effect.
+- Easy: mostly direct detail questions.
+- Intermediate: direct detail + sequence + simple inference.
+- Advanced: detail + inference + implied meaning + distractor options.
+- Vary the correct answer position across questions.
 
 Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
-{"script":"the full listening script text here","questions":[{"text":"question here","options":["option A","option B","option C","option D"],"correct":0,"skill":"Listening Comprehension","difficulty":"${difficulty}"}]}
-
-"correct" is the index (0-3) of the right option. Vary the correct answer position across questions. The script must be natural spoken English suitable for reading aloud by text-to-speech.`;
+{"script":"the full listening script text here","questions":[{"text":"question here","options":["option A","option B","option C","option D"],"correct":0,"skill":"Listening Comprehension","difficulty":"${difficulty}"}]}`;
     } else {
       prompt = `${instruction}
 
@@ -2763,8 +2792,19 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     }
   }
   function tStop(){ window.speechSynthesis.cancel(); if(tPreviewRef.current)tPreviewRef.current.pause(); }
+  function detectVoiceRoleMismatch(script, selectedVoice){
+    const s=String(script||"").toLowerCase();
+    const male=/\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\s*:/i.test(script) || /\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\b/i.test(s);
+    const female=/\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\s*:/i.test(script) || /\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\b/i.test(s);
+    if(selectedVoice==="woman" && male) return "The script includes male roles such as Dad/father/boy/man. Change the role labels to Speaker A/B or choose Man voice.";
+    if(selectedVoice==="man" && female) return "The script includes female roles such as Mom/mother/girl/woman. Change the role labels to Speaker A/B or choose Woman voice.";
+    return "";
+  }
+
   async function handleGenerateAIVoice(){
     if(!passage.trim()){ setErr("Write or generate a script first."); return; }
+    const roleWarn = detectVoiceRoleMismatch(passage, ttsVoice);
+    if(roleWarn){ setTtsMsg("⚠️ "+roleWarn); return; }
     setTtsBusy(true); setTtsMsg(""); setErr("");
     try{
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
