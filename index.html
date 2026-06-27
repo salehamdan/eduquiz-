@@ -573,7 +573,7 @@ async function eqGenerateTTS(text, voice, path){
   if(!key) throw new Error("Add your OpenAI API key first to generate AI audio.");
   if(!text || !text.trim()) throw new Error("Write or generate the listening script text first.");
 
-  // Keep mobile generation reliable. Opus is much smaller than MP3, so it can be saved with the quiz.
+  // Keep mobile generation reliable. MP3 is more compatible with mobile browsers, so it can be saved with the quiz.
   const script=text.trim().slice(0,2200);
 
   const controller = new AbortController();
@@ -588,7 +588,7 @@ async function eqGenerateTTS(text, voice, path){
         model:"tts-1-hd",
         voice:voice||"nova",
         input:script,
-        response_format:"opus"
+        response_format:"mp3"
       }),
       signal:controller.signal
     });
@@ -606,7 +606,7 @@ async function eqGenerateTTS(text, voice, path){
 
   const blob=await resp.blob();
 
-  // Opus is compact. Save directly when small enough; this avoids Firebase Storage hanging on mobile.
+  // MP3 is mobile compatible. Save directly when small enough; this avoids Firebase Storage hanging on mobile.
   if(blob.size <= 650000){
     return await rpBlobToDataUrl(blob);
   }
@@ -614,7 +614,7 @@ async function eqGenerateTTS(text, voice, path){
   // If still too big, try Storage as a fallback with timeout.
   if(FIREBASE_OK && storage && storage.ref){
     const uploadTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("Audio upload timed out. Choose Short script or paste an audio link.")),30000));
-    return await Promise.race([rpUploadAudio(blob, path || ("listening_audio/"+uid()+".opus")), uploadTimeout]);
+    return await Promise.race([rpUploadAudio(blob, path || ("listening_audio/"+uid()+".mp3")), uploadTimeout]);
   }
 
   throw new Error("AI audio is too large. Choose Short script or paste an audio link.");
@@ -1653,7 +1653,15 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const gameIsListening = quiz.type==="Listening" && quiz.audioFile;
   function gamePlayAudio(){
     const a=gameAudioRef.current;
-    if(a){ a.currentTime=0; a.play(); setGameAudioPlayed(true); }
+    if(!a){ alert("Audio player is not ready."); return; }
+    try{
+      a.currentTime=0;
+      const p=a.play();
+      if(p && p.catch) p.catch(err=>alert("Audio could not play. Please tap the audio controls, or ask the teacher to regenerate MP3 audio."));
+      setGameAudioPlayed(true);
+    }catch(e){
+      alert("Audio could not play. Please ask the teacher to regenerate MP3 audio.");
+    }
   }
 
   const q = quiz.questions[idx];
@@ -1781,7 +1789,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       {gameIsListening && <div style={{padding:"14px 18px 0"}}>
         <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
-          <audio ref={gameAudioRef} src={quiz.audioFile} preload="auto" onEnded={()=>setGameAudioPlayed(true)} style={{display:"none"}}/>
+          <audio ref={gameAudioRef} src={quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
           <button onClick={gamePlayAudio} style={{width:"100%",border:"0",borderRadius:"11px",background:"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
             ▶ Play Listening
           </button>
@@ -2938,7 +2946,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       if(incomplete.length){setErr("⚠️ Some questions are incomplete.");return;}
     }
     // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
-    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>950000){
+    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>1100000){
       setErr("⚠️ The uploaded audio is too large to save. Please use a shorter clip, or upload the audio to a website and paste its LINK instead.");window.scrollTo(0,0);return;
     }
     onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
