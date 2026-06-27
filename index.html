@@ -684,12 +684,12 @@ QUALITY GATE (must self-check before returning JSON):
     body: JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:500,messages:[{role:"user",content:prompt}]})
   });
   if(!resp.ok){ const t=await resp.text(); throw new Error("API error "+resp.status+": "+t.slice(0,200)); }
-  const data=await resp.json();
+  let data =await resp.json();
   let text=(data.content&&data.content[0]&&data.content[0].text)||"";
   text=text.replace(/```json/g,"").replace(/```/g,"").trim();
   const s=text.indexOf("{"),e=text.lastIndexOf("}");
   if(s>=0&&e>s)text=text.slice(s,e+1);
-  const parsed=JSON.parse(text);
+  let parsed =JSON.parse(text);
   return parsed.topics||[];
 }
 
@@ -778,7 +778,7 @@ Rules:
     body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:4000,messages:[{role:"user",content:repairPrompt}]})
   });
   if(!resp.ok) throw new Error("Quality repair failed: "+resp.status);
-  const data=await resp.json();
+  let data =await resp.json();
   const raw=(data.content&&data.content[0]&&data.content[0].text)||"";
   return eqParseJsonObject(raw);
 }
@@ -912,7 +912,7 @@ Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
     const errText = await resp.text();
     throw new Error("API error " + resp.status + ": " + errText.slice(0,200));
   }
-  const data = await resp.json();
+  let data = await resp.json();
   let text = (data.content && data.content[0] && data.content[0].text) || "";
   text = text.replace(/```json/g,"").replace(/```/g,"").trim();
   // Extract JSON object
@@ -934,7 +934,7 @@ Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
   if (blockingQualityIssues.length) throw new Error("AI question quality check failed: " + blockingQualityIssues.slice(0,3).join("; "));
   if (matchMode) {
     const matchAnswers = (parsed.matchAnswers||[]).map(a=>String(a).trim()).filter(a=>a);
-    const questions = parsed.questions.map((q,i)=>({
+    let questions = parsed.questions.map((q,i)=>({
       id: i+1,
       text: String(q.text||"").trim(),
       options: [],
@@ -949,7 +949,7 @@ Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
     return { questions, matchAnswers, script: String(parsed.script||"").trim() };
   }
   const expectedOptions = eqExpectedOptionCount(qFormat);
-  const questions = parsed.questions.map((q,i)=>{
+  let questions = parsed.questions.map((q,i)=>{
     const opts = (q.options||[]).slice(0,expectedOptions).map(o=>String(o).trim()).filter(o=>o);
     const maxIdx = opts.length-1;
     return {
@@ -2526,7 +2526,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
               </ResponsiveContainer>
             </Card>
             <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📋 All Attempts</strong>
-              {[...myResps].reverse().map((r,i)=>{const quiz=data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
+              {[...myResps].reverse().map((r,i)=>{let quiz =data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
                 <div key={r.id} onClick={()=>{if(!quiz)return;if(canReviewQuizResponse(quiz))setReviewResp({response:r,quiz});else alert("Answer review will open after your final allowed attempt.");}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
                   <div style={{width:"32px",height:"32px",borderRadius:"50%",background:gc(p)+"20",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:"800",color:gc(p),fontFamily:F}}>{p}%</span></div>
                   <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"12px",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz?.type} · {r.completedAt} · #{r.attempt}</div></div>
@@ -2728,7 +2728,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     try {
       setAIKey(aiKey.trim());
       const wantMatch = type==="Listening" && listenMatch;
-      const result = await generateQuizAI({apiKey:aiKey.trim(), source, sourceType:st, count:aiCount, type, difficulty:diff, length:aiLength, image:aiSource==="photo"?aiImage:null, qFormat:aiQFormat, matchMode:wantMatch});
+      let result = await generateQuizAI({apiKey:aiKey.trim(), source, sourceType:st, count:aiCount, type, difficulty:diff, length:aiLength, image:aiSource==="photo"?aiImage:null, qFormat:aiQFormat, matchMode:wantMatch});
       const qs = result.questions || result;
       const hasRealAudio = type==="Listening" && (aiAudioUrl.trim()||aiAudioFile);
       // Matching: AI returns the answer bank too — load it into the editor
@@ -2753,7 +2753,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const txt = await extractFileText(file);
       if (!txt || txt.trim().length < 20) { setAiMsg("Could not read text from this file. Try a .txt file or paste the text instead."); setAiLoading(false); return; }
       setAIKey(aiKey.trim());
-      const result = await generateQuizAI({apiKey:aiKey.trim(), source:txt, sourceType:"file", count:aiCount, type, difficulty:diff});
+      let result = await generateQuizAI({apiKey:aiKey.trim(), source:txt, sourceType:"file", count:aiCount, type, difficulty:diff});
       const qs = result.questions || result;
       if (type==="Listening" && result.script) setPassage(result.script);
       setPreview(qs); setShowImport(true); setShowAI(false);
@@ -2796,10 +2796,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     }
 
     let startRow = looksHeader ? 1 : 0;
-    const data = rows.slice(startRow).filter(r=>r&&r.length&&String(r[colMap?colMap.q:0]||"").trim());
+    let data = rows.slice(startRow).filter(r=>r&&r.length&&String(r[colMap?colMap.q:0]||"").trim());
     if(!data.length){setErr("No question rows found. Each row needs a question, 4 options, and the correct answer.");return;}
 
-    const result=[],skipped=[];
+    let result =[],skipped=[];
     data.forEach((r,i)=>{
       let q,a,b,c,d,cl,sk,df;
       if (colMap) {
@@ -3589,7 +3589,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       const prompt=`Create ONE short English reading passage for Saudi secondary EFL students. Topic: ${topic}. Level: ${level}. Target word count: about ${wordCount} words. Return only the passage text. No title, no bullets.`;
       const resp=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:"gpt-4o-mini",messages:[{role:"system",content:"You write leveled oral reading passages for EFL assessment."},{role:"user",content:prompt}],temperature:0.7,max_tokens:280})});
       if(!resp.ok) throw new Error("AI error "+resp.status);
-      const data=await resp.json();
+      let data =await resp.json();
       setText(String(data.choices?.[0]?.message?.content||fallback).trim());
       setMsg("✅ AI text generated.");
     }catch(e){setText(fallback);setMsg("⚠️ AI failed; local text generated.");}
@@ -4048,7 +4048,7 @@ function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
         }
         return "";
       }
-      const parsed=rows.map(o=>{
+      let parsed =rows.map(o=>{
         const first=pick(o,["FirstName","First Name","Student Name","Name","الاسم"]);
         const last=pick(o,["LastName","Last Name"]);
         const qn=pick(o,["QuizName","Quiz Name","Quiz","Test Name"]);
@@ -4084,7 +4084,7 @@ function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
       const batchId="zipgrade_"+Date.now()+"_"+Math.floor(1000+Math.random()*9000);
       const maxTotal=Math.max(1,...matched.map(r=>r.total||0));
       const clsIds=[...new Set(matched.map(r=>r.student&&r.student.classId).filter(Boolean))];
-      const quiz={
+      let quiz ={
         id:qid, teacherId:user.id, title:title||"Imported Results", code:("IMP"+Math.floor(1000+Math.random()*9000)),
         type:"Imported Results", difficulty:"Imported", subject:"ZipGrade", classIds:clsIds, status:"closed", timer:0,
         questions:[], imported:true, importSource:"ZipGrade", importFile:fileName, importMode:mode,
@@ -4433,12 +4433,12 @@ Return ONLY valid JSON (no markdown):
     body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1400,messages:[{role:"user",content:prompt}]})
   });
   if(!resp.ok) throw new Error("API error "+resp.status);
-  const data = await resp.json();
+  let data = await resp.json();
   let txt = (data.content&&data.content[0]&&data.content[0].text)||"";
   txt = txt.replace(/```json/g,"").replace(/```/g,"").trim();
   const s=txt.indexOf("{"), e=txt.lastIndexOf("}");
   if(s>=0&&e>s) txt=txt.slice(s,e+1);
-  const parsed = JSON.parse(txt);
+  let parsed = JSON.parse(txt);
   if(!parsed.passage||!parsed.questions||parsed.questions.length<3) throw new Error("Invalid AI response");
   return parsed;
 }
@@ -5283,7 +5283,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     myResp.sort((a,b)=>(b.ts||0)-(a.ts||0));
     myResp.forEach(r=>{
       const st=data.users.find(u=>u.id===r.studentId);
-      const quiz=myQuizzes.find(q=>q.id===r.quizId);
+      let quiz =myQuizzes.find(q=>q.id===r.quizId);
       const cls=data.classes.find(c=>c.id===(st?.classId));
       rows.push([st?.name||"?",st?.studentId||"",cls?.name||"",quiz?.title||"",quiz?.type||"",r.mode||"normal",r.score,r.totalQ,pct(r.score,r.totalQ)+"%",r.attempt||1,r.completedAt||""]);
     });
@@ -5932,7 +5932,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           if(!stuResps.length) return <p style={{fontSize:"13px",color:C.mu,fontFamily:F}}>This student has no attempts yet.</p>;
           return <div>
             <p style={{fontSize:"12px",color:C.mu,fontFamily:F,margin:"0 0 10px"}}>Delete any attempt to adjust this student's progress and mastery. This cannot be undone.</p>
-            {stuResps.map(r=>{const quiz=data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
+            {stuResps.map(r=>{let quiz =data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
               <div key={r.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 0",borderBottom:"1px solid "+C.br}}>
                 <div style={{flex:1}}>
                   <div style={{fontSize:"13px",fontWeight:"600",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown quiz"}</div>
@@ -6485,7 +6485,7 @@ document.addEventListener("click", function(e){
     form.append("response_format","json");
     const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
     if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
-    const data=await resp.json();
+    let data =await resp.json();
     return (data.text||"").trim();
   }
   async function transcribe(audioId){
@@ -7343,7 +7343,7 @@ document.addEventListener("click", function(e){
     form.append('response_format', 'json');
     const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {method:'POST', headers:{Authorization:'Bearer '+k}, body:form});
     if(!resp.ok){ const t=await resp.text().catch(()=>''); throw new Error('OpenAI '+resp.status+': '+t.slice(0,180)); }
-    const data=await resp.json();
+    let data =await resp.json();
     return clean(data.text||'');
   }
   function score(ref, spoken, seconds){
