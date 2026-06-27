@@ -2683,6 +2683,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const labelFileRef = useRef();
   const [audioFile,setAudioFile]=useState(E.audioFile||"");
   const [ttsVoice,setTtsVoice]=useState(E.ttsVoice||"woman");
+  const [ttsWorkerUrl,setTtsWorkerUrl]=useState(localStorage.getItem("eq_tts_worker_url")||"");
   const [ttsBusy,setTtsBusy]=useState(false);
   const [ttsMsg,setTtsMsg]=useState("");
   const [listenLimit,setListenLimit]=useState(E.listenLimit||0);
@@ -2750,6 +2751,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(!passage.trim()){ setErr("Write or generate a script first."); return; }
     setTtsBusy(true); setTtsMsg(""); setErr("");
     try{
+      if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
       if(!url || !(String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
@@ -3065,7 +3067,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                 <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
                 <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
               </div>
-              <input defaultValue={localStorage.getItem("eq_tts_worker_url")||""} onBlur={e=>localStorage.setItem("eq_tts_worker_url",e.target.value.trim())} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
+              <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
               <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Generating…":"✨ Generate AI Voice"}</Btn>
               {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
             </div>
