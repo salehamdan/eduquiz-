@@ -572,11 +572,15 @@ async function eqGenerateTTS(text, voice, path){
   const script=String(text||"").trim();
   if(!script) throw new Error("Write or generate the listening script text first.");
 
-  // Stable method: use a Cloudflare Worker proxy for OpenAI TTS.
   const endpoint=(localStorage.getItem("eq_tts_worker_url")||"").trim();
-  if(!endpoint){
-    throw new Error("AI Voice needs a Cloudflare Worker URL. Add it once in AI Voice settings, then try again.");
-  }
+  if(!endpoint) throw new Error("Add AI Voice Worker URL first.");
+
+  // Final stable mobile method:
+  // 1) Get MP3 from Worker
+  // 2) Save compact data URL only
+  // 3) Do NOT upload to Firebase Storage because it is failing on mobile/rules.
+  // Limit script hard so Firestore save does not fail.
+  const shortScript = script.slice(0,900);
 
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), 45000);
@@ -586,54 +590,40 @@ async function eqGenerateTTS(text, voice, path){
     resp=await fetch(endpoint,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        text:script.slice(0,2000),
-        voice:voice||"nova",
-        format:"mp3"
-      }),
+      body:JSON.stringify({text:shortScript,voice:voice||"nova",format:"mp3"}),
       signal:controller.signal
     });
   }catch(e){
     clearTimeout(timer);
-    if(String(e&&e.name)==="AbortError") throw new Error("AI Voice Worker timed out. Try a shorter script.");
-    throw e;
+    if(String(e&&e.name)==="AbortError") throw new Error("AI Voice timed out. Use shorter text.");
+    throw new Error("Cannot reach AI Voice Worker. Check Worker URL and Deploy.");
   }
   clearTimeout(timer);
 
   if(!resp.ok){
     const t=await resp.text();
-    throw new Error("AI Voice Worker error "+resp.status+": "+t.slice(0,200));
+    throw new Error("AI Voice Worker error "+resp.status+": "+t.slice(0,160));
   }
 
-  const ct=String(resp.headers.get("content-type")||"");
   const blob0=await resp.blob();
   if(!blob0 || blob0.size<8000) throw new Error("Worker returned empty audio.");
 
-  const audioBlob = new Blob([blob0], {type: ct.includes("audio") ? ct : "audio/mpeg"});
-
-  // Correct saving method: upload generated audio to Firebase Storage and save only the URL in the quiz.
-  // This avoids Firestore's document-size limit.
-  if(FIREBASE_OK && storage && storage.ref){
-    const safePath = path || ("listening_audio/"+uid()+"_"+Date.now()+".mp3");
-    const uploadTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("Audio upload timed out. Try a shorter script or paste an audio link.")),45000));
-    return await Promise.race([rpUploadAudio(audioBlob, safePath), uploadTimeout]);
+  const audioBlob = new Blob([blob0], {type:"audio/mpeg"});
+  if(audioBlob.size>620000){
+    throw new Error("Generated voice is too large. Shorten the listening script to about 80-120 words.");
   }
 
-  // Fallback only for very small audio. Large embedded audio will not save.
-  if(audioBlob.size <= 480000){
-    return await new Promise((resolve,reject)=>{
-      const r=new FileReader();
-      r.onerror=()=>reject(new Error("Could not read generated audio."));
-      r.onload=()=>{
-        const out=String(r.result||"");
-        if(!out.startsWith("data:audio")) reject(new Error("Generated audio is invalid."));
-        else resolve(out);
-      };
-      r.readAsDataURL(audioBlob);
-    });
-  }
-
-  throw new Error("Generated audio is too large to save directly. Firebase Storage is required, or use a shorter script.");
+  return await new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onerror=()=>reject(new Error("Could not read generated audio."));
+    r.onload=()=>{
+      const out=String(r.result||"");
+      if(!out.startsWith("data:audio")) reject(new Error("Generated audio is invalid."));
+      else if(out.length>900000) reject(new Error("Generated voice is too large. Shorten the script."));
+      else resolve(out);
+    };
+    r.readAsDataURL(audioBlob);
+  });
 }
 
 async function rpTranscribeSubmissionAudio(sub, task){
@@ -2770,7 +2760,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
       if(!url || !(String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
       setAudioFile(url);
-      setTtsMsg("✅ AI voice generated and saved as a link — tap ▶ Preview to listen.");
+      setTtsMsg("✅ AI voice generated — tap ▶ Preview, then Save.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
@@ -2965,8 +2955,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       if(incomplete.length){setErr("⚠️ Some questions are incomplete.");return;}
     }
     // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
-    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>950000){
-      setErr("⚠️ The uploaded audio is too large to save. Please use a shorter clip, or upload the audio to a website and paste its LINK instead.");window.scrollTo(0,0);return;
+    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>900000){
+      setErr("⚠️ The generated/uploaded audio is too large to save. Shorten the Listening Script, then generate AI Voice again.");window.scrollTo(0,0);return;
     }
     onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
