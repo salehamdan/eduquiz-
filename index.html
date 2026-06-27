@@ -573,11 +573,11 @@ async function eqGenerateTTS(text, voice, path){
   if(!key) throw new Error("Add your OpenAI API key first to generate AI audio.");
   if(!text || !text.trim()) throw new Error("Write or generate the listening script text first.");
 
-  // Keep mobile generation reliable. MP3 is more compatible with mobile browsers, so it can be saved with the quiz.
-  const script=text.trim().slice(0,2200);
+  // Use standard TTS MP3 for mobile compatibility. HD can be large and may fail on mobile.
+  const script=text.trim().slice(0,1800);
 
   const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 30000);
+  const timer = setTimeout(()=>controller.abort(), 35000);
 
   let resp;
   try{
@@ -585,7 +585,7 @@ async function eqGenerateTTS(text, voice, path){
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
       body:JSON.stringify({
-        model:"tts-1-hd",
+        model:"tts-1",
         voice:voice||"nova",
         input:script,
         response_format:"mp3"
@@ -594,7 +594,7 @@ async function eqGenerateTTS(text, voice, path){
     });
   }catch(e){
     clearTimeout(timer);
-    if(String(e&&e.name)==="AbortError") throw new Error("OpenAI TTS timed out. Try Short or Medium script.");
+    if(String(e&&e.name)==="AbortError") throw new Error("OpenAI TTS timed out. Try a shorter script.");
     throw e;
   }
   clearTimeout(timer);
@@ -605,16 +605,26 @@ async function eqGenerateTTS(text, voice, path){
   }
 
   const blob=await resp.blob();
+  if(!blob || blob.size<8000) throw new Error("OpenAI returned an empty audio file. Try again.");
 
-  // MP3 is mobile compatible. Save directly when small enough; this avoids Firebase Storage hanging on mobile.
-  if(blob.size <= 650000){
-    return await rpBlobToDataUrl(blob);
+  // Prefer a data URL when compact; it is the most reliable on mobile and student devices.
+  if(blob.size<=720000){
+    return await new Promise((resolve,reject)=>{
+      const r=new FileReader();
+      r.onerror=()=>reject(new Error("Could not read generated audio."));
+      r.onload=()=>{
+        const out=String(r.result||"");
+        if(!out.startsWith("data:audio")) reject(new Error("Generated audio is invalid."));
+        else resolve(out);
+      };
+      r.readAsDataURL(new Blob([blob],{type:"audio/mpeg"}));
+    });
   }
 
-  // If still too big, try Storage as a fallback with timeout.
+  // Fallback to Firebase Storage URL for larger files.
   if(FIREBASE_OK && storage && storage.ref){
-    const uploadTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("Audio upload timed out. Choose Short script or paste an audio link.")),30000));
-    return await Promise.race([rpUploadAudio(blob, path || ("listening_audio/"+uid()+".mp3")), uploadTimeout]);
+    const uploadTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("Audio upload timed out. Choose Short script or paste an audio link.")),35000));
+    return await Promise.race([rpUploadAudio(new Blob([blob],{type:"audio/mpeg"}), path || ("listening_audio/"+uid()+".mp3")), uploadTimeout]);
   }
 
   throw new Error("AI audio is too large. Choose Short script or paste an audio link.");
@@ -2749,7 +2759,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     setTtsBusy(true); setTtsMsg(""); setErr("");
     try{
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
-      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+".mp3");
+      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
+      if(!url || !(String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
       setAudioFile(url);
       setTtsMsg("✅ AI voice generated — tap ▶ Preview to listen.");
     }catch(e){
@@ -2946,7 +2957,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       if(incomplete.length){setErr("⚠️ Some questions are incomplete.");return;}
     }
     // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
-    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>1100000){
+    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>1000000){
       setErr("⚠️ The uploaded audio is too large to save. Please use a shorter clip, or upload the audio to a website and paste its LINK instead.");window.scrollTo(0,0);return;
     }
     onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
