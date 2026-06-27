@@ -1648,6 +1648,13 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const timerSec = quiz.gameTimerSec || 20;
   const [timeLeft,setTimeLeft] = useState(timerType==="perQ"?timerSec : timerType==="whole"?timerSec : null);
   const tickRef = useRef();
+  const gameAudioRef = useRef();
+  const [gameAudioPlayed,setGameAudioPlayed] = useState(false);
+  const gameIsListening = quiz.type==="Listening" && quiz.audioFile;
+  function gamePlayAudio(){
+    const a=gameAudioRef.current;
+    if(a){ a.currentTime=0; a.play(); setGameAudioPlayed(true); }
+  }
 
   const q = quiz.questions[idx];
 
@@ -1769,6 +1776,18 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         <div style={{height:"100%",width:progress+"%",background:"linear-gradient(90deg,#fbbf24,#f59e0b)",transition:"width 0.3s",borderRadius:"3px"}}/>
       </div>
       {streak>=3 && <div style={{textAlign:"center",color:"#fbbf24",fontSize:"12px",fontWeight:"700",marginTop:"6px",fontFamily:F}}>🔥 {streak} in a row! +25 bonus</div>}
+
+      {/* Listening audio for Game mode */}
+      {gameIsListening && <div style={{padding:"14px 18px 0"}}>
+        <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
+          <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
+          <audio ref={gameAudioRef} src={quiz.audioFile} preload="auto" onEnded={()=>setGameAudioPlayed(true)} style={{display:"none"}}/>
+          <button onClick={gamePlayAudio} style={{width:"100%",border:"0",borderRadius:"11px",background:"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
+            ▶ Play Listening
+          </button>
+          {!gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>Listen first, then answer the questions.</div>}
+        </div>
+      </div>}
 
       {/* Question */}
       <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",padding:"20px 18px"}}>
