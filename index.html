@@ -575,28 +575,43 @@ async function eqGenerateTTS(text, voice, path){
   const endpoint=(localStorage.getItem("eq_tts_worker_url")||"").trim();
   if(!endpoint) throw new Error("Add AI Voice Worker URL first.");
 
-  // Final stable mobile method:
-  // 1) Get MP3 from Worker
-  // 2) Save compact data URL only
-  // 3) Do NOT upload to Firebase Storage because it is failing on mobile/rules.
-  // Limit script hard so Firestore save does not fail.
-  const shortScript = script.slice(0,900);
+  // IMPORTANT:
+  // Do not generate or save the audio file here.
+  // Save only a tiny marker. The audio is generated from the Worker only when Preview/Student Play is pressed.
+  return "worker-tts:" + encodeURIComponent(JSON.stringify({
+    endpoint,
+    voice: voice || "nova",
+    createdAt: Date.now()
+  }));
+}
 
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 45000);
+async function eqPlayWorkerTTS(audioFile, scriptText){
+  const raw=String(audioFile||"");
+  if(!raw.startsWith("worker-tts:")) return null;
+
+  let cfg={};
+  try{ cfg=JSON.parse(decodeURIComponent(raw.slice("worker-tts:".length))); }catch(e){}
+  const endpoint=(cfg.endpoint||localStorage.getItem("eq_tts_worker_url")||"").trim();
+  if(!endpoint) throw new Error("Missing AI Voice Worker URL.");
+
+  const txt=String(scriptText||"").trim();
+  if(!txt) throw new Error("Missing Listening Script.");
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),45000);
 
   let resp;
   try{
     resp=await fetch(endpoint,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:shortScript,voice:voice||"nova",format:"mp3"}),
+      body:JSON.stringify({text:txt.slice(0,2200),voice:cfg.voice||"nova",format:"mp3"}),
       signal:controller.signal
     });
   }catch(e){
     clearTimeout(timer);
-    if(String(e&&e.name)==="AbortError") throw new Error("AI Voice timed out. Use shorter text.");
-    throw new Error("Cannot reach AI Voice Worker. Check Worker URL and Deploy.");
+    if(String(e&&e.name)==="AbortError") throw new Error("AI Voice timed out. Try again.");
+    throw new Error("Cannot reach AI Voice Worker.");
   }
   clearTimeout(timer);
 
@@ -605,25 +620,9 @@ async function eqGenerateTTS(text, voice, path){
     throw new Error("AI Voice Worker error "+resp.status+": "+t.slice(0,160));
   }
 
-  const blob0=await resp.blob();
-  if(!blob0 || blob0.size<8000) throw new Error("Worker returned empty audio.");
-
-  const audioBlob = new Blob([blob0], {type:"audio/mpeg"});
-  if(audioBlob.size>620000){
-    throw new Error("Generated voice is too large. Shorten the listening script to about 80-120 words.");
-  }
-
-  return await new Promise((resolve,reject)=>{
-    const r=new FileReader();
-    r.onerror=()=>reject(new Error("Could not read generated audio."));
-    r.onload=()=>{
-      const out=String(r.result||"");
-      if(!out.startsWith("data:audio")) reject(new Error("Generated audio is invalid."));
-      else if(out.length>900000) reject(new Error("Generated voice is too large. Shorten the script."));
-      else resolve(out);
-    };
-    r.readAsDataURL(audioBlob);
-  });
+  const blob=await resp.blob();
+  if(!blob || blob.size<8000) throw new Error("Worker returned empty audio.");
+  return URL.createObjectURL(new Blob([blob],{type:"audio/mpeg"}));
 }
 
 async function rpTranscribeSubmissionAudio(sub, task){
@@ -1657,16 +1656,19 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const gameAudioRef = useRef();
   const [gameAudioPlayed,setGameAudioPlayed] = useState(false);
   const gameIsListening = quiz.type==="Listening" && quiz.audioFile;
-  function gamePlayAudio(){
+  async function gamePlayAudio(){
     const a=gameAudioRef.current;
     if(!a){ alert("Audio player is not ready."); return; }
     try{
+      if(String(quiz.audioFile||"").startsWith("worker-tts:")){
+        a.src = await eqPlayWorkerTTS(quiz.audioFile, quiz.passage||"");
+      }
       a.currentTime=0;
       const p=a.play();
-      if(p && p.catch) p.catch(err=>alert("Audio could not play. Please tap the audio controls, or ask the teacher to regenerate MP3 audio."));
+      if(p && p.catch) p.catch(err=>alert("Audio could not play. Tap the audio controls, or try again."));
       setGameAudioPlayed(true);
     }catch(e){
-      alert("Audio could not play. Please ask the teacher to regenerate MP3 audio.");
+      alert(e.message || "Audio could not play. Try again.");
     }
   }
 
@@ -1795,7 +1797,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       {gameIsListening && <div style={{padding:"14px 18px 0"}}>
         <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
-          <audio ref={gameAudioRef} src={quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
+          <audio ref={gameAudioRef} src={String(quiz.audioFile||"").startsWith("worker-tts:")?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
           <button onClick={gamePlayAudio} style={{width:"100%",border:"0",borderRadius:"11px",background:"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
             ▶ Play Listening
           </button>
@@ -2739,16 +2741,26 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     reader.onload=()=>setAudioFile(reader.result);
     reader.readAsDataURL(file);
   }
-  function previewSpeak(){
-    if(audioFile){ const a=tPreviewRef.current; if(a){a.playbackRate=tSpeed;a.play();} return; }
-    if(!passage.trim()){setErr("Write or generate a script first.");return;}
-    window.speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(passage);
-    u.rate=0.9*tSpeed;
-    const voices=window.speechSynthesis.getVoices();
-    const en=voices.find(v=>/en-(US|GB)/i.test(v.lang)&&/(natural|google|samantha|daniel|aria|libby)/i.test(v.name))||voices.find(v=>/en/i.test(v.lang));
-    if(en)u.voice=en;
-    window.speechSynthesis.speak(u);
+  async function previewSpeak(){
+    try{
+      if(audioFile && String(audioFile).startsWith("worker-tts:")){
+        const url=await eqPlayWorkerTTS(audioFile, passage);
+        const a=tPreviewRef.current;
+        if(a){ a.src=url; a.playbackRate=tSpeed; await a.play(); }
+        return;
+      }
+      if(audioFile){ const a=tPreviewRef.current; if(a){a.playbackRate=tSpeed;a.play();} return; }
+      if(!passage.trim()){setErr("Write or generate a script first.");return;}
+      window.speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(passage);
+      u.rate=0.9*tSpeed;
+      const voices=window.speechSynthesis.getVoices();
+      const en=voices.find(v=>/en-(US|GB)/i.test(v.lang)&&/(natural|google|samantha|daniel|aria|libby)/i.test(v.name))||voices.find(v=>/en/i.test(v.lang));
+      if(en)u.voice=en;
+      window.speechSynthesis.speak(u);
+    }catch(e){
+      setTtsMsg("⚠️ "+(e.message||"Could not play AI Voice."));
+    }
   }
   function tStop(){ window.speechSynthesis.cancel(); if(tPreviewRef.current)tPreviewRef.current.pause(); }
   async function handleGenerateAIVoice(){
@@ -2758,9 +2770,9 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
-      if(!url || !(String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
+      if(!url || !(String(url).startsWith("worker-tts:") || String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
       setAudioFile(url);
-      setTtsMsg("✅ AI voice generated — tap ▶ Preview, then Save.");
+      setTtsMsg("✅ AI Voice ready. Save the quiz. Students will hear it when they press Play Listening.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
@@ -2956,7 +2968,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     }
     // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
     if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>900000){
-      setErr("⚠️ The generated/uploaded audio is too large to save. Shorten the Listening Script, then generate AI Voice again.");window.scrollTo(0,0);return;
+      setErr("⚠️ The generated/uploaded audio is too large to save. Use AI Voice Worker or paste an audio link.");window.scrollTo(0,0);return;
     }
     onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
@@ -3081,7 +3093,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <input value={audioFile.startsWith("data:")?"":audioFile} onChange={e=>setAudioFile(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"8px"}}/>
               <label htmlFor="audioUp" style={{display:"block",padding:"10px",background:audioFile.startsWith("data:")?"#f0fdf4":"#f3e8ff",color:audioFile.startsWith("data:")?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,marginBottom:"7px"}}>{audioFile.startsWith("data:")?"✅ Small audio uploaded — tap to replace":"📤 Or upload a small clip (under ~700KB)"}</label>
               <input id="audioUp" type="file" accept="audio/*" ref={audioFileRef} onChange={handleAudioUpload} style={{display:"none"}}/>
-              {audioFile && <div style={{marginBottom:"8px"}}><audio ref={tPreviewRef} controls src={audioFile} style={{display:"none"}}/><div><Btn size="sm" color={C.d} onClick={()=>setAudioFile("")}>Remove audio</Btn></div></div>}
+              {audioFile && <div style={{marginBottom:"8px"}}><audio ref={tPreviewRef} controls src={String(audioFile||"").startsWith("worker-tts:")?"":audioFile} style={{display:"none"}}/><div><Btn size="sm" color={C.d} onClick={()=>setAudioFile("")}>Remove audio</Btn></div></div>}
               <Label text="How many times can a student listen? (0 = unlimited)"/>
               <input type="number" min="0" value={listenLimit} onChange={e=>setListenLimit(Math.max(0,Number(e.target.value)))} style={{...inp,marginBottom:"11px"}}/>
               <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px"}}>
