@@ -708,37 +708,54 @@ function detectSkill(text, providedSkill, quizType) {
 }
 
 // ── AI QUIZ GENERATION (Anthropic Claude API) ─────────────────
-async function suggestListeningTopics({apiKey, difficulty, listenType}) {
+async function suggestListeningTopics({apiKey, difficulty, listenType, listenLevel}) {
   let topicStyle = listenType && listenType!=="auto" ? listenType : "mixed styles";
-  let prompt = `Suggest 10 fresh, specific LISTENING comprehension topic ideas for Saudi secondary English learners at ${difficulty} level.
+  const topicLevel = listenLevel && listenLevel!=="auto"
+    ? listenLevel
+    : (/hard|advanced/i.test(String(difficulty)) ? "advanced" : /intermediate|medium/i.test(String(difficulty)) ? "intermediate" : "easy");
 
-Listening text type/style: ${topicStyle}.
+  let prompt = `Suggest 12 fresh, specific LISTENING comprehension topic TITLES for Saudi secondary English learners.
 
-Rules:
-- Each topic must be specific, not generic.
-- Avoid repeating common generic topics like "At the airport", "Ordering food", "A job interview" unless you make them specific.
-- Good examples:
-  "A lost bag at the airport"
-  "A school announcement about exams"
-  "A phone call about homework"
-  "A customer returning a shirt"
-  "A weather warning before a trip"
-  "A student asking for directions"
-  "A family planning a weekend trip"
-  "A doctor appointment conversation"
-  "A teacher explaining project rules"
-  "A radio report about traffic"
-- Match the selected style when possible. If style is phone_call, topics should sound like phone calls. If style is announcement, topics should sound like announcements.
+Selected listening level: ${topicLevel}.
+Selected listening text type/style: ${topicStyle}.
+
+STRICT TITLE RULES:
+- Each title must be SHORT: 3 to 7 words only.
+- Do NOT write long sentence-like titles.
+- Do NOT include full explanations in the title.
+- Do NOT repeat generic topics like "At the airport", "Ordering food", "A job interview" unless made specific and short.
+- Make titles suitable for listening scripts and questions.
+
+Good short titles:
+"Lost Bag at Airport"
+"Phone Call About Homework"
+"School Exam Announcement"
+"Returning a Shirt"
+"Weather Warning"
+"Asking for Directions"
+"Weekend Family Plan"
+"Doctor Appointment"
+"Project Rules"
+"Traffic Radio Report"
+
+Bad long titles:
+"A phone call between a student and his father about missing homework after school"
+
+Level guidance:
+- easy: everyday topics, direct details.
+- intermediate: plans, reasons, sequence, simple problems.
+- advanced: slightly richer situations, implied meaning, but title still short.
 
 Return ONLY valid JSON:
-{"topics":["topic1","topic2","topic3","topic4","topic5","topic6","topic7","topic8","topic9","topic10"]}`;
+{"topics":["topic1","topic2","topic3","topic4","topic5","topic6","topic7","topic8","topic9","topic10","topic11","topic12"]}`;
 
   prompt += `
 QUALITY GATE:
+- 12 titles exactly.
+- Every title 3 to 7 words.
 - Topics must be varied in setting, people, and purpose.
 - Avoid duplicate themes.
-- Difficulty must match "${difficulty}".
-- Topics should be suitable for creating listening scripts and questions.`;  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+- Match "${topicLevel}" level and "${topicStyle}" style when possible.`;  const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
     body: JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:500,messages:[{role:"user",content:prompt}]})
@@ -843,7 +860,7 @@ Rules:
   return eqParseJsonObject(raw);
 }
 
-async function generateQuizAI({apiKey, source, sourceType, count, type, difficulty, length, listenType, image, qFormat, matchMode}) {
+async function generateQuizAI({apiKey, source, sourceType, count, type, difficulty, length, listenType, listenLevel, image, qFormat, matchMode}) {
   const skillHint = type === "Grammar" ? "Grammar"
     : type === "Vocabulary" ? "Vocabulary"
     : type === "Grammar & Vocabulary" ? "a MIX of Grammar and Vocabulary (about half each)"
@@ -948,12 +965,15 @@ Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
         const arr=["dialogue between two speakers","short phone call","school/public announcement","teacher/public instructions","radio-style announcement","short interview","public-place conversation","short story/narrative"];
         return arr[Math.floor(Math.random()*arr.length)];
       })();
-      const levelRules = difficulty==="Easy"
+      const normalizedLevel = listenLevel && listenLevel!=="auto"
+        ? (listenLevel==="advanced" ? "Advanced" : listenLevel==="intermediate" ? "Intermediate" : "Easy")
+        : (/hard|advanced/i.test(String(difficulty)) ? "Advanced" : /intermediate|medium/i.test(String(difficulty)) ? "Intermediate" : "Easy");
+      const levelRules = normalizedLevel==="Easy"
         ? "Use A1-A2 English: very clear sentences, common words, simple present/simple past, 70-95 words. Mostly direct information."
-        : difficulty==="Intermediate"
+        : normalizedLevel==="Intermediate"
           ? "Use B1 English: natural but clear speech, 120-170 words, time words, reasons, plans, and 2-3 specific details. Include at least one simple inference."
           : "Use B1+/B2 English: realistic speech, 170-230 words, varied sentence structures, implied meaning, distractors, and 2 inference/detail ideas.";
-      prompt = `Create a LISTENING comprehension exercise about: "${source}". Difficulty ${difficulty}.
+      prompt = `Create a LISTENING comprehension exercise about: "${source}". Difficulty ${difficulty} (treat Hard as Advanced). Listening level: ${normalizedLevel}.
 
 SCRIPT REQUIREMENTS:
 - Use this format/style: ${listenGenre}.
@@ -963,7 +983,11 @@ SCRIPT REQUIREMENTS:
 - Do NOT use the same diary/self-introduction template across topics.
 - Make the content match the topic exactly. If the topic is shopping, make it shopping. If it is travel, make it travel. If it is school, make it school.
 - Use natural spoken English suitable for text-to-speech.
-- For dialogues, avoid gender-specific speaker labels such as Dad, Mom, boy, girl, man, woman unless the topic requires them. Prefer neutral/role labels like Speaker A, Speaker B, Teacher, Student, Customer, Clerk, Announcer, Passenger. Do not make a female voice read a male role or a male voice read a female role.
+- For dialogues, avoid family/age/gender-specific roles such as Dad, Mom, father, mother, child, kid, son, daughter, boy, girl, man, woman unless the teacher explicitly asks for them.
+- Current voice mode is Single Voice. Do NOT create child-with-parent dialogues because one voice will sound like one age only.
+- Prefer neutral or compatible role labels: Speaker A, Speaker B, Teacher, Student, Customer, Clerk, Announcer, Passenger, Visitor, Assistant.\n- Keep the topic title short, but put the details inside the script, not in the title.
+- If the style is dialogue, both speakers should sound similar in age unless the topic clearly requires otherwise.
+- Do not make a female voice read a male role or a male voice read a female role.
 - For announcements/instructions, write it like a real announcement, not a personal diary.
 - Include enough information to answer all questions.
 
@@ -1697,6 +1721,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const [picked,setPicked] = useState(null);   // option index picked for current q
   const [locked,setLocked] = useState(false);  // answer locked (showing feedback)
   const [answers,setAnswers] = useState({});    // qId -> original option index
+  const answersRef = useRef({});
   const [points,setPoints] = useState(0);
   const [streak,setStreak] = useState(0);
   const [qStart,setQStart] = useState(Date.now());
@@ -1764,7 +1789,9 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     const orig = rawQuiz.questions.find(oq=>oq.id===q.id);
     const selText = q.options[i];
     const oi = orig ? orig.options.indexOf(selText) : i;
-    setAnswers(a=>({...a,[q.id]: oi>=0?oi:i}));
+    const newAnswers = {...answersRef.current,[q.id]: oi>=0?oi:i};
+    answersRef.current = newAnswers;
+    setAnswers(newAnswers);
     if(correct){
       const secs = (Date.now()-qStart)/1000;
       const speedBonus = Math.max(0, Math.round(50 - secs*5)); // up to +50 for fast
@@ -1791,9 +1818,10 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   }
 
   async function finish(){
-    const answeredCount = Object.keys(answers).length;
+    const finalAnswers = answersRef.current && Object.keys(answersRef.current).length ? answersRef.current : answers;
+    const answeredCount = Object.keys(finalAnswers).length;
     const sc = quiz.questions.filter(qq=>{
-      const sel = answers[qq.id];
+      const sel = finalAnswers[qq.id];
       const orig = rawQuiz.questions.find(oq=>oq.id===qq.id);
       return orig && sel===orig.correct;
     }).length;
@@ -1801,7 +1829,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     // Don't save an empty attempt (student left without answering anything)
     if(answeredCount===0){ return; }
     setSaving(true);
-    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...answers},attempt:prev+1,points,mode:"game",completedAt:today(),ts:Date.now()};
+    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...finalAnswers},attempt:prev+1,points,mode:"game",completedAt:today(),ts:Date.now()};
     try { await fsSet("responses",entry.id,entry); if(onSaved) await onSaved(); } catch(e){}
     setSaving(false);
   }
@@ -2767,6 +2795,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
   const [aiLength,setAiLength]=useState("medium");
   const [aiListenType,setAiListenType]=useState("auto");
+  const [aiListenLevel,setAiListenLevel]=useState("auto");
   const [aiAudioFile,setAiAudioFile]=useState("");
   const [aiAudioUrl,setAiAudioUrl]=useState("");
   const aiAudioRef=useRef();
@@ -2823,8 +2852,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   function tStop(){ window.speechSynthesis.cancel(); if(tPreviewRef.current)tPreviewRef.current.pause(); }
   function detectVoiceRoleMismatch(script, selectedVoice){
     const s=String(script||"").toLowerCase();
+    const familyAge=/\b(dad|father|mom|mother|parent|child|kid|son|daughter|boy|girl)\b/i.test(s);
     const male=/\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\s*:/i.test(script) || /\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\b/i.test(s);
     const female=/\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\s*:/i.test(script) || /\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\b/i.test(s);
+    if(familyAge) return "The script includes family/age roles such as Dad/Mom/child. For one AI voice, change the labels to Speaker A/B or choose a neutral dialogue topic.";
     if(selectedVoice==="woman" && male) return "The script includes male roles such as Dad/father/boy/man. Change the role labels to Speaker A/B or choose Man voice.";
     if(selectedVoice==="man" && female) return "The script includes female roles such as Mom/mother/girl/woman. Change the role labels to Speaker A/B or choose Woman voice.";
     return "";
@@ -2865,7 +2896,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     setAiMsg(""); setErr("");
     if(!aiKey.trim()){setAiMsg("Please enter your AI key first.");return;}
     setAiLoading(true);
-    try{ setAIKey(aiKey.trim()); const topics=await suggestListeningTopics({apiKey:aiKey.trim(),difficulty:diff,listenType:aiListenType}); setAiTopicIdeas(topics); }
+    try{ setAIKey(aiKey.trim()); const topics=await suggestListeningTopics({apiKey:aiKey.trim(),difficulty:diff,listenType:aiListenType,listenLevel:aiListenLevel}); setAiTopicIdeas(topics); }
     catch(e){ setAiMsg("Could not get ideas: "+(e.message||e)); }
     setAiLoading(false);
   }
@@ -2883,7 +2914,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     try {
       setAIKey(aiKey.trim());
       const wantMatch = type==="Listening" && listenMatch;
-      let result = await generateQuizAI({apiKey:aiKey.trim(), source, sourceType:st, count:aiCount, type, difficulty:diff, length:aiLength, listenType:aiListenType, image:aiSource==="photo"?aiImage:null, qFormat:aiQFormat, matchMode:wantMatch});
+      let result = await generateQuizAI({apiKey:aiKey.trim(), source, sourceType:st, count:aiCount, type, difficulty:diff, length:aiLength, listenType:aiListenType, listenLevel:aiListenLevel, image:aiSource==="photo"?aiImage:null, qFormat:aiQFormat, matchMode:wantMatch});
       const qs = result.questions || result;
       const hasRealAudio = type==="Listening" && (aiAudioUrl.trim()||aiAudioFile);
       // Matching: AI returns the answer bank too — load it into the editor
@@ -3224,7 +3255,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 
             {type==="Listening" && <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#1e40af",marginBottom:"9px",fontFamily:F}}>🎧 Listening options: <b>A Topic</b> = AI writes script + questions. Choose text type, length, and difficulty. <b>Pasted Text</b> = paste the script + attach your audio, AI makes questions. <b>Extract My Questions</b> = attach your audio + paste your ready questions.{listenMatch && <span><br/><b>🔗 Matching is ON:</b> AI will build the answer bank (a, b, c…) + questions automatically.</span>}</div>}
             {aiSource==="topic" && <div style={{marginBottom:"10px"}}>
-              <input value={aiTopic} onChange={e=>setAiTopic(e.target.value)} placeholder="e.g. Present perfect tense, or Animals vocabulary" style={inp}/>
+              <input value={aiTopic} onChange={e=>setAiTopic(e.target.value)} placeholder={type==="Listening"?"e.g. Lost Bag at Airport":"e.g. Present perfect tense, or Animals vocabulary"} style={inp}/>
               {type==="Listening" && <>
                 <div style={{marginTop:"8px"}}>
                   <Btn size="sm" color={C.p} onClick={fetchTopicIdeas} disabled={aiLoading}>💡 Suggest listening topics</Btn>
@@ -3233,6 +3264,13 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                   {aiTopicIdeas.map((t,i)=><button key={i} onClick={()=>setAiTopic(t)} style={{padding:"6px 11px",borderRadius:"999px",border:"1px solid "+C.pu,background:aiTopic===t?C.pu:"#fff",color:aiTopic===t?"#fff":C.pu,fontSize:"11px",fontWeight:"600",cursor:"pointer",fontFamily:F}}>{t}</button>)}
                 </div>}
                 <div style={{marginTop:"10px"}}>
+                  <Label text="🎚️ Listening level"/>
+                  <select value={aiListenLevel} onChange={e=>setAiListenLevel(e.target.value)} style={{...inp,marginBottom:"8px"}}>
+                    <option value="auto">Auto – use quiz difficulty ({diff})</option>
+                    <option value="easy">Easy / A1-A2</option>
+                    <option value="intermediate">Intermediate / B1</option>
+                    <option value="advanced">Advanced / B2</option>
+                  </select>
                   <Label text="🎭 Listening text type"/>
                   <select value={aiListenType} onChange={e=>setAiListenType(e.target.value)} style={{...inp,marginBottom:"8px"}}>
                     <option value="auto">Auto – choose best style</option>
@@ -3244,7 +3282,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                     <option value="story">Short Story / Narrative</option>
                     <option value="public_conversation">Public Conversation</option>
                   </select>
-                  <div style={{fontSize:"10px",color:"#475569",fontFamily:F,marginBottom:"8px"}}>Difficulty used now: <b>{diff}</b> — Easy = direct, Intermediate = details + sequence, Advanced = inference + implied meaning.</div>
+                  <div style={{fontSize:"10px",color:"#475569",fontFamily:F,marginBottom:"8px"}}>
+                    Difficulty used now: <b>{aiListenLevel==="auto"?diff:aiListenLevel}</b> — Hard = Advanced. Titles are kept short: 3–7 words.
+                    <br/>Voice mode now: <b>Single Voice</b>. Multi‑Voice for Dad/Mom/Boy/Girl dialogues will be added next.
+                  </div>
                   <Label text="🎧 Listening length"/>
                   <div style={{display:"flex",gap:"6px"}}>
                     {[{v:"short",l:"Short ~30s"},{v:"medium",l:"Medium ~60s"},{v:"long",l:"Long ~90s"}].map(o=>(
