@@ -573,6 +573,9 @@ async function eqGenerateTTS(text, voice, path){
   if(!key) throw new Error("Add your OpenAI API key first to generate AI audio.");
   if(!text || !text.trim()) throw new Error("Write or generate the listening script text first.");
 
+  const script=text.trim();
+  if(script.length>2600) throw new Error("The script is too long for mobile audio generation. Shorten it or choose Short/Medium.");
+
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), 45000);
 
@@ -581,7 +584,7 @@ async function eqGenerateTTS(text, voice, path){
     resp=await fetch("https://api.openai.com/v1/audio/speech",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:"tts-1-hd",voice:voice||"nova",input:text.trim().slice(0,4000),response_format:"mp3"}),
+      body:JSON.stringify({model:"tts-1-hd",voice:voice||"nova",input:script,response_format:"mp3"}),
       signal:controller.signal
     });
   }catch(e){
@@ -598,14 +601,16 @@ async function eqGenerateTTS(text, voice, path){
 
   const blob=await resp.blob();
 
-  // Safer for mobile: use data URL directly. Firebase Storage upload can hang/fail on some phones.
-  // Listening scripts are short, so MP3 data URL is usually acceptable.
-  try{
-    return await rpBlobToDataUrl(blob);
-  }catch(e){
-    // fallback: object URL for immediate preview if FileReader fails
-    return URL.createObjectURL(blob);
+  // IMPORTANT: Save as Storage URL, not data URL, because Firestore rejects large embedded audio.
+  if(!(FIREBASE_OK && storage && storage.ref)){
+    throw new Error("Firebase Storage is not available. Paste an audio link instead.");
   }
+
+  const safePath = path || ("listening_audio/"+uid()+".mp3");
+  const uploadController = new AbortController();
+  const uploadTimeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("Audio upload timed out. Try again or use a shorter script.")),45000));
+  const uploadJob = rpUploadAudio(blob, safePath);
+  return await Promise.race([uploadJob, uploadTimeout]);
 }
 
 async function rpTranscribeSubmissionAudio(sub, task){
@@ -2712,7 +2717,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+".mp3");
       setAudioFile(url);
-      setTtsMsg("✅ AI voice generated — tap ▶ Preview to listen. It will be saved with this quiz.");
+      setTtsMsg("✅ AI voice generated and saved as a link — tap ▶ Preview to listen.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
