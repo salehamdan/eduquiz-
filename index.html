@@ -568,21 +568,48 @@ async function rpUploadAudio(blob, path){
 // Generates a natural-sounding MP3 for a Listening Script and uploads it to
 // Firebase Storage (same upload helper used for student audio submissions),
 // returning a downloadable URL suitable for storing in quiz.audioFile.
-async function eqGenerateTTS(text, voice, path){
+async function eqGenerateTTS(text, voice, path, meta={}){
   const script=String(text||"").trim();
   if(!script) throw new Error("Write or generate the listening script text first.");
 
   const endpoint=(localStorage.getItem("eq_tts_worker_url")||"").trim();
   if(!endpoint) throw new Error("Add AI Voice Worker URL first.");
 
-  // IMPORTANT:
-  // Do not generate or save the audio file here.
-  // Save only a tiny marker. The audio is generated from the Worker only when Preview/Student Play is pressed.
-  return "worker-tts:" + encodeURIComponent(JSON.stringify({
-    endpoint,
-    voice: voice || "nova",
-    createdAt: Date.now()
-  }));
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),90000);
+
+  let resp;
+  try{
+    resp=await fetch(endpoint,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        text:script.slice(0,6000),
+        voice:voice || "nova",
+        format:"mp3",
+        save:true,
+        quizId: meta.quizId || "quiz",
+        title: meta.title || "listening"
+      }),
+      signal:controller.signal
+    });
+  }catch(e){
+    clearTimeout(timer);
+    if(String(e&&e.name)==="AbortError") throw new Error("AI Voice took too long. Try a shorter script.");
+    throw new Error("Cannot reach AI Voice Worker.");
+  }
+  clearTimeout(timer);
+
+  const data=await resp.json().catch(()=>null);
+  if(!resp.ok || !data || !(data.url || data.secure_url)){
+    const msg = data && (data.error || data.detail) ? (data.error + (data.detail?": "+JSON.stringify(data.detail).slice(0,180):"")) : "AI Voice Worker did not return MP3 URL.";
+    throw new Error(msg);
+  }
+
+  const url = String(data.secure_url || data.url || "").trim();
+  if(!/^https?:\/\//i.test(url)) throw new Error("Generated MP3 URL is invalid.");
+
+  return url;
 }
 
 async function eqPlayWorkerTTS(audioFile, scriptText){
@@ -1775,6 +1802,22 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     return ()=>{cancelled=true;};
   },[quiz.id, quiz.audioFile]);
 
+  function cleanDeviceVoiceText(s){
+    return String(s||"")
+      .replace(/\bSpeaker\s*A\s*:/gi,"")
+      .replace(/\bSpeaker\s*B\s*:/gi,"")
+      .replace(/\bA\s*:/g,"")
+      .replace(/\bB\s*:/g,"")
+      .replace(/\bDad\s*:/gi,"")
+      .replace(/\bMom\s*:/gi,"")
+      .replace(/\bBoy\s*:/gi,"")
+      .replace(/\bGirl\s*:/gi,"")
+      .replace(/\s+/g," ")
+      .trim();
+  }
+  function stopDeviceVoice(){
+    try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(e){}
+  }
   async function gamePlayAudio(){
     if(gameAudioLoading) return;
     const a=gameAudioRef.current;
@@ -1785,9 +1828,12 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         // Fast Device Voice: no audio file needed, and old worker-tts is forced to Device Voice.
         if(quiz.passage){
           window.speechSynthesis.cancel();
-          const u=new SpeechSynthesisUtterance(quiz.passage);
+          const speakText = cleanDeviceVoiceText(quiz.passage);
+          const u=new SpeechSynthesisUtterance(speakText);
           u.lang="en-US";
           u.rate=0.9;
+          u.onend=()=>setGameAudioPlayed(true);
+          u.onerror=()=>setGameAudioPlayed(true);
           window.speechSynthesis.speak(u);
           setGameAudioPlayed(true);
           return;
@@ -1803,6 +1849,12 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       alert(e.message || "Audio could not play. Try again.");
     }
   }
+
+  useEffect(()=>{
+    return ()=>{
+      try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(e){}
+    };
+  },[]);
 
   const q = quiz.questions[idx];
 
@@ -1915,7 +1967,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     <div style={{height:"100vh",display:"flex",flexDirection:"column",background:"linear-gradient(160deg,"+C.dk+","+C.md+")"}}>
       {/* Top bar */}
       <div style={{padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <button onClick={()=>{ if(confirm("Leave the game? Progress will not be saved.")) onDone(); }} style={{background:"none",border:"none",color:"#fff",fontSize:"22px",cursor:"pointer"}}>←</button>
+        <button onClick={()=>{ stopDeviceVoice(); if(confirm("Leave the game? Progress will not be saved.")) onDone(); }} style={{background:"none",border:"none",color:"#fff",fontSize:"22px",cursor:"pointer"}}>←</button>
         <div style={{color:"#fff",fontSize:"13px",fontWeight:"700",fontFamily:F}}>Question {idx+1} of {total}</div>
         <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
           {timerType!=="none" && timeLeft!==null && <div style={{background:timeLeft<=5?"rgba(239,68,68,0.3)":"rgba(255,255,255,0.15)",borderRadius:"999px",padding:"4px 11px",color:timeLeft<=5?"#fca5a5":"#fff",fontWeight:"800",fontSize:"14px",fontFamily:F}}>⏱️ {timeLeft}s</div>}
@@ -1936,6 +1988,9 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           <button onClick={gamePlayAudio} disabled={gameAudioLoading} style={{width:"100%",border:"0",borderRadius:"11px",background:gameAudioLoading?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:gameAudioLoading?0.9:1}}>
             {gameAudioLoading?"⏳ Preparing audio…":(gameForceDeviceVoice?"⚡ Play Device Voice":"▶ Play Listening")}
           </button>
+          {gameForceDeviceVoice && <button onClick={stopDeviceVoice} style={{width:"100%",border:"0",borderRadius:"11px",background:"#334155",color:"#fff",fontWeight:"800",fontSize:"14px",padding:"10px",fontFamily:F,marginTop:"8px"}}>
+            ⏹ Stop Voice
+          </button>}
           {gameAudioLoading && !gameAudioError && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تجهيز مقطع الاستماع قبل البدء… انتظر قليلًا.</div>}
           {gameAudioError && <div style={{fontSize:"11px",color:"#fca5a5",marginTop:"7px",fontWeight:"700"}}>⚠️ {gameAudioError}</div>}
           {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>{gameForceDeviceVoice?"✅ Device Voice active — no Worker delay. Listen first, then answer the questions.":"Audio is ready. Listen first, then answer the questions."}</div>}
@@ -2923,10 +2978,11 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     try{
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
-      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
-      if(!url || !(String(url).startsWith("worker-tts:") || String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
+      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3", {quizId:E.id||"new-quiz", title:title||"listening"});
+      if(!url || !String(url).startsWith("http")) throw new Error("Generated MP3 URL is invalid.");
+      setVoiceMode("ai");
       setAudioFile(url);
-      setTtsMsg("✅ AI Voice preview is ready for the teacher only. For students, use Device Voice or paste/upload a ready MP3 link like your old tests.");
+      setTtsMsg("✅ AI Voice MP3 saved as a ready link. Save the quiz. Students will hear it immediately with the normal audio player.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
@@ -3126,7 +3182,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     }
     // Do not save worker-tts for students. It causes slow loading because it calls Worker/OpenAI every time.
     if(type==="Listening" && audioFile && String(audioFile).startsWith("worker-tts:")){
-      setErr("⚠️ AI Voice preview is not saved for students. Choose Device Voice for instant playback, or paste/upload a ready MP3 link.");window.scrollTo(0,0);return;
+      setErr("⚠️ This old temporary AI voice cannot be saved. Generate AI Voice again to create a ready MP3 link, or use Device Voice.");window.scrollTo(0,0);return;
     }
     onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
@@ -3246,13 +3302,13 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <Btn size="sm" color={C.pu} onClick={tCycleSpeed}>⚡ {tSpeed}x</Btn>
             </div>
             {voiceMode==="ai" && <div style={{background:"#f5f3ff",border:"1px solid #ddd6fe",borderRadius:"7px",padding:"10px 11px",marginBottom:"9px"}}>
-              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice Preview (teacher only — not saved for students)</p>
+              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice → Ready MP3 for students</p>
               <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
                 <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
                 <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
               </div>
               <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
-              <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Generating…":"✨ Generate AI Voice"}</Btn>
+              <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Creating MP3…":"✨ Generate AI MP3 Voice"}</Btn>
               {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
             </div>}
             <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px",marginTop:"4px"}}>
