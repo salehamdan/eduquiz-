@@ -2968,7 +2968,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     const familyAge=/\b(dad|father|mom|mother|parent|child|kid|son|daughter|boy|girl)\b/i.test(s);
     const male=/\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\s*:/i.test(script) || /\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\b/i.test(s);
     const female=/\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\s*:/i.test(script) || /\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\b/i.test(s);
-    if(familyAge) return "The script includes family/age roles such as Dad/Mom/child. For Single Voice, change labels to Speaker A/B or choose Multi-Voice Dialogue.";
+    if(familyAge) return "Single Voice cannot use family/age roles such as Dad/Mom/child. Choose Multi-Voice Dialogue, then press Generate AI MP3 Voice again.";
     if(selectedVoice==="woman" && male) return "The script includes male roles such as Dad/father/boy/man. Change the role labels to Speaker A/B or choose Man voice.";
     if(selectedVoice==="man" && female) return "The script includes female roles such as Mom/mother/girl/woman. Change the role labels to Speaker A/B or choose Woman voice.";
     return "";
@@ -2977,8 +2977,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   async function handleGenerateAIVoice(){
     setVoiceMode("ai");
     if(!passage.trim()){ setErr("Write or generate a script first."); return; }
-    const roleWarn = ttsVoiceStyle==="multi" ? "" : detectVoiceRoleMismatch(passage, ttsVoice);
+    const isMultiVoice = String(ttsVoiceStyle||"").toLowerCase()==="multi";
+    const roleWarn = isMultiVoice ? "" : detectVoiceRoleMismatch(passage, ttsVoice);
     if(roleWarn){ setTtsMsg("⚠️ "+roleWarn); return; }
+    if(isMultiVoice){ setTtsMsg(""); }
     setTtsBusy(true); setTtsMsg(""); setErr("");
     try{
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
@@ -3314,11 +3316,11 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               </div>
               <Label text="🎭 Voice style"/>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"8px"}}>
-                <button onClick={()=>setTtsVoiceStyle("single")} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="single"?"#7c3aed":C.br),background:ttsVoiceStyle==="single"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Single Voice</button>
-                <button onClick={()=>setTtsVoiceStyle("multi")} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="multi"?"#7c3aed":C.br),background:ttsVoiceStyle==="multi"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Multi‑Voice Dialogue</button>
+                <button onClick={()=>{setTtsVoiceStyle("single");setTtsMsg("");}} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="single"?"#7c3aed":C.br),background:ttsVoiceStyle==="single"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Single Voice</button>
+                <button onClick={()=>{setTtsVoiceStyle("multi");setTtsMsg("");}} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="multi"?"#7c3aed":C.br),background:ttsVoiceStyle==="multi"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Multi‑Voice Dialogue</button>
               </div>
               <Label text="😊 Tone / Emotion"/>
-              <select value={ttsTone} onChange={e=>setTtsTone(e.target.value)} style={{...inp,marginBottom:"8px",fontSize:"11px"}}>
+              <select value={ttsTone} onChange={e=>{setTtsTone(e.target.value);setTtsMsg("");}} style={{...inp,marginBottom:"8px",fontSize:"11px"}}>
                 <option value="natural">Natural conversation</option>
                 <option value="happy">Happy / cheerful</option>
                 <option value="sad">Sad / disappointed</option>
