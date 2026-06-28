@@ -1740,7 +1740,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const [gameAudioLoading,setGameAudioLoading] = useState(false);
   const [gameAudioReady,setGameAudioReady] = useState(false);
   const [gameAudioError,setGameAudioError] = useState("");
-  const gameIsListening = quiz.type==="Listening" && quiz.audioFile;
+  const gameIsListening = quiz.type==="Listening" && (quiz.audioFile || quiz.passage);
   useEffect(()=>{
     if(!gameIsListening) return;
     let cancelled=false;
@@ -1783,6 +1783,16 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     try{
       const currentSrc = a.getAttribute("src") || "";
       if(!currentSrc){
+        // Fast Device Voice: no audio file needed.
+        if(quiz.passage){
+          window.speechSynthesis.cancel();
+          const u=new SpeechSynthesisUtterance(quiz.passage);
+          u.lang="en-US";
+          u.rate=0.9;
+          window.speechSynthesis.speak(u);
+          setGameAudioPlayed(true);
+          return;
+        }
         setGameAudioError("Audio is still preparing. Please wait a moment.");
         return;
       }
@@ -1925,11 +1935,11 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
           <audio ref={gameAudioRef} src={String(quiz.audioFile||"").startsWith("worker-tts:")?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
           <button onClick={gamePlayAudio} disabled={gameAudioLoading || !gameAudioReady} style={{width:"100%",border:"0",borderRadius:"11px",background:(gameAudioLoading||!gameAudioReady)?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:(gameAudioLoading||!gameAudioReady)?0.9:1}}>
-            {gameAudioLoading||!gameAudioReady?"⏳ Preparing audio…":"▶ Play Listening"}
+            {gameAudioLoading||!gameAudioReady?"⏳ Preparing audio…":(!quiz.audioFile?"⚡ Play Device Voice":"▶ Play Listening")}
           </button>
           {(gameAudioLoading||!gameAudioReady) && !gameAudioError && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تجهيز مقطع الاستماع قبل البدء… انتظر قليلًا.</div>}
           {gameAudioError && <div style={{fontSize:"11px",color:"#fca5a5",marginTop:"7px",fontWeight:"700"}}>⚠️ {gameAudioError}</div>}
-          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>Audio is ready. Listen first, then answer the questions.</div>}
+          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>{!quiz.audioFile?"Device voice is ready. Listen first, then answer the questions.":"Audio is ready. Listen first, then answer the questions."}</div>}
         </div>
       </div>}
 
@@ -2817,6 +2827,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const labelFileRef = useRef();
   const [audioFile,setAudioFile]=useState(E.audioFile||"");
   const [ttsVoice,setTtsVoice]=useState(E.ttsVoice||"woman");
+  const [voiceMode,setVoiceMode]=useState(E.voiceMode || (E.audioFile ? "ai" : "device"));
   const [ttsWorkerUrl,setTtsWorkerUrl]=useState(localStorage.getItem("eq_tts_worker_url")||"");
   const [ttsBusy,setTtsBusy]=useState(false);
   const [ttsMsg,setTtsMsg]=useState("");
@@ -2905,6 +2916,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   }
 
   async function handleGenerateAIVoice(){
+    setVoiceMode("ai");
     if(!passage.trim()){ setErr("Write or generate a script first."); return; }
     const roleWarn = detectVoiceRoleMismatch(passage, ttsVoice);
     if(roleWarn){ setTtsMsg("⚠️ "+roleWarn); return; }
@@ -2915,7 +2927,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3");
       if(!url || !(String(url).startsWith("worker-tts:") || String(url).startsWith("data:audio") || String(url).startsWith("http"))) throw new Error("Generated audio URL is invalid.");
       setAudioFile(url);
-      setTtsMsg("✅ AI Voice ready. Save the quiz. Students will hear it when they press Play Listening.");
+      setTtsMsg("✅ AI Voice preview is ready for the teacher only. For students, use Device Voice or paste/upload a ready MP3 link like your old tests.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
@@ -3111,9 +3123,13 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     }
     // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
     if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>900000){
-      setErr("⚠️ The generated/uploaded audio is too large to save. Use AI Voice Worker or paste an audio link.");window.scrollTo(0,0);return;
+      setErr("⚠️ The uploaded audio is too large to save. Paste a ready MP3 link like your old tests.");window.scrollTo(0,0);return;
     }
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"?audioFile:"",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
+    // Do not save worker-tts for students. It causes slow loading because it calls Worker/OpenAI every time.
+    if(type==="Listening" && audioFile && String(audioFile).startsWith("worker-tts:")){
+      setErr("⚠️ AI Voice preview is not saved for students. Choose Device Voice for instant playback, or paste/upload a ready MP3 link.");window.scrollTo(0,0);return;
+    }
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -3212,7 +3228,14 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>{type==="Listening"?"🎧 Listening Script":"📖 Reading Passage"}</strong>
           <textarea value={passage} onChange={e=>setPassage(e.target.value)} rows={4} placeholder={type==="Listening"?"Type the script students will hear (or let AI write it below)…":"Paste the reading passage…"} style={{...inp,resize:"vertical",lineHeight:"1.7"}}/>
           {type==="Listening" && <>
-            <p style={{fontSize:"11px",color:C.mu,margin:"6px 0 9px",fontFamily:F}}>🔊 Students will HEAR this (they won't see the text). Use the device voice (free) OR upload a real audio recording for a natural human voice.</p>
+            <p style={{fontSize:"11px",color:C.mu,margin:"6px 0 9px",fontFamily:F}}>🔊 Students will HEAR this (they won't see the text).</p>
+             <div style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"9px",padding:"9px",marginBottom:"9px"}}>
+               <Label text="🔊 Voice Mode"/>
+               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+                 <button onClick={()=>{setVoiceMode("device");setAudioFile("");setTtsMsg("⚡ Device Voice selected — instant for students.");}} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(voiceMode==="device"?C.p:C.br),background:voiceMode==="device"?"#eff6ff":"#fff",color:voiceMode==="device"?C.p:C.tx,fontWeight:"800",fontFamily:F}}>⚡ Device Voice<br/><span style={{fontSize:"10px",fontWeight:"600"}}>Instant</span></button>
+                 <button onClick={()=>setVoiceMode("ai")} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(voiceMode==="ai"?C.pu:C.br),background:voiceMode==="ai"?"#faf5ff":"#fff",color:voiceMode==="ai"?C.pu:C.tx,fontWeight:"800",fontFamily:F}}>🎙️ AI Voice<br/><span style={{fontSize:"10px",fontWeight:"600"}}>Natural</span></button>
+               </div>
+             </div>
             <div style={{display:"flex",gap:"6px",marginBottom:"9px",flexWrap:"wrap",alignItems:"center"}}>
               {audioFile && <Btn size="sm" color={C.mu} onClick={()=>tSeek(-10)}>⏪ 10s</Btn>}
               <Btn size="sm" color={C.p} onClick={previewSpeak}>▶ Preview</Btn>
@@ -3220,8 +3243,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               {audioFile && <Btn size="sm" color={C.mu} onClick={()=>tSeek(10)}>10s ⏩</Btn>}
               <Btn size="sm" color={C.pu} onClick={tCycleSpeed}>⚡ {tSpeed}x</Btn>
             </div>
-            <div style={{background:"#f5f3ff",border:"1px solid #ddd6fe",borderRadius:"7px",padding:"10px 11px",marginBottom:"9px"}}>
-              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice (natural — replaces the robotic device voice)</p>
+            {voiceMode==="ai" && <div style={{background:"#f5f3ff",border:"1px solid #ddd6fe",borderRadius:"7px",padding:"10px 11px",marginBottom:"9px"}}>
+              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice Preview (teacher only — not saved for students)</p>
               <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
                 <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
                 <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
@@ -3229,10 +3252,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
               <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Generating…":"✨ Generate AI Voice"}</Btn>
               {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
-            </div>
+            </div>}
             <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px",marginTop:"4px"}}>
-              <Label text="🎙️ Real audio (optional — overrides device voice)"/>
-              <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#92400e",marginBottom:"8px",fontFamily:F}}>💡 Best way: paste an audio LINK (no size limit). Upload only works for small clips (under ~700KB) to avoid storage errors.</div>
+              <Label text="🎙️ Ready MP3 audio link/file (fastest for students)"/>
+              <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#92400e",marginBottom:"8px",fontFamily:F}}>💡 Fastest for students: use a ready MP3 link/file like your old tests. This plays directly without Worker/OpenAI delay. Upload only works for small clips (under ~700KB).</div>
               <input value={audioFile.startsWith("data:")?"":audioFile} onChange={e=>setAudioFile(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"8px"}}/>
               <label htmlFor="audioUp" style={{display:"block",padding:"10px",background:audioFile.startsWith("data:")?"#f0fdf4":"#f3e8ff",color:audioFile.startsWith("data:")?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,marginBottom:"7px"}}>{audioFile.startsWith("data:")?"✅ Small audio uploaded — tap to replace":"📤 Or upload a small clip (under ~700KB)"}</label>
               <input id="audioUp" type="file" accept="audio/*" ref={audioFileRef} onChange={handleAudioUpload} style={{display:"none"}}/>
