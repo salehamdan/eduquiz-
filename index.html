@@ -1836,9 +1836,8 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           u.lang="en-US";
           u.rate=0.9;
           u.onend=()=>setGameAudioPlayed(true);
-          u.onerror=()=>setGameAudioPlayed(true);
+          u.onerror=()=>setGameAudioError("Device voice stopped before finishing. Play it again to unlock the answers.");
           window.speechSynthesis.speak(u);
-          setGameAudioPlayed(true);
           return;
         }
         setGameAudioError("Audio is still preparing. Please wait a moment.");
@@ -1847,7 +1846,8 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       a.currentTime=0;
       const p=a.play();
       if(p && p.catch) await p.catch(err=>{ throw new Error("Audio could not play yet. Wait for loading to finish, then tap Play again."); });
-      setGameAudioPlayed(true);
+      // Do not unlock answers here. Answers unlock only when the audio reaches the end.
+      // The audio element onEnded handler will set gameAudioPlayed=true.
     }catch(e){
       alert(e.message || "Audio could not play. Try again.");
     }
@@ -1923,6 +1923,11 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   }
 
   async function finish(){
+    if(gameIsListening && !gameAudioPlayed){
+      setGameAudioError("You can answer now, but you must listen to the full audio before submitting.");
+      setLocked(false);
+      return;
+    }
     const finalAnswers = answersRef.current && Object.keys(answersRef.current).length ? answersRef.current : answers;
     const answeredCount = Object.keys(finalAnswers).length;
     const sc = quiz.questions.filter(qq=>{
@@ -1996,7 +2001,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
           </button>}
           {gameAudioLoading && !gameAudioError && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تجهيز مقطع الاستماع قبل البدء… انتظر قليلًا.</div>}
           {gameAudioError && <div style={{fontSize:"11px",color:"#fca5a5",marginTop:"7px",fontWeight:"700"}}>⚠️ {gameAudioError}</div>}
-          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>{gameForceDeviceVoice?"✅ Device Voice active — no Worker delay. Listen first, then answer the questions.":"Audio is ready. Listen first, then answer the questions."}</div>}
+          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"800"}}>{gameForceDeviceVoice?"⚠️ You can answer, but you must finish listening before submitting.":"⚠️ You can answer while listening, but you cannot submit before the audio ends."}</div>}
         </div>
       </div>}
 
