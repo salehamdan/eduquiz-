@@ -1738,29 +1738,28 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const gameAudioRef = useRef();
   const [gameAudioPlayed,setGameAudioPlayed] = useState(false);
   const [gameAudioLoading,setGameAudioLoading] = useState(false);
-  const [gameAudioReady,setGameAudioReady] = useState(false);
+  const [gameAudioReady,setGameAudioReady] = useState(true);
   const [gameAudioError,setGameAudioError] = useState("");
   const gameIsListening = quiz.type==="Listening" && (quiz.audioFile || quiz.passage);
+  const gameForceDeviceVoice = quiz.type==="Listening" && (!quiz.audioFile || String(quiz.audioFile||"").startsWith("worker-tts:"));
   useEffect(()=>{
     if(!gameIsListening) return;
     let cancelled=false;
     async function prepareListeningAudio(){
       const a=gameAudioRef.current;
-      if(!a) return;
+      if(!a){
+        if(gameForceDeviceVoice){ setGameAudioReady(true); setGameAudioLoading(false); }
+        return;
+      }
       setGameAudioError("");
       try{
-        if(String(quiz.audioFile||"").startsWith("worker-tts:")){
-          setGameAudioLoading(true);
-          window.__eqTtsAudioCache = window.__eqTtsAudioCache || {};
-          const cacheKey = "tts:"+(quiz.id||"")+"|"+String(quiz.audioFile||"")+"|"+String(quiz.passage||"").length;
-          let src = window.__eqTtsAudioCache[cacheKey];
-          if(!src){
-            src = await eqPlayWorkerTTS(quiz.audioFile, quiz.passage||"");
-            window.__eqTtsAudioCache[cacheKey] = src;
-          }
-          if(cancelled) return;
-          a.setAttribute("src", src);
-          a.load();
+        if(gameForceDeviceVoice){
+          // Force old worker-tts quizzes to instant Device Voice for students.
+          a.removeAttribute("src");
+          setGameAudioReady(true);
+        }else if(String(quiz.audioFile||"").startsWith("worker-tts:")){
+          // Disabled for students: no Worker/OpenAI delay.
+          a.removeAttribute("src");
           setGameAudioReady(true);
         }else{
           setGameAudioReady(true);
@@ -1782,8 +1781,8 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     if(!a){ alert("Audio player is not ready."); return; }
     try{
       const currentSrc = a.getAttribute("src") || "";
-      if(!currentSrc){
-        // Fast Device Voice: no audio file needed.
+      if(!currentSrc || gameForceDeviceVoice){
+        // Fast Device Voice: no audio file needed, and old worker-tts is forced to Device Voice.
         if(quiz.passage){
           window.speechSynthesis.cancel();
           const u=new SpeechSynthesisUtterance(quiz.passage);
@@ -1933,13 +1932,13 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       {gameIsListening && <div style={{padding:"14px 18px 0"}}>
         <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
-          <audio ref={gameAudioRef} src={String(quiz.audioFile||"").startsWith("worker-tts:")?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px"}}/>
-          <button onClick={gamePlayAudio} disabled={gameAudioLoading || !gameAudioReady} style={{width:"100%",border:"0",borderRadius:"11px",background:(gameAudioLoading||!gameAudioReady)?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:(gameAudioLoading||!gameAudioReady)?0.9:1}}>
-            {gameAudioLoading||!gameAudioReady?"⏳ Preparing audio…":(!quiz.audioFile?"⚡ Play Device Voice":"▶ Play Listening")}
+          <audio ref={gameAudioRef} src={gameForceDeviceVoice?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px",display:gameForceDeviceVoice?"none":"block"}}/>
+          <button onClick={gamePlayAudio} disabled={gameAudioLoading} style={{width:"100%",border:"0",borderRadius:"11px",background:gameAudioLoading?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:gameAudioLoading?0.9:1}}>
+            {gameAudioLoading?"⏳ Preparing audio…":(gameForceDeviceVoice?"⚡ Play Device Voice":"▶ Play Listening")}
           </button>
-          {(gameAudioLoading||!gameAudioReady) && !gameAudioError && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تجهيز مقطع الاستماع قبل البدء… انتظر قليلًا.</div>}
+          {gameAudioLoading && !gameAudioError && <div style={{fontSize:"11px",color:"#fde68a",marginTop:"7px",fontWeight:"700"}}>جاري تجهيز مقطع الاستماع قبل البدء… انتظر قليلًا.</div>}
           {gameAudioError && <div style={{fontSize:"11px",color:"#fca5a5",marginTop:"7px",fontWeight:"700"}}>⚠️ {gameAudioError}</div>}
-          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>{!quiz.audioFile?"Device voice is ready. Listen first, then answer the questions.":"Audio is ready. Listen first, then answer the questions."}</div>}
+          {!gameAudioLoading && gameAudioReady && !gameAudioPlayed && <div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"7px"}}>{gameForceDeviceVoice?"✅ Device Voice active — no Worker delay. Listen first, then answer the questions.":"Audio is ready. Listen first, then answer the questions."}</div>}
         </div>
       </div>}
 
@@ -3229,6 +3228,9 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           <textarea value={passage} onChange={e=>setPassage(e.target.value)} rows={4} placeholder={type==="Listening"?"Type the script students will hear (or let AI write it below)…":"Paste the reading passage…"} style={{...inp,resize:"vertical",lineHeight:"1.7"}}/>
           {type==="Listening" && <>
             <p style={{fontSize:"11px",color:C.mu,margin:"6px 0 9px",fontFamily:F}}>🔊 Students will HEAR this (they won't see the text).</p>
+             <div style={{background:"#dcfce7",border:"2px solid #22c55e",borderRadius:"9px",padding:"8px 10px",marginBottom:"9px",fontSize:"12px",fontWeight:"900",color:"#166534",fontFamily:F}}>
+               ✅ VOICE FIX ACTIVE: Student will use Device Voice or Ready MP3 only. No Worker delay for students.
+             </div>
              <div style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"9px",padding:"9px",marginBottom:"9px"}}>
                <Label text="🔊 Voice Mode"/>
                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
