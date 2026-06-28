@@ -588,6 +588,9 @@ async function eqGenerateTTS(text, voice, path, meta={}){
         voice:voice || "nova",
         format:"mp3",
         save:true,
+        multiVoice: meta.voiceStyle==="multi",
+        voiceStyle: meta.voiceStyle || "single",
+        tone: meta.tone || "natural",
         quizId: meta.quizId || "quiz",
         title: meta.title || "listening"
       }),
@@ -2882,6 +2885,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const [audioFile,setAudioFile]=useState(E.audioFile||"");
   const [ttsVoice,setTtsVoice]=useState(E.ttsVoice||"woman");
   const [voiceMode,setVoiceMode]=useState(E.voiceMode || (E.audioFile ? "ai" : "device"));
+  const [ttsVoiceStyle,setTtsVoiceStyle]=useState(E.ttsVoiceStyle||"single");
+  const [ttsTone,setTtsTone]=useState(E.ttsTone||"natural");
   const [ttsWorkerUrl,setTtsWorkerUrl]=useState(localStorage.getItem("eq_tts_worker_url")||"");
   const [ttsBusy,setTtsBusy]=useState(false);
   const [ttsMsg,setTtsMsg]=useState("");
@@ -2978,7 +2983,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     try{
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
       const voiceId = ttsVoice==="man" ? "onyx" : "nova";
-      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3", {quizId:E.id||"new-quiz", title:title||"listening"});
+      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3", {quizId:E.id||"new-quiz", title:title||"listening", voiceStyle:ttsVoiceStyle, tone:ttsTone});
       if(!url || !String(url).startsWith("http")) throw new Error("Generated MP3 URL is invalid.");
       setVoiceMode("ai");
       setAudioFile(url);
@@ -3184,7 +3189,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(type==="Listening" && audioFile && String(audioFile).startsWith("worker-tts:")){
       setErr("⚠️ This old temporary AI voice cannot be saved. Generate AI Voice again to create a ready MP3 link, or use Device Voice.");window.scrollTo(0,0);return;
     }
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],closeDate,passage,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -3307,6 +3312,23 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                 <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
                 <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
               </div>
+              <Label text="🎭 Voice style"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"8px"}}>
+                <button onClick={()=>setTtsVoiceStyle("single")} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="single"?"#7c3aed":C.br),background:ttsVoiceStyle==="single"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Single Voice</button>
+                <button onClick={()=>setTtsVoiceStyle("multi")} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="multi"?"#7c3aed":C.br),background:ttsVoiceStyle==="multi"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Multi‑Voice Dialogue</button>
+              </div>
+              <Label text="😊 Tone / Emotion"/>
+              <select value={ttsTone} onChange={e=>setTtsTone(e.target.value)} style={{...inp,marginBottom:"8px",fontSize:"11px"}}>
+                <option value="natural">Natural conversation</option>
+                <option value="happy">Happy / cheerful</option>
+                <option value="sad">Sad / disappointed</option>
+                <option value="afraid">Afraid / worried</option>
+                <option value="angry">Angry / upset</option>
+                <option value="excited">Excited</option>
+                <option value="funny">Funny / light laughter</option>
+                <option value="calm">Calm / clear</option>
+              </select>
+              <div style={{fontSize:"10px",color:"#6b21a8",margin:"-3px 0 8px",fontFamily:F}}>Multi‑Voice works best when the script uses labels like Dad:, Mom:, Boy:, Girl:, Speaker A:, Speaker B:</div>
               <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
               <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Creating MP3…":"✨ Generate AI MP3 Voice"}</Btn>
               {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
