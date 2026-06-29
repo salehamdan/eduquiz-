@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- PROJECTS_CLASSMATE_COPY_CHECK_20260629 -->
 <!-- READING_PASSAGE_STUDENT_VISIBLE_FAB_HIDE_20260629 -->
 <!-- READING_TIME_AUTO_MANUAL_SUBMIT_ONLY_20260629 -->
 <!-- AI_READING_GENERATOR_SAFE_20260629 -->
@@ -487,15 +488,15 @@ async function fsDel(col, id) {
 }
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings")
+  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions")
   ]);
   const users = ensureProtectedStudents(mergePreloadedRows(usersRaw, PRELOADED_USERS));
   const classes = normalizeClassRows(mergePreloadedRows(classesRaw, PRELOADED_CLASSES));
   // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
   const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings};
+  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions};
 }
 
 // Session (this device only)
@@ -2883,6 +2884,313 @@ function ReviewModal({response, quiz, open, onClose}) {
   );
 }
 
+
+// ── PROJECTS ADDON V1: Project assessments, submissions, AI review, Gradebook approval ──
+const PROJECT_TYPES = [
+  "Short Research Project","Presentation","Poster / Infographic","Writing Report","Vocabulary Project","Reading Response","Speaking / Video Project","Free Project"
+];
+function projectRubricFor(type){
+  if(type==="Reading Response") return [
+    {key:"understanding",label:"Understanding the Reading",points:3,student:"Show that you understood the main idea and important details."},
+    {key:"personal",label:"Personal Response",points:2,student:"Give your opinion, feeling, or reaction clearly."},
+    {key:"evidence",label:"Evidence from Text",points:2,student:"Support your answer with examples or details from the reading."},
+    {key:"organization",label:"Organization",points:1,student:"Make your response organized and easy to follow."},
+    {key:"language",label:"Language",points:2,student:"Use clear sentences with acceptable grammar and spelling."}
+  ];
+  return [
+    {key:"content",label:"Content",points:3,student:"Your project is related to the topic and gives enough clear information."},
+    {key:"organization",label:"Organization",points:2,student:"Your work is organized with clear parts such as title, introduction, body, and conclusion when needed."},
+    {key:"language",label:"Language",points:2,student:"Your English is clear with acceptable grammar, spelling, and sentence structure."},
+    {key:"requirements",label:"Requirements",points:2,student:"You followed the teacher's instructions and included the required parts."},
+    {key:"creativity",label:"Creativity",points:1,student:"Your work shows effort, examples, suitable design, or a personal touch."}
+  ];
+}
+function projectMaxScore(p){ return Math.max(1, Number(p && p.maxScore)||10); }
+function projectAssignedToStudent(p, student){
+  if(!p || !student) return false;
+  if(p.status==="deleted") return false;
+  if(p.assignMode==="student") return (p.studentIds||[]).includes(student.id);
+  if(p.assignMode==="class") return (p.classIds||[]).some(cid=>sameClassId(cid, student.classId));
+  return true;
+}
+function projectTargetStudents(p, students){ return (students||[]).filter(s=>projectAssignedToStudent(p,s)); }
+function projectDateStatus(p){
+  const now=new Date();
+  const start=p&&p.startDate?new Date(p.startDate+"T00:00:00"):null;
+  const end=p&&p.endDate?new Date(p.endDate+"T23:59:59"):null;
+  if(start && now<start) return "not_started";
+  if(end && now>end) return "ended";
+  return "open";
+}
+function projectSubmissionMatchesStudent(sub, st){ return sub && st && (String(sub.studentId||"")===String(st.id)||String(sub.studentNumber||"")===String(st.studentId||"")); }
+function projectSubmissionsForStudent(list, projectId, st){ return (list||[]).filter(s=>String(s.projectId)===String(projectId)&&projectSubmissionMatchesStudent(s,st)).sort((a,b)=>(b.attempt||0)-(a.attempt||0)||String(b.submittedAt||"").localeCompare(String(a.submittedAt||""))); }
+function projectAllowedToResubmit(p, st, subs){
+  const latest=projectSubmissionsForStudent(subs,p.id,st)[0];
+  if(!latest) return false;
+  if(latest.status==="resubmit_allowed") return true;
+  return (p.resubmitStudentIds||[]).includes(st.id) || (p.resubmitClassIds||[]).some(cid=>sameClassId(cid,st.classId));
+}
+function projectSimilarityThreshold(rule){
+  if(rule==="strict") return 75;
+  if(rule==="lenient") return 90;
+  return 85;
+}
+function projectNormalizeText(t){
+  return String(t||"").toLowerCase()
+    .replace(/[إأآا]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[ؤئ]/g,"ء")
+    .replace(/[^a-z0-9\u0600-\u06ff\s]+/g," ")
+    .replace(/\s+/g," ").trim();
+}
+function projectUsefulWords(t){
+  const stop={the:1,a:1,an:1,and:1,or:1,to:1,of:1,in:1,on:1,for:1,is:1,are:1,was:1,were:1,be:1,with:1,this:1,that:1,it:1,as:1,by:1,from:1,at:1,عن:1,في:1,من:1,الى:1,إلى:1,على:1,و:1,او:1,أو:1,هو:1,هي:1,هذا:1,هذه:1,ان:1,أن:1};
+  return projectNormalizeText(t).split(" ").filter(w=>w && w.length>2 && !stop[w]);
+}
+function projectNgrams(words,n){
+  const arr=[]; for(let i=0;i<=words.length-n;i++) arr.push(words.slice(i,i+n).join(" ")); return arr;
+}
+function projectSimilarityScore(a,b){
+  const wa=projectUsefulWords(a), wb=projectUsefulWords(b);
+  if(wa.length<18 || wb.length<18) return 0;
+  const sa=new Set(wa), sb=new Set(wb);
+  let inter=0; sa.forEach(x=>{if(sb.has(x)) inter++;});
+  const wordDice=(2*inter)/(sa.size+sb.size||1);
+  const na=new Set(projectNgrams(wa,4)), nb=new Set(projectNgrams(wb,4));
+  let ninter=0; na.forEach(x=>{if(nb.has(x)) ninter++;});
+  const gramDice=(2*ninter)/(na.size+nb.size||1);
+  return Math.round(Math.max(wordDice*100, gramDice*100));
+}
+function projectSimilarityEvidence(a,b){
+  const wa=projectUsefulWords(a), wb=projectUsefulWords(b);
+  for(let n=16;n>=8;n--){
+    const nb=new Set(projectNgrams(wb,n));
+    for(const g of projectNgrams(wa,n)){
+      if(nb.has(g)) return g.split(" ").slice(0,32).join(" ");
+    }
+  }
+  const nb6=new Set(projectNgrams(wb,6));
+  const hit=projectNgrams(wa,6).find(x=>nb6.has(x));
+  return hit||"Similar wording and repeated phrases were found.";
+}
+function projectCheckCopiedFromClassmate({project, submissions, currentStudent, currentText}){
+  const text=String(currentText||"").trim();
+  if(projectNormalizeText(text).length<120) return null;
+  const threshold=projectSimilarityThreshold(project && project.similarityRule);
+  let best=null;
+  (submissions||[]).forEach(s=>{
+    if(String(s.projectId)!==String(project.id)) return;
+    if(String(s.studentId||"")===String(currentStudent.id||"")) return;
+    if(["submitted","ai_corrected","approved","resubmit_allowed"].indexOf(s.status)<0) return;
+    const otherText=String(s.text||s.fileText||"").trim();
+    if(projectNormalizeText(otherText).length<120) return;
+    const score=projectSimilarityScore(text, otherText);
+    if(!best || score>best.score){
+      best={score,threshold,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",evidenceCurrent:projectSimilarityEvidence(text, otherText),evidenceMatched:projectSimilarityEvidence(otherText, text),matchedSubmissionId:s.id};
+    }
+  });
+  if(best && best.score>=threshold) return {...best,blocked:true,checkedAt:new Date().toISOString()};
+  if(best && best.score>=70) return {...best,blocked:false,checkedAt:new Date().toISOString()};
+  return null;
+}
+async function projectUploadFile(file, projectId, studentId){
+  if(!file) return {url:"",name:"",size:0,type:""};
+  const meta={name:file.name,size:file.size,type:file.type||""};
+  if(FIREBASE_OK && storage && storage.ref){
+    const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
+    const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
+    const ref=storage.ref().child(path);
+    await ref.put(file,{contentType:file.type||"application/octet-stream"});
+    meta.url=await ref.getDownloadURL();
+    meta.path=path;
+  }
+  return meta;
+}
+function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+": "+x.points+" marks. "+(x.student||"")).join("\n"); }
+async function aiCorrectProjectSubmission({project, submission, student}){
+  let apiKey=getAIKey();
+  if(!apiKey){ apiKey=await loadAIKeyFromCloud(); if(apiKey) setAIKey(apiKey); }
+  if(!apiKey) throw new Error("No AI key found. Save the Claude AI key first.");
+  const rubric=project.rubric||projectRubricFor(project.type);
+  const submittedText=String(submission.text || submission.fileText || "").trim();
+  if(!submittedText){
+    throw new Error("AI cannot read this submission content. Use Manual Grade, or ask the student to submit text/readable file.");
+  }
+  const prompt = `You are an English teacher assistant. Grade this student project strictly using the teacher's project type, instructions, and rubric.\n\nProject title: ${project.title}\nProject type: ${project.type}\nMax score: ${projectMaxScore(project)}\nTeacher instructions:\n${project.instructions||"No extra instructions."}\n\nRubric:\n${projectRubricText(rubric)}\n\nStudent name: ${student?student.name:(submission.studentName||"Student")}\nSubmission mode: ${submission.submissionMode||"text"}\nStudent submission:\n${submittedText.slice(0,12000)}\n\nReturn ONLY valid JSON in this exact format:\n{"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"2-3 short friendly sentences for the student","teacherNote":"short note for teacher about missing requirements or concerns"}\nUse decimal scores if needed. Do not exceed each criterion max. Requirements must be judged against the teacher instructions.`;
+  const resp = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:1400,temperature:0.2,messages:[{role:"user",content:prompt}]})
+  });
+  const json=await resp.json().catch(()=>null);
+  if(!resp.ok) throw new Error((json&&json.error&&json.error.message)||("AI correction failed: "+resp.status));
+  let text=(json.content&&json.content[0]&&json.content[0].text)||"";
+  text=text.replace(/```json/g,"").replace(/```/g,"").trim();
+  const start=text.indexOf("{"); const end=text.lastIndexOf("}"); if(start>=0&&end>start) text=text.slice(start,end+1);
+  const parsed=eqParseJsonObject(text);
+  const total=projectMaxScore(project);
+  const score=Math.max(0,Math.min(total,Number(parsed.score)||0));
+  return {...parsed,score,total,correctedAt:new Date().toISOString(),source:"ai"};
+}
+function ProjectRubricView({type, compact}){
+  const rub=projectRubricFor(type);
+  return <div style={{background:compact?"#f8fafc":"#eff6ff",border:"1px solid "+(compact?C.br:"#bfdbfe"),borderRadius:"10px",padding:"10px",marginTop:"8px"}}>
+    <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>📌 Rubric / معايير الدرجة — 10 Marks</div>
+    {rub.map(r=><div key={r.key} style={{display:"flex",gap:"8px",padding:"5px 0",borderBottom:"1px solid "+C.br+"80"}}>
+      <div style={{width:"40px",fontWeight:"900",color:C.p,fontSize:"12px",fontFamily:F}}>{r.points}</div>
+      <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F}}>{r.label}</div>{!compact&&<div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{r.student}</div>}</div>
+    </div>)}
+  </div>;
+}
+function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,editProject}){
+  const E=editProject||{};
+  const [title,setTitle]=useState(E.title||"Project 1");
+  const [type,setType]=useState(E.type||"Short Research Project");
+  const [assignMode,setAssignMode]=useState(E.assignMode||"all");
+  const [classIds,setClassIds]=useState(E.classIds||[]);
+  const [studentIds,setStudentIds]=useState(E.studentIds||[]);
+  const [submissionType,setSubmissionType]=useState(E.submissionType||"bothChoice");
+  const [similarityRule,setSimilarityRule]=useState(E.similarityRule||"normal");
+  const [startDate,setStartDate]=useState(E.startDate||"");
+  const [endDate,setEndDate]=useState(E.endDate||"");
+  const [instructions,setInstructions]=useState(E.instructions||"");
+  const [msg,setMsg]=useState("");
+  const [studentFilter,setStudentFilter]=useState("");
+  const input={width:"100%",padding:"10px 12px",borderRadius:"9px",border:"1px solid "+C.br,fontSize:"13px",fontFamily:F,boxSizing:"border-box",background:"#fff",color:C.tx};
+  const filteredStudents=myStudents.filter(s=>!studentFilter||s.name.toLowerCase().includes(studentFilter.toLowerCase())||String(s.studentId||"").includes(studentFilter));
+  function toggle(arr,val,setter){ setter(arr.includes(val)?arr.filter(x=>x!==val):arr.concat(val)); }
+  async function save(){
+    if(!title.trim()){setMsg("Add project name.");return;}
+    if(assignMode==="class"&&!classIds.length){setMsg("Choose at least one class.");return;}
+    if(assignMode==="student"&&!studentIds.length){setMsg("Choose at least one student.");return;}
+    const id=E.id||uid();
+    const p={id,teacherId:user.id,title:title.trim(),type,maxScore:10,assignMode,classIds:assignMode==="class"?classIds:[],studentIds:assignMode==="student"?studentIds:[],submissionType,similarityRule,startDate,endDate,instructions:instructions.trim(),rubric:projectRubricFor(type),status:E.status||"open",createdAt:E.createdAt||today(),updatedAt:today()};
+    await fsSet("projects",id,p);
+    setMsg("✅ Project saved.");
+    await onSaved();
+  }
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+      <strong style={{color:"#fff",fontSize:"14px",fontFamily:F}}>{E.id?"✏️ Edit Project":"➕ New Project"}</strong>
+      <p style={{margin:"4px 0 0",color:C.mu,fontSize:"11px",fontFamily:F}}>Project score is 10. Grades enter Gradebook only after teacher approval.</p>
+    </Card>
+    {msg&&<div style={{background:msg.startsWith("✅")?"#f0fdf4":"#fef2f2",border:"1px solid "+(msg.startsWith("✅")?"#86efac":"#fca5a5"),borderRadius:"9px",padding:"9px",fontSize:"12px",marginBottom:"9px",color:msg.startsWith("✅")?"#166534":"#991b1b",fontFamily:F}}>{msg}</div>}
+    <Card style={{marginBottom:"10px"}}>
+      <Label text="Project Name"/><input value={title} onChange={e=>setTitle(e.target.value)} style={input}/>
+      <Label text="Project Type"/><select value={type} onChange={e=>setType(e.target.value)} style={input}>{PROJECT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select>
+      <ProjectRubricView type={type}/>
+      <Label text="Submission Type"/><select value={submissionType} onChange={e=>setSubmissionType(e.target.value)} style={input}>
+        <option value="file">Upload File only</option><option value="text">Write Text only</option><option value="bothChoice">Both: student chooses one</option>
+      </select>
+      <Label text="Similarity Check / كشف النسخ من طالب آخر"/><select value={similarityRule} onChange={e=>setSimilarityRule(e.target.value)} style={input}>
+        <option value="normal">Normal — block at 85%</option><option value="strict">Strict — block at 75%</option><option value="lenient">Lenient — block at 90%</option>
+      </select>
+      <div style={{fontSize:"10px",color:C.mu,marginTop:"4px",fontFamily:F}}>Checks this project against other student submissions before accepting. It shows evidence and blocks high similarity.</div>
+      <Label text="Start Date"/><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={input}/>
+      <Label text="End Date"/><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={input}/>
+      <Label text="Project Instructions / تعليمات المشروع"/><textarea value={instructions} onChange={e=>setInstructions(e.target.value)} placeholder="Write clear requirements. AI will use these instructions when grading." style={{...input,minHeight:"110px",resize:"vertical"}}/>
+    </Card>
+    <Card style={{marginBottom:"10px"}}>
+      <Label text="Assign To"/><select value={assignMode} onChange={e=>setAssignMode(e.target.value)} style={input}><option value="all">All Classes</option><option value="class">One Class / Selected Classes</option><option value="student">One Student / Selected Students</option></select>
+      {assignMode==="class"&&<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>{myClasses.map(c=><button key={c.id} onClick={()=>toggle(classIds,c.id,setClassIds)} style={{padding:"7px 11px",borderRadius:"999px",border:"2px solid "+(classIds.includes(c.id)?C.p:C.br),background:classIds.includes(c.id)?C.p:"#fff",color:classIds.includes(c.id)?"#fff":C.tx,fontSize:"11px",fontWeight:"800",fontFamily:F}}>{classIds.includes(c.id)?"✓ ":""}{c.name}</button>)}</div>}
+      {assignMode==="student"&&<div style={{marginTop:"8px"}}><input value={studentFilter} onChange={e=>setStudentFilter(e.target.value)} placeholder="Search student" style={{...input,marginBottom:"8px"}}/><div style={{maxHeight:"210px",overflowY:"auto",display:"grid",gap:"5px"}}>{filteredStudents.map(s=>{const cls=data.classes.find(c=>c.id===s.classId);const on=studentIds.includes(s.id);return <button key={s.id} onClick={()=>toggle(studentIds,s.id,setStudentIds)} style={{textAlign:"left",padding:"8px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",fontFamily:F}}><b style={{fontSize:"12px",color:on?C.p:C.tx}}>{on?"✓ ":""}{s.name}</b><span style={{fontSize:"10px",color:C.mu}}> #{s.studentId} · {cls?cls.name:""}</span></button>})}</div></div>}
+    </Card>
+    <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
+  </div>;
+}
+function StudentProjects({user,data,reload}){
+  const [openProject,setOpenProject]=useState(null);
+  const [mode,setMode]=useState("text");
+  const [text,setText]=useState("");
+  const [file,setFile]=useState(null);
+  const [msg,setMsg]=useState("");
+  const projects=(data.projects||[]).filter(p=>projectAssignedToStudent(p,user)).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  const submissions=data.projectSubmissions||[];
+  const input={width:"100%",padding:"10px 12px",borderRadius:"9px",border:"1px solid "+C.br,fontSize:"13px",fontFamily:F,boxSizing:"border-box",background:"#fff",color:C.tx};
+  async function submitProject(p){
+    setMsg("");
+    const dstat=projectDateStatus(p);
+    if(dstat==="not_started"){setMsg("Project submission has not started yet.");return;}
+    if(dstat==="ended"&&!projectAllowedToResubmit(p,user,submissions)){setMsg("Project submission time has ended.");return;}
+    const submitMode = p.submissionType==="bothChoice" ? mode : (p.submissionType==="file"?"file":"text");
+    if(submitMode==="text"&&!text.trim()){setMsg("Write your project text first.");return;}
+    if(submitMode==="file"&&!file){setMsg("Choose a file first.");return;}
+    let fileMeta={}; let fileText="";
+    if(submitMode==="file"&&file){
+      try{ fileText=(await extractFileText(file)||"").trim().slice(0,12000); }catch(e){ fileText=""; }
+    }
+    const currentProjectText = submitMode==="text" ? text.trim() : fileText;
+    const copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
+    if(copyCheck && copyCheck.blocked){
+      setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
+      return;
+    }
+    if(submitMode==="file"&&file){
+      try{ fileMeta=await projectUploadFile(file,p.id,user.id); }catch(e){ fileMeta={name:file.name,size:file.size,type:file.type||"",uploadError:e.message||String(e)}; }
+    }
+    const old=projectSubmissionsForStudent(submissions,p.id,user);
+    const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
+    const id=uid();
+    await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+    setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
+  }
+  if(openProject){
+    const p=openProject; const dstat=projectDateStatus(p); const mine=projectSubmissionsForStudent(submissions,p.id,user); const latest=mine[0]; const canResubmit=projectAllowedToResubmit(p,user,submissions); const disabled=(dstat!=="open"&&!canResubmit);
+    const submitMode = p.submissionType==="bothChoice" ? mode : (p.submissionType==="file"?"file":"text");
+    return <div>
+      <button onClick={()=>setOpenProject(null)} style={{background:"none",border:"none",fontSize:"20px",color:C.mu,marginBottom:"8px"}}>←</button>
+      <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px",fontFamily:F}}>{p.title}</strong><p style={{margin:"5px 0 0",fontSize:"11px",color:C.mu,fontFamily:F}}>{p.type} · 10 marks · {p.startDate||"No start"} → {p.endDate||"No end"}</p></Card>
+      {disabled&&<Card style={{marginBottom:"10px",background:dstat==="not_started"?"#fffbeb":"#fef2f2",border:"1px solid "+(dstat==="not_started"?"#fbbf24":"#fecaca")}}><b style={{fontSize:"12px",color:dstat==="not_started"?"#92400e":C.d,fontFamily:F}}>{dstat==="not_started"?"Project submission has not started yet.":"Project submission time has ended."}</b></Card>}
+      <Card style={{marginBottom:"10px"}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Instructions</b><div style={{whiteSpace:"pre-wrap",fontSize:"12px",color:C.tx,marginTop:"6px",fontFamily:F}}>{p.instructions||"No extra instructions."}</div><ProjectRubricView type={p.type}/></Card>
+      {latest&&<Card style={{marginBottom:"10px",background:latest.status==="approved"?"#f0fdf4":"#f8fafc",border:"1px solid "+(latest.status==="approved"?"#86efac":C.br)}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Last submission</b><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>Attempt {latest.attempt} · {latest.status} · {latest.submittedAt}</div>{latest.finalScore!=null&&<div style={{fontSize:"16px",fontWeight:"900",color:gc(latest.finalScore*10),fontFamily:F}}>Score: {latest.finalScore}/10</div>}{latest.teacherFeedback&&<div style={{fontSize:"12px",color:C.tx,marginTop:"5px",fontFamily:F}}>Feedback: {latest.teacherFeedback}</div>}</Card>}
+      {!disabled&&(!latest||canResubmit)&&<Card>
+        {p.submissionType==="bothChoice"&&<><Label text="Choose one submission method"/><div style={{display:"flex",gap:"8px",marginBottom:"10px"}}><button onClick={()=>setMode("text")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="text"?C.p:C.br),background:mode==="text"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>Write Text</button><button onClick={()=>setMode("file")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="file"?C.p:C.br),background:mode==="file"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>Upload File</button></div></>}
+        {submitMode==="text"?<><Label text="Write your project here"/><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical"}}/></>:<><Label text="Upload your project file"/><input type="file" onChange={e=>setFile(e.target.files&&e.target.files[0])} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>AI can grade readable text files best. PDF/Word may need teacher review if text cannot be extracted.</div></>}
+        {msg&&<div style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d,fontWeight:"800",margin:"8px 0",fontFamily:F}}>{msg}</div>}
+        <Btn color={C.p} onClick={()=>submitProject(p)} style={{width:"100%",marginTop:"10px"}}>Submit Project</Btn>
+      </Card>}
+    </div>;
+  }
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px",fontFamily:F}}>🧩 Projects</strong><p style={{margin:"4px 0 0",fontSize:"11px",color:C.mu,fontFamily:F}}>Submit projects and check teacher feedback.</p></Card>
+    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects assigned yet.</p></Card>:projects.map(p=>{const st=projectDateStatus(p);const mine=projectSubmissionsForStudent(submissions,p.id,user);const latest=mine[0];return <Card key={p.id} style={{marginBottom:"8px",border:"1px solid "+(st==="open"?C.br:st==="ended"?"#fecaca":"#fde68a")}}><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{fontSize:"23px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {p.startDate||"—"} → {p.endDate||"—"}</div>{latest&&<div style={{fontSize:"10px",fontWeight:"800",color:latest.status==="approved"?C.s:C.w,fontFamily:F}}>Attempt {latest.attempt} · {latest.status}{latest.finalScore!=null?" · "+latest.finalScore+"/10":""}</div>}</div><Btn size="sm" color={st==="open"?C.p:C.mu} onClick={()=>{setOpenProject(p);setMode(p.submissionType==="file"?"file":"text");setMsg("");}}>Open</Btn></div></Card>})}
+  </div>;
+}
+function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
+  const [screen,setScreen]=useState("list");
+  const [editProject,setEditProject]=useState(null);
+  const [fClass,setFClass]=useState("all");
+  const [fProject,setFProject]=useState("all");
+  const [fStatus,setFStatus]=useState("all");
+  const [msg,setMsg]=useState("");
+  const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  const subs=(data.projectSubmissions||[]).filter(s=>projects.some(p=>p.id===s.projectId));
+  const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
+  async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; await fsSet("projects",p.id,{...p,status:"deleted",updatedAt:today()}); await reload(); }
+  async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); await fsSet("projectSubmissions",s.id,{...s,aiReview:review,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg("✅ AI correction ready. Review and approve."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
+  async function approve(p,s,score,feedback){
+    const finalScore=Math.max(0,Math.min(10,Number(score)||0));
+    const gbId="project_grade_"+p.id;
+    const q={id:gbId,code:"PRJ"+String(p.id).slice(-4).toUpperCase(),teacherId:user.id,title:p.title,type:"Project",difficulty:"Project",subject:"Project",classIds:p.assignMode==="class"?p.classIds:[],assignedStudents:p.assignMode==="student"?p.studentIds:[],status:"closed",questions:[{id:1,text:p.title,options:["Project"],correct:0,skill:"Project",difficulty:"Project"}],mode:"normal",masteryThreshold:60,importedIncludeInAverage:true,projectId:p.id,createdAt:p.createdAt||today(),updatedAt:today()};
+    await fsSet("quizzes",gbId,q);
+    const respId="project_response_"+s.id;
+    await fsSet("responses",respId,{id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:new Date().toISOString()});
+    await fsSet("projectSubmissions",s.id,{...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    setMsg("✅ Approved and added to Gradebook."); await reload();
+  }
+  async function manualGrade(p,s){ const v=prompt("Final score out of 10:", s.finalScore!=null?s.finalScore:(s.aiReview&&s.aiReview.score)||""); if(v===null)return; const fb=prompt("Feedback for student:", s.teacherFeedback || (s.aiReview&&s.aiReview.studentFeedback)||"")||""; await approve(p,s,v,fb); }
+  async function allowResubmit(p,s){ await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); setMsg("✅ Resubmission allowed for "+(s.studentName||"student")); await reload(); }
+  if(screen==="create"||screen==="edit") return <ProjectCreateForm user={user} data={data} myClasses={myClasses} myStudents={myStudents} editProject={screen==="edit"?editProject:null} onSaved={async()=>{await reload();setScreen("list");setEditProject(null);}} onCancel={()=>{setScreen("list");setEditProject(null);}}/>;
+  return <div>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}><div><strong style={{color:"#fff",fontSize:"14px",fontFamily:F}}>🧩 Projects</strong><p style={{margin:"4px 0 0",color:C.mu,fontSize:"11px",fontFamily:F}}>10-mark project assessments · AI suggests · teacher approves · Gradebook after approval.</p></div><Btn color={C.s} onClick={()=>setScreen("create")}>+ Project</Btn></div></Card>
+    {msg&&<div style={{background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("⏳")?"#eff6ff":"#fef2f2",border:"1px solid "+(msg.startsWith("✅")?"#86efac":msg.startsWith("⏳")?"#93c5fd":"#fca5a5"),borderRadius:"9px",padding:"9px",fontSize:"12px",marginBottom:"9px",whiteSpace:"pre-wrap",fontFamily:F}}>{msg}</div>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"10px"}}><Stat icon="🧩" label="Projects" value={projects.length} color={C.p}/><Stat icon="📥" label="Submitted" value={subs.length} color={C.s}/><Stat icon="⏳" label="Need Approval" value={subs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length} color={C.w}/><Stat icon="✅" label="Approved" value={subs.filter(s=>s.status==="approved").length} color={C.s}/></div>
+    <Card style={{marginBottom:"10px"}}><div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><select value={fProject} onChange={e=>setFProject(e.target.value)} style={{flex:2,minWidth:"150px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}</select><select value={fClass} onChange={e=>setFClass(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Classes</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Status</option><option value="submitted">Submitted</option><option value="ai_corrected">AI Corrected</option><option value="approved">Approved</option><option value="resubmit_allowed">Resubmission Allowed</option></select></div></Card>
+    <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
+    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
+    <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>AI Correct</Btn><Btn size="sm" color={C.s} onClick={()=>approve(p,s,(ai&&ai.score)||s.finalScore||0,(ai&&ai.studentFeedback)||s.teacherFeedback||"")}>Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn></div></Card>})}
+  </div>;
+}
+
 function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
   const [tab,setTab] = useState("home");
   const [taking,setTaking] = useState(directQuiz||null);
@@ -2918,7 +3226,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     return <TakeComponent quiz={taking} student={user} allResponses={data.responses} onSaved={reload} onDone={()=>{setTaking(null);if(clearDirect)clearDirect();}}/>;
   }
 
-  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"reading",icon:"📖",label:"Reading"},{id:"readingTheory",icon:"📚",label:"Theory"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
+  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"projects",icon:"🧩",label:"Projects"},{id:"reading",icon:"📖",label:"Reading"},{id:"readingTheory",icon:"📚",label:"Theory"},{id:"progress",icon:"📈",label:"Progress"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -2971,6 +3279,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
 
         {tab==="reading" && <ReadingProgressStudent user={user} data={data} reload={reload}/>}
         {tab==="readingTheory" && <ReadingTheoryStudent user={user} data={data} reload={reload}/>}
+        {tab==="projects" && <StudentProjects user={user} data={data} reload={reload}/>}
 
         {tab==="progress" && <div>
           {myResps.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>Complete quizzes to see progress.</p></Card>:<>
@@ -5892,7 +6201,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       let sum=0,cnt=0;
       qs.forEach(q=>{
         const rs=responsesForStudent(data.responses,s).filter(r=>r.quizId===q.id);
-        if(rs.length){ const best=Math.max(...rs.map(r=>pct(r.score,r.totalQ))); row.push(best); if(q.importedIncludeInAverage!==false){sum+=best; cnt++;} }
+        if(rs.length){ const best=Math.max(...rs.map(r=>q.type==="Project"?(Number(r.score)||0):pct(r.score,r.totalQ))); row.push(q.type==="Project"?best:best); if(q.importedIncludeInAverage!==false){sum+=(q.type==="Project"?best*10:best); cnt++;} }
         else row.push("");
       });
       row.push(cnt?Math.round(sum/cnt):"");
@@ -5970,7 +6279,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"projects",icon:"🧩",label:"Projects"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
@@ -6025,6 +6334,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="readingReport" && <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
+        {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
 
         {tab==="quizzes" && <div>
           {qDash ? (
@@ -6403,12 +6713,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       const cells=qs.map(q=>{
                         const rs=responsesForStudent(data.responses,s).filter(r=>r.quizId===q.id).sort((a,b)=>(a.ts||0)-(b.ts||0));
                         if(!rs.length) return {empty:true};
-                        const scores=rs.map(r=>pct(r.score,r.totalQ));
+                        const scores=rs.map(r=>q.type==="Project"?(Number(r.score)||0):pct(r.score,r.totalQ));
                         const best=Math.max(...scores);
                         const first=scores[0];
                         const improve=best-first;
-                        if(q.importedIncludeInAverage!==false){sum+=best;cnt++;}
-                        return {best,improve,attempts:rs.length,standalone:q.importedIncludeInAverage===false};
+                        if(q.importedIncludeInAverage!==false){sum+=(q.type==="Project"?best*10:best);cnt++;}
+                        return {best,improve,attempts:rs.length,standalone:q.importedIncludeInAverage===false,isProject:q.type==="Project"};
                       });
                       const avg=cnt?Math.round(sum/cnt):null;
                       return <tr key={s.id} style={{background:ri%2?"#fff":"#fcfcfd"}}>
@@ -6416,7 +6726,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                         {cells.map((c,i)=><td key={i} style={{padding:"6px 8px",textAlign:"center",borderBottom:"1px solid "+C.br}}>
                           {c.empty ? <span style={{color:"#cbd5e1",fontSize:"14px"}}>–</span> :
                             <div>
-                              <div style={{fontSize:"13px",fontWeight:"800",color:gc(c.best)}}>{c.best}%</div>
+                              <div style={{fontSize:"13px",fontWeight:"800",color:gc(c.isProject?c.best*10:c.best)}}>{c.isProject?(c.best+"/10"):(c.best+"%")}</div>
                               {c.improve>0 && <div style={{fontSize:"9px",color:C.s,fontWeight:"700"}}>↑+{c.improve}</div>}
                               {c.attempts>1 && c.improve===0 && <div style={{fontSize:"8px",color:C.mu}}>×{c.attempts}</div>}
                               {c.standalone && <div style={{fontSize:"8px",color:C.pu,fontWeight:"800"}}>📥 separate</div>}
@@ -8129,6 +8439,7 @@ setInterval(fab,1200);setTimeout(fab,1500);
 
 
 <!-- BUILD_READING_MODE_CHOICE_NORMAL_DEFAULT_20260629 -->
+<!-- BUILD_PROJECTS_V1_20260629 -->
 </body>
 </html>
 
