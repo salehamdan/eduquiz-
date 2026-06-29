@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- READING_PASSAGE_STUDENT_VISIBLE_FAB_HIDE_20260629 -->
 <!-- READING_TIME_AUTO_MANUAL_SUBMIT_ONLY_20260629 -->
 <!-- AI_READING_GENERATOR_SAFE_20260629 -->
 <!-- READING_NORMAL_MODE_NO_GAME_20260629 -->
@@ -2162,8 +2163,17 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       </div>}
 
       {gameIsReading && <div style={{padding:"12px 18px 0"}}>
-        <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"10px 12px",color:"#fff",fontFamily:F,fontSize:"12px",fontWeight:"800"}}>
+        <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"10px 12px",color:"#fff",fontFamily:F,fontSize:"12px",fontWeight:"800",marginBottom:"10px"}}>
           📖 Reading timer: {readingLeft>0?("Submit/save after "+fmt(readingLeft)):"Ready to save"}
+        </div>
+        <div style={{background:"rgba(255,255,255,0.96)",border:"1px solid rgba(255,255,255,0.25)",borderRadius:"14px",padding:"12px",fontFamily:F,maxHeight:"190px",overflowY:"auto",boxShadow:"0 10px 24px rgba(0,0,0,.16)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
+            <strong style={{fontSize:"14px",color:C.tx}}>📖 {quiz.title||"Reading Passage"}</strong>
+            <span style={{fontSize:"10px",fontWeight:"900",color:C.p,background:"#dbeafe",padding:"4px 8px",borderRadius:"999px"}}>{readingWordCount(quiz)} words</span>
+          </div>
+          <div style={{color:C.tx,fontSize:"13px",lineHeight:"1.8",textAlign:"justify"}}>
+            {String(quiz.passage||"").split("\n\n").map((p,i)=><p key={i} style={{margin:"0 0 9px"}}>{p}</p>)}
+          </div>
         </div>
       </div>}
 
@@ -2560,7 +2570,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                   {quiz.passage.split("\n\n").map((p,i)=><p key={i} style={{color:C.tx,fontSize:"14px",lineHeight:"1.9",margin:"0 0 11px",textAlign:"justify",fontFamily:F}}>{p}</p>)}
                 </div>}
           </Card>
-          <Btn size="lg" onClick={()=>{ if(quiz.type==="Reading" && readingLeft>0){setMErr("Please read the passage first. Questions open after "+fmt(readingLeft)+".");return;} setMErr(""); setTab("questions"); }} disabled={quiz.type==="Reading"&&readingLeft>0} style={{width:"100%"}}>{quiz.type==="Reading"&&readingLeft>0?"Wait "+fmt(readingLeft):"Answer Questions →"}</Btn>
+          <Btn size="lg" onClick={()=>{ setMErr(""); setTab("questions"); }} style={{width:"100%"}}>{quiz.type==="Reading"&&readingLeft>0?"Answer Questions now · Submit after "+fmt(readingLeft):"Answer Questions →"}</Btn>
         </div>}
 
         {tab==="questions" && <div>
@@ -8090,7 +8100,8 @@ async function aiMark(text,task,studentName,similarity){const local=localMark(te
 function box(a,stu){a=a||{};return'<div class="w12box" style="background:#f8fafc"><div class="w12grid"><div><b>Score</b><br><span style="font-size:24px;font-weight:900">'+esc(a.score!=null?a.score:"-")+' / '+esc(a.total||10)+'</span></div><div><b>Level / الوسام</b><br><span class="w12chip">'+esc(lvl(a.score).badge)+'</span></div><div><b>Sentences</b><br>'+esc(a.sentenceCount||0)+' / 6</div><div><b>Words</b><br>'+esc(a.wordCount||0)+'</div></div><div style="margin-top:10px"><b>Feedback:</b><br>'+esc(stu?(a.studentFeedback||a.feedback||""):(a.feedback||a.studentFeedback||""))+'</div>'+(!stu?'<div class="w12grid" style="margin-top:10px"><div><b>AI suspicion</b><br>'+esc(a.aiSuspicion||"Low")+'</div><div><b>Similarity</b><br>'+esc(a.similarity||0)+'%</div><div><b>Source</b><br>'+esc(a.source||"local")+'</div></div><div style="font-size:12px;color:#64748b;margin-top:8px">'+esc(a.teacherNote||"")+'</div>':'')+'</div>'}
 function panel(title){const old=document.getElementById("w12p");if(old)old.remove();const w=document.createElement("div");w.id="w12p";w.innerHTML='<div id="w12c"><div id="w12h"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — Sync Delete + Retake</div></div><button id="w12close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="w12b"></div></div>';document.body.appendChild(w);w.querySelector("#w12close").onclick=()=>w.remove();return w.querySelector("#w12b")}
 async function open(){if(teacher())return teacherPanel();if(student())return studentPanel();alert("Login first.")}
-function fab(){if(document.getElementById("w12fab"))return;if(!teacher()&&!student())return;const b=document.createElement("button");b.id="w12fab";b.innerHTML="✍️ Writing";b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui";b.onclick=open;document.body.appendChild(b)}
+function w12ShouldHideFab(){try{const txt=(document.getElementById("root")?.innerText||document.body.innerText||"");return /Question\s+\d+\s+of\s+\d+/i.test(txt)||txt.includes("Reading timer:")||txt.includes("Submit Quiz")||txt.includes("Create Quiz")||txt.includes("Take Quiz")||txt.includes("Listening Audio");}catch(e){return false}}
+function fab(){const ex=document.getElementById("w12fab");if(w12ShouldHideFab()){if(ex)ex.remove();return;}if(ex)return;if(!teacher()&&!student())return;const b=document.createElement("button");b.id="w12fab";b.innerHTML="✍️ Writing";b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui";b.onclick=open;document.body.appendChild(b)}
 async function teacherPanel(){const body=panel("✍️ Writing — Teacher");body.innerHTML='<div class="w12box">Loading...</div>';await load();body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="w12btn" data-t="students">Advanced Students</button><button class="w12btn" data-t="tasks">Writing Tasks</button><button class="w12btn" data-t="subs">Submissions</button><button class="w12btn" data-t="eval">Writing Evaluation</button><button class="w12btn" data-t="scores">Writing Scores</button><button class="w12btn" data-t="ai">AI Settings</button></div><div id="w12content"></div>';body.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>draw(b.dataset.t));draw("eval")}
 function draw(t){const el=document.getElementById("w12content");try{if(t==="students")return tabStudents(el);if(t==="tasks")return tabTasks(el);if(t==="subs")return tabSubs(el);if(t==="eval")return tabEval(el);if(t==="scores")return tabScores(el);if(t==="ai")return tabAI(el)}catch(e){el.innerHTML='<div class="w12box" style="color:#dc2626"><b>Tab error:</b><br>'+esc(e.message||e)+'</div>'}}
 function tabAI(el){el.innerHTML='<div class="w12box"><b>AI Settings</b><input id="w12ep" placeholder="https://your-worker.workers.dev" value="'+esc(DATA.settings.aiEndpoint||"")+'" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="w12saveep" class="w12btn" style="margin-top:8px;background:#2563eb;color:white">Save Worker Link</button></div>';el.querySelector("#w12saveep").onclick=async()=>{DATA.settings.aiEndpoint=el.querySelector("#w12ep").value.trim();await save();alert("Saved")}}
