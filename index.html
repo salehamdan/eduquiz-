@@ -7862,6 +7862,442 @@ setInterval(fab,1200);setTimeout(fab,1500);
 
 
 
+
+<!-- AI_READING_GENERATOR_ONE_SHOT_20260629 -->
+<script>
+(function(){
+  if(window.__AI_READING_GENERATOR_ONE_SHOT_20260629__) return;
+  window.__AI_READING_GENERATOR_ONE_SHOT_20260629__ = true;
+
+  var STORE_TOPICS = "eq_ai_reading_recent_short_topics_v1";
+  var STORE_DRAFTS = "eq_ai_reading_saved_drafts_v1";
+  var selectedTopic = "";
+  var suggestedTopics = [];
+  var lastGeneratedSets = [];
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g,function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function getKey(){
+    try{
+      if(typeof window.getAIKey === "function") return String(window.getAIKey() || "").trim();
+      return String(localStorage.getItem("eq_aikey") || localStorage.getItem("rp_openai_api_key") || "").trim();
+    }catch(e){ return ""; }
+  }
+  function readJson(key, fallback){
+    try{ return JSON.parse(localStorage.getItem(key) || ""); }catch(e){ return fallback; }
+  }
+  function writeJson(key, value){
+    try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
+  }
+  function recentTopics(){ return readJson(STORE_TOPICS, []); }
+  function addRecentTopic(t){
+    t = String(t || "").trim();
+    if(!t) return;
+    var arr = recentTopics().filter(function(x){ return String(x).toLowerCase() !== t.toLowerCase(); });
+    arr.unshift(t);
+    writeJson(STORE_TOPICS, arr.slice(0,60));
+  }
+  function wordCount(s){
+    return String(s||"").trim().split(/\s+/).filter(Boolean).length;
+  }
+  function setStatus(msg, kind){
+    var el = $("eqAIRStatus");
+    if(!el) return;
+    el.innerHTML = esc(msg || "");
+    el.style.color = kind === "bad" ? "#b91c1c" : (kind === "ok" ? "#047857" : "#475569");
+  }
+  function fallbackTopics(){
+    var base = [
+      "Smart Homes","Desert Animals","Healthy Habits","School Robots","Water Saving",
+      "Space Travel","Old Markets","Digital Money","Food Waste","Clean Energy",
+      "City Parks","Online Learning","Sea Life","Safe Driving","Green Schools",
+      "Morning Routines","Solar Power","Team Sports","Mobile Banking","Wild Birds",
+      "Family Meals","Public Libraries","Rainy Days","New Inventions","Healthy Sleep"
+    ];
+    var used = recentTopics().map(function(x){return String(x).toLowerCase();});
+    return base.filter(function(t){return used.indexOf(t.toLowerCase()) < 0;}).slice(0,10);
+  }
+  function cleanTitle(t){
+    t = String(t || "").replace(/^[\s\d\.\-\)\(]+/,"").replace(/["“”]/g,"").trim();
+    t = t.split(/\s+/).slice(0,4).join(" ");
+    return t;
+  }
+  function getSelectedQuestionTypes(){
+    var checked = Array.prototype.slice.call(document.querySelectorAll(".eqair-qtype:checked"));
+    return checked.map(function(x){return x.value;});
+  }
+  function levels(){
+    var out = [];
+    [1,2,3,4].forEach(function(n){
+      var cb = $("eqAIRLevel"+n);
+      if(cb && cb.checked){
+        out.push({
+          level:n,
+          label:cb.getAttribute("data-label") || ("Level "+n),
+          words:Math.max(40, parseInt(($("eqAIRWords"+n)||{}).value,10) || (n===1?80:n===2?120:n===3?170:230))
+        });
+      }
+    });
+    return out;
+  }
+  function questionCount(){
+    return Math.max(1, Math.min(20, parseInt(($("eqAIRQuestionCount")||{}).value,10) || 6));
+  }
+  function questionMode(){
+    var v = document.querySelector("input[name='eqairQuestionMode']:checked");
+    return v ? v.value : "auto";
+  }
+  function apiModel(){
+    return "gpt-4o-mini";
+  }
+  async function callOpenAI(prompt, temperature){
+    var key = getKey();
+    if(!key) throw new Error("AI key is missing.");
+    var res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+      body:JSON.stringify({
+        model:apiModel(),
+        temperature: typeof temperature === "number" ? temperature : 0.7,
+        messages:[
+          {role:"system", content:"You generate clean English reading materials for secondary school students. Return valid JSON only. No markdown."},
+          {role:"user", content:prompt}
+        ]
+      })
+    });
+    var txt = await res.text();
+    if(!res.ok) throw new Error("AI error "+res.status+": "+txt.slice(0,180));
+    var data = JSON.parse(txt);
+    return (((data.choices||[])[0]||{}).message||{}).content || "";
+  }
+  function extractJson(s){
+    s = String(s||"").trim();
+    s = s.replace(/^```json\s*/i,"").replace(/^```\s*/,"").replace(/```$/,"").trim();
+    var firstObj = s.indexOf("{"), firstArr = s.indexOf("[");
+    var start = -1;
+    if(firstObj >= 0 && firstArr >= 0) start = Math.min(firstObj, firstArr);
+    else start = Math.max(firstObj, firstArr);
+    if(start > 0) s = s.slice(start);
+    var lastObj = s.lastIndexOf("}"), lastArr = s.lastIndexOf("]");
+    var end = Math.max(lastObj, lastArr);
+    if(end >= 0) s = s.slice(0, end+1);
+    return JSON.parse(s);
+  }
+  async function suggestTopics(){
+    selectedTopic = "";
+    suggestedTopics = [];
+    renderTopics();
+    setStatus("Generating 10 short topics…", "");
+    var used = recentTopics().slice(0,30);
+    try{
+      var prompt = [
+        "Suggest exactly 10 short English reading titles for Saudi secondary students.",
+        "Rules:",
+        "- Each title must be 2 to 4 words only.",
+        "- Use textbook-style reading titles.",
+        "- Do not write long sentences.",
+        "- Do not explain the titles.",
+        "- Avoid repeated or very similar topics.",
+        "- Do not use these previous titles: "+JSON.stringify(used),
+        "Return JSON only in this format:",
+        "{\"topics\":[\"Smart Homes\",\"Desert Animals\"]}"
+      ].join("\n");
+      var raw = await callOpenAI(prompt, 0.85);
+      var obj = extractJson(raw);
+      suggestedTopics = (obj.topics || obj || []).map(cleanTitle).filter(Boolean).slice(0,10);
+      if(suggestedTopics.length < 10){
+        var more = fallbackTopics();
+        more.forEach(function(t){ if(suggestedTopics.length<10 && suggestedTopics.indexOf(t)<0) suggestedTopics.push(t); });
+      }
+      setStatus("Choose one short topic, then set level, words, questions, and question mode.", "ok");
+    }catch(e){
+      suggestedTopics = fallbackTopics();
+      setStatus("AI topics were not available, so I prepared safe short topics. You can still continue.", "bad");
+    }
+    renderTopics();
+  }
+  function fallbackPassage(topic, level, words){
+    var simple = "Many people are interested in "+topic.toLowerCase()+". It can be seen in daily life, school, work, and the community. Students can learn useful facts from this topic and connect them with their own lives. The topic also helps readers think about problems, choices, and possible solutions.";
+    var add = " In many countries, people discuss this subject because it affects the way they live and learn. It can make life easier when people use it wisely. However, it may also create challenges if people ignore safety, cost, or the needs of others. For students, reading about this topic is a good way to build vocabulary and understand new ideas.";
+    var adv = " The subject is also connected to social change, technology, and personal responsibility. A careful reader can compare advantages and disadvantages, identify the writer's main idea, and make reasonable inferences from details in the text.";
+    var txt = simple + (level>=2?add:"") + (level>=3?adv:"");
+    while(wordCount(txt) < words-10) txt += " This makes the topic useful for classroom discussion and critical thinking.";
+    return txt.split(/\s+/).slice(0, words).join(" ");
+  }
+  function makeFallbackQuestions(topic, count, mode, types){
+    var pool = types && types.length ? types : ["Main Idea","Detail","Vocabulary in Context","Inference","True / False","Best Title"];
+    var qs = [];
+    for(var i=0;i<count;i++){
+      var type = pool[i % pool.length];
+      if(type === "True / False"){
+        qs.push({type:type, question:"The passage discusses "+topic+".", options:["True","False"], answer:"True"});
+      }else if(type === "Vocabulary in Context"){
+        qs.push({type:type, question:"What does the word useful most nearly mean in the passage?", options:["helpful","dangerous","expensive","strange"], answer:"helpful"});
+      }else if(type === "Inference"){
+        qs.push({type:type, question:"What can the reader infer from the passage?", options:["The topic can affect people's lives.","The topic is never important.","Students should avoid reading.","There is only one opinion."], answer:"The topic can affect people's lives."});
+      }else if(type === "Best Title"){
+        qs.push({type:type, question:"What is the best title for the passage?", options:[topic,"A Difficult Test","A Long Trip","A Famous Player"], answer:topic});
+      }else{
+        qs.push({type:type, question:"What is the passage mainly about?", options:[topic,"A personal letter","A weather report","A sports result"], answer:topic});
+      }
+    }
+    return qs;
+  }
+  async function generateOneReading(levelObj, questionsOnly, existing){
+    var qMode = questionMode();
+    var qTypes = getSelectedQuestionTypes();
+    var qCount = questionCount();
+    if(qMode === "manual" && !qTypes.length) throw new Error("Choose at least one question type or switch to Auto.");
+    var typeInstruction = qMode === "auto"
+      ? "Question types: Auto. Choose a balanced set suitable for the level. Include main idea, detail, vocabulary in context, inference when appropriate."
+      : "Question types: Manual. Use only these selected types: "+qTypes.join(", ")+".";
+    if(questionsOnly && existing && existing.passage){
+      var promptQ = [
+        "Create a new set of reading comprehension questions for this passage.",
+        "Do not change the passage.",
+        "Title: "+selectedTopic,
+        "Level: "+levelObj.label,
+        "Number of questions: "+qCount,
+        typeInstruction,
+        "Use internationally appropriate reading-comprehension standards.",
+        "For multiple-choice questions, use options A-D.",
+        "For True/False questions, use True and False only.",
+        "Return JSON only:",
+        "{\"questions\":[{\"type\":\"Main Idea\",\"question\":\"...\",\"options\":[\"A\",\"B\",\"C\",\"D\"],\"answer\":\"...\"}]}",
+        "Passage:",
+        existing.passage
+      ].join("\n");
+      try{
+        var rawQ = await callOpenAI(promptQ, 0.75);
+        var objQ = extractJson(rawQ);
+        existing.questions = (objQ.questions || []).slice(0,qCount);
+        return existing;
+      }catch(e){
+        existing.questions = makeFallbackQuestions(selectedTopic, qCount, qMode, qTypes);
+        existing.note = "Questions fallback used because AI request failed.";
+        return existing;
+      }
+    }
+    var prompt = [
+      "Create one complete English reading passage and comprehension questions.",
+      "Topic title: "+selectedTopic,
+      "Level: "+levelObj.label,
+      "Word count: approximately "+levelObj.words+" words.",
+      "Number of questions: "+qCount,
+      typeInstruction,
+      "Rules:",
+      "- Keep the selected title short exactly as provided.",
+      "- Passage must match the level and word count.",
+      "- Do not repeat previous topic ideas.",
+      "- Use natural textbook-style English for secondary students.",
+      "- Questions must be high quality and matched to the passage.",
+      "- For multiple-choice questions, provide four options A-D.",
+      "- Include the correct answer for every question.",
+      "- Include question type for every question.",
+      "Return JSON only in this format:",
+      "{\"title\":\"Smart Homes\",\"level\":\"Level 1 Easy\",\"wordCount\":80,\"passage\":\"...\",\"questions\":[{\"type\":\"Main Idea\",\"question\":\"...\",\"options\":[\"...\",\"...\",\"...\",\"...\"],\"answer\":\"...\"}]}"
+    ].join("\n");
+    try{
+      var raw = await callOpenAI(prompt, 0.72);
+      var obj = extractJson(raw);
+      obj.title = obj.title || selectedTopic;
+      obj.level = obj.level || levelObj.label;
+      obj.wordCount = obj.wordCount || wordCount(obj.passage);
+      obj.questions = (obj.questions || []).slice(0,qCount);
+      return obj;
+    }catch(e){
+      var passage = fallbackPassage(selectedTopic, levelObj.level, levelObj.words);
+      return {
+        title:selectedTopic,
+        level:levelObj.label,
+        wordCount:wordCount(passage),
+        passage:passage,
+        questions:makeFallbackQuestions(selectedTopic, qCount, qMode, qTypes),
+        note:"Fallback used because AI request failed: "+String(e.message||e).slice(0,120)
+      };
+    }
+  }
+  async function generateReadings(){
+    if(!selectedTopic){ setStatus("Choose one topic first.", "bad"); return; }
+    var lvls = levels();
+    if(!lvls.length){ setStatus("Choose at least one level.", "bad"); return; }
+    addRecentTopic(selectedTopic);
+    lastGeneratedSets = [];
+    renderResults(true);
+    setStatus("Generating reading set…", "");
+    for(var i=0;i<lvls.length;i++){
+      setStatus("Generating "+lvls[i].label+"…", "");
+      var obj = await generateOneReading(lvls[i], false, null);
+      obj._levelObj = lvls[i];
+      lastGeneratedSets.push(obj);
+      renderResults(false);
+    }
+    setStatus("Done. You can regenerate questions only, copy, or save the draft.", "ok");
+  }
+  async function regenerateQuestions(index){
+    var item = lastGeneratedSets[index];
+    if(!item){ return; }
+    setStatus("Regenerating questions only for "+(item.level||"selected level")+"…", "");
+    var levelObj = item._levelObj || {level:index+1,label:item.level||("Level "+(index+1)),words:item.wordCount||120};
+    var updated = await generateOneReading(levelObj, true, item);
+    updated._levelObj = levelObj;
+    lastGeneratedSets[index] = updated;
+    renderResults(false);
+    setStatus("Questions regenerated. Passage unchanged.", "ok");
+  }
+  function copyAll(){
+    var txt = lastGeneratedSets.map(function(r,idx){
+      var qs = (r.questions||[]).map(function(q,i){
+        return (i+1)+". ["+(q.type||"Question")+"] "+(q.question||"")+"\nOptions: "+(q.options||[]).join(" | ")+"\nAnswer: "+(q.answer||"");
+      }).join("\n\n");
+      return "Title: "+(r.title||selectedTopic)+"\nLevel: "+(r.level||"")+"\nWords: "+(r.wordCount||wordCount(r.passage))+"\n\n"+(r.passage||"")+"\n\nQuestions:\n"+qs;
+    }).join("\n\n----------------------\n\n");
+    if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(function(){ setStatus("Copied.", "ok"); }); }
+    else setStatus("Copy is not available in this browser.", "bad");
+  }
+  function saveDraft(){
+    var drafts = readJson(STORE_DRAFTS, []);
+    drafts.unshift({id:"air_"+Date.now(),topic:selectedTopic,createdAt:new Date().toISOString(),sets:lastGeneratedSets});
+    writeJson(STORE_DRAFTS, drafts.slice(0,20));
+    setStatus("Saved locally in this browser.", "ok");
+  }
+  function renderTopics(){
+    var box = $("eqAIRTopics");
+    if(!box) return;
+    if(!suggestedTopics.length){
+      box.innerHTML = '<div class="eqair-empty">Press “Suggest 10 Topics” first.</div>';
+      return;
+    }
+    box.innerHTML = suggestedTopics.map(function(t){
+      var active = selectedTopic === t ? " active" : "";
+      return '<button type="button" class="eqair-topic'+active+'" data-topic="'+esc(t)+'">'+esc(t)+'</button>';
+    }).join("");
+    Array.prototype.slice.call(box.querySelectorAll(".eqair-topic")).forEach(function(btn){
+      btn.onclick = function(){
+        selectedTopic = btn.getAttribute("data-topic") || "";
+        renderTopics();
+        setStatus("Selected topic: "+selectedTopic, "ok");
+      };
+    });
+  }
+  function renderResults(loading){
+    var box = $("eqAIRResults");
+    if(!box) return;
+    if(loading){
+      box.innerHTML = '<div class="eqair-loading">Generating…</div>';
+      return;
+    }
+    if(!lastGeneratedSets.length){
+      box.innerHTML = '<div class="eqair-empty">No reading generated yet.</div>';
+      return;
+    }
+    box.innerHTML = lastGeneratedSets.map(function(r, idx){
+      var qs = (r.questions||[]).map(function(q,i){
+        var opts = (q.options||[]).map(function(o,j){
+          var label = ["A","B","C","D"][j] || String(j+1);
+          return '<li><b>'+label+'.</b> '+esc(o)+'</li>';
+        }).join("");
+        return '<div class="eqair-q"><div><b>'+(i+1)+'. '+esc(q.type||"Question")+'</b></div><div>'+esc(q.question||"")+'</div>'+(opts?'<ol>'+opts+'</ol>':'')+'<div class="eqair-answer">Answer: '+esc(q.answer||"")+'</div></div>';
+      }).join("");
+      return '<div class="eqair-card">'+
+        '<div class="eqair-card-head"><div><h3>'+esc(r.title||selectedTopic)+'</h3><p>'+esc(r.level||"")+' • '+esc(r.wordCount||wordCount(r.passage))+' words</p></div>'+
+        '<button type="button" class="eqair-small" data-regq="'+idx+'">Regenerate Questions Only</button></div>'+
+        (r.note?'<div class="eqair-note">'+esc(r.note)+'</div>':'')+
+        '<div class="eqair-passage">'+esc(r.passage||"").replace(/\n/g,"<br>")+'</div>'+
+        '<h4>Questions</h4>'+qs+
+      '</div>';
+    }).join("");
+    Array.prototype.slice.call(box.querySelectorAll("[data-regq]")).forEach(function(btn){
+      btn.onclick = function(){ regenerateQuestions(parseInt(btn.getAttribute("data-regq"),10)); };
+    });
+  }
+  function toggleManual(){
+    var manual = questionMode() === "manual";
+    var box = $("eqAIRManualTypes");
+    if(box) box.style.display = manual ? "grid" : "none";
+  }
+  function openModal(){
+    var m = $("eqAIRModal");
+    if(m) m.style.display = "flex";
+  }
+  function closeModal(){
+    var m = $("eqAIRModal");
+    if(m) m.style.display = "none";
+  }
+  function buildUI(){
+    if($("eqAIRButton")) return;
+    var style = document.createElement("style");
+    style.textContent = `
+      #eqAIRButton{position:fixed;right:14px;bottom:18px;z-index:9998;border:0;border-radius:999px;padding:13px 17px;background:#0f172a;color:#fff;font-weight:800;box-shadow:0 12px 30px rgba(15,23,42,.28);font-size:14px}
+      #eqAIRModal{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:none;align-items:center;justify-content:center;padding:10px}
+      .eqair-panel{width:min(980px,100%);max-height:92vh;overflow:auto;background:#f8fafc;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);border:1px solid #e2e8f0;color:#0f172a}
+      .eqair-head{position:sticky;top:0;background:#0f172a;color:#fff;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:14px 16px;z-index:1}
+      .eqair-head h2{margin:0;font-size:18px}.eqair-close{border:0;background:#334155;color:#fff;border-radius:10px;padding:8px 11px;font-weight:800}
+      .eqair-body{padding:14px}.eqair-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.eqair-section{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px}
+      .eqair-section h3{margin:0 0 8px;font-size:15px}.eqair-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+      .eqair-btn{border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:800;padding:10px 13px}.eqair-btn.secondary{background:#475569}.eqair-btn.good{background:#047857}
+      .eqair-topic{border:1px solid #cbd5e1;background:#f8fafc;border-radius:12px;padding:10px;text-align:left;font-weight:700}.eqair-topic.active{background:#dbeafe;border-color:#2563eb;color:#1d4ed8}
+      #eqAIRTopics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.eqair-empty,.eqair-loading{padding:12px;border:1px dashed #cbd5e1;border-radius:12px;color:#64748b;background:#f8fafc}
+      .eqair-level{display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;margin:6px 0}.eqair-level input[type=number],#eqAIRQuestionCount{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:8px}
+      #eqAIRManualTypes{display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}.eqair-check{display:flex;gap:6px;align-items:center;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:8px;font-size:13px}
+      #eqAIRStatus{font-weight:700;font-size:13px;min-height:20px}.eqair-card{background:#fff;border:1px solid #cbd5e1;border-radius:16px;padding:14px;margin-top:12px}
+      .eqair-card-head{display:flex;justify-content:space-between;gap:10px;align-items:start}.eqair-card h3{margin:0}.eqair-card p{margin:4px 0 0;color:#64748b}.eqair-small{border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;padding:9px 10px}
+      .eqair-passage{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;line-height:1.65;margin:10px 0;white-space:normal}.eqair-q{border-top:1px solid #e2e8f0;padding:10px 0}.eqair-q ol{margin:6px 0 0 20px;padding:0}.eqair-answer{color:#047857;font-weight:800;margin-top:5px}.eqair-note{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:10px;padding:8px;margin:8px 0;font-size:13px}
+      @media(max-width:760px){.eqair-grid{grid-template-columns:1fr}#eqAIRTopics,#eqAIRManualTypes{grid-template-columns:1fr}.eqair-card-head{display:block}.eqair-small{margin-top:8px;width:100%}#eqAIRButton{right:10px;bottom:12px}}
+    `;
+    document.head.appendChild(style);
+
+    var btn = document.createElement("button");
+    btn.id = "eqAIRButton";
+    btn.type = "button";
+    btn.textContent = "📖 AI Reading";
+    btn.onclick = openModal;
+    document.body.appendChild(btn);
+
+    var modal = document.createElement("div");
+    modal.id = "eqAIRModal";
+    modal.innerHTML = '<div class="eqair-panel">'+
+      '<div class="eqair-head"><h2>📖 AI Reading Generator</h2><button type="button" class="eqair-close" id="eqAIRClose">Close</button></div>'+
+      '<div class="eqair-body">'+
+        '<div class="eqair-grid">'+
+          '<div class="eqair-section"><h3>1) Suggest short topics</h3><div class="eqair-row"><button type="button" class="eqair-btn" id="eqAIRSuggest">Suggest 10 Topics</button><button type="button" class="eqair-btn secondary" id="eqAIRClearRecent">Clear Recent Topics</button></div><div id="eqAIRTopics"></div></div>'+
+          '<div class="eqair-section"><h3>2) Settings</h3>'+
+            '<div class="eqair-level"><label><input id="eqAIRLevel1" data-label="Level 1 Easy" type="checkbox" checked> Level 1 Easy</label><input id="eqAIRWords1" type="number" value="80"></div>'+
+            '<div class="eqair-level"><label><input id="eqAIRLevel2" data-label="Level 2 Basic" type="checkbox"> Level 2 Basic</label><input id="eqAIRWords2" type="number" value="120"></div>'+
+            '<div class="eqair-level"><label><input id="eqAIRLevel3" data-label="Level 3 Intermediate" type="checkbox"> Level 3 Intermediate</label><input id="eqAIRWords3" type="number" value="170"></div>'+
+            '<div class="eqair-level"><label><input id="eqAIRLevel4" data-label="Level 4 Advanced" type="checkbox"> Level 4 Advanced</label><input id="eqAIRWords4" type="number" value="230"></div>'+
+            '<div class="eqair-row"><label>Questions <input id="eqAIRQuestionCount" type="number" value="6" min="1" max="20" style="width:80px"></label></div>'+
+            '<div class="eqair-row"><label><input type="radio" name="eqairQuestionMode" value="auto" checked> Auto question types</label><label><input type="radio" name="eqairQuestionMode" value="manual"> Manual</label></div>'+
+            '<div id="eqAIRManualTypes">'+
+              ["Multiple Choice","True / False","Main Idea","Detail","Vocabulary in Context","Inference","Reference","Author’s Purpose","Sequencing","Summary / Best Title"].map(function(t){return '<label class="eqair-check"><input class="eqair-qtype" type="checkbox" value="'+esc(t)+'"> '+esc(t)+'</label>';}).join("")+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="eqair-section" style="margin-top:12px"><h3>3) Generate</h3><div class="eqair-row"><button type="button" class="eqair-btn good" id="eqAIRGenerate">Generate Passage + Questions</button><button type="button" class="eqair-btn secondary" id="eqAIRCopy">Copy All</button><button type="button" class="eqair-btn secondary" id="eqAIRSave">Save Local Draft</button></div><div id="eqAIRStatus"></div></div>'+
+        '<div id="eqAIRResults"></div>'+
+      '</div></div>';
+    document.body.appendChild(modal);
+
+    $("eqAIRClose").onclick = closeModal;
+    $("eqAIRSuggest").onclick = suggestTopics;
+    $("eqAIRGenerate").onclick = generateReadings;
+    $("eqAIRCopy").onclick = copyAll;
+    $("eqAIRSave").onclick = saveDraft;
+    $("eqAIRClearRecent").onclick = function(){ writeJson(STORE_TOPICS, []); setStatus("Recent topic memory cleared.", "ok"); };
+    Array.prototype.slice.call(document.querySelectorAll("input[name='eqairQuestionMode']")).forEach(function(r){ r.onchange = toggleManual; });
+    renderTopics();
+    renderResults(false);
+    toggleManual();
+  }
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildUI);
+  else buildUI();
+})();
+</script>
+
 </body>
 </html>
 
