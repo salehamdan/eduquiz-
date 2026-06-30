@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- CLEANUP_SELECTED_STUDENTS_PROGRESS_SAFE_20260630 -->
 <!-- FAST_ADMIN_FIX_20260630 -->
 <!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
@@ -5982,6 +5983,23 @@ function cleanupFilterWritingDoc(doc,students,idSet,classIds){
   const matchedStudents=wstudents.filter(s=>cleanupStudentMatchesRecord(s,students,idSet)||cleanupClassMatchesRecord(s,classIds));
   return {doc:clone,matchedSubmissions,matchedStudents};
 }
+function cleanupLocalReadingProgressRecords(students,idSet,classIds){
+  const keys=["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
+  let removed=0;
+  keys.forEach(function(k){
+    try{
+      const arr=JSON.parse(localStorage.getItem(k)||"[]");
+      if(!Array.isArray(arr)) return;
+      const kept=[];
+      arr.forEach(function(r){
+        const match=cleanupStudentMatchesRecord(r,students,idSet)||cleanupClassMatchesRecord(r,classIds);
+        if(match) removed++; else kept.push(r);
+      });
+      localStorage.setItem(k,JSON.stringify(kept));
+    }catch(e){}
+  });
+  return removed;
+}
 
 
 // STUDENT_CLASS_ADMIN_FIX_20260630: safe student/class deletion + strict student ID uniqueness.
@@ -6171,7 +6189,14 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const currentClassAliases=new Set(adminClassAliases(currentClass||{id:classId}).map(canonicalClassId));
   const studentsInCurrentClass=(myStudents||[]).filter(st=>st&&st.role==="student"&&!st.deleted&&currentClassAliases.has(canonicalClassId(st.classId||st.className||st.class||"")));
   const selectedClasses=scope==="all"?(myClasses||[]):(scope==="students"?[]:(myClasses||[]).filter(c=>String(c.id)===String(classId)));
-  const selectedClassIds=scope==="all"?new Set((myClasses||[]).map(c=>String(c.id))):(scope==="students"?new Set():new Set([String(classId||"")].filter(Boolean)));
+  const selectedClassIds=(()=>{
+    const out=new Set();
+    const add=function(v){ if(v!==undefined&&v!==null&&String(v).trim()){ out.add(String(v).trim()); try{ const can=canonicalClassId(v); if(can) out.add(String(can)); }catch(e){} } };
+    const addClass=function(c){ if(!c) return; [c.id,c._id,c.name,c.grade,c.classId,c.className].forEach(add); try{ (adminClassAliases(c)||[]).forEach(add); }catch(e){} };
+    if(scope==="all") (myClasses||[]).forEach(addClass);
+    else addClass(currentClass||{id:classId,name:classId,grade:classId});
+    return out;
+  })();
   const selectedStudents=scope==="all"?(myStudents||[]):(scope==="students"?studentsInCurrentClass.filter(st=>!!selectedStudentIds[String(st.id||st._id||st.studentId)]):studentsInCurrentClass);
   const idSet=cleanupIdSet(selectedStudents);
   const correctConfirm=scope==="all"?CLEANUP_CONFIRM_ALL:(scope==="students"?CLEANUP_CONFIRM_STUDENTS:CLEANUP_CONFIRM_CLASS);
@@ -6261,6 +6286,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
         const rs=readRows.filter(r=>(data.readingSubmissions||[]).some(x=>String(x.id||x._id)===String(r.id||r._id)));
         const rr=readRows.filter(r=>(data.readingAttemptResets||[]).some(x=>String(x.id||x._id)===String(r.id||r._id)));
         deleted.reading=(await cleanupDeleteRows("readingSubmissions",rs,"Deleting reading submissions",progressState))+(await cleanupDeleteRows("readingAttemptResets",rr,"Deleting reading resets",progressState));
+        const localRemoved=cleanupLocalReadingProgressRecords(p.students||[], cleanupIdSet(p.students||[]), selectedClassIds);
+        if(localRemoved) deleted.readingLocal=localRemoved;
       }
       if(selected.has("aiReading")){ deleted.aiReading=await cleanupDeleteRows("readingTheoryResponses",p.rows.aiReading||[],"Deleting AI reading records",progressState); }
       if(selected.has("gradebookRecords")){ deleted.gradebookRecords=await cleanupDeleteRows("gradebook",p.rows.gradebookRecords||[],"Deleting gradebook records",progressState); }
@@ -7997,12 +8024,17 @@ document.addEventListener("click", function(e){
       rec.audioDataUrl=await blobToDataUrl(item.blob);
       rec.storageStatus="firestore_audio_copy";
       await cloudSaveRecord(rec);
+      try{
+        await analyzeOne(rec.id,true);
+      }catch(autoErr){
+        console.warn("RP auto analysis after submit failed", autoErr);
+      }
     }catch(syncErr){
       console.warn("Cloud delivery failed; local copy remains", syncErr);
       alert("تم حفظ التسجيل محليًا، لكن لم يصل للمعلم. تحقق من الإنترنت ثم حاول الإرسال مرة أخرى.");
       return false;
     }
-    alert("Audio submitted to teacher ✅");
+    alert("تم إرسال التسجيل وتحليله تلقائيًا إن كان مفتاح الذكاء الاصطناعي متوفرًا. القبول يبقى بيد المعلم ✅");
     studentStatus();
   }, true);
 
