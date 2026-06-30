@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
 <!-- PROJECTS_CLASSMATE_COPY_CHECK_20260629 -->
 <!-- READING_PASSAGE_STUDENT_VISIBLE_FAB_HIDE_20260629 -->
 <!-- READING_TIME_AUTO_MANUAL_SUBMIT_ONLY_20260629 -->
@@ -314,6 +315,8 @@ function ensureProtectedStudents(rows){
   const used={};
   specs.forEach(sp=>{
     const matches=(rows||[]).filter(u=>protectedStudentMatch(u,sp.sid,sp.aliases));
+    const tombstone=matches.find(u=>u && u.deleted && (u.hidePreloaded||u.permanentDeleted||u.cleanupDeletedAt||u.adminDeletedAt));
+    if(tombstone){ matches.forEach(u=>{used[u.id]=true;}); return; }
     const base=matches.reduce((a,u)=>({...a,...u}),{});
     out.push({...base,id:"student_"+sp.sid,role:"student",name:sp.name,shortName:sp.name.split(/\s+/).slice(0,3).join(" "),studentId:sp.sid,classId:"class_3_1",password:sp.sid,deleted:false,hiddenDuplicate:false,preloaded:true,protectedOfficial:true});
     matches.forEach(u=>{used[u.id]=true;});
@@ -373,7 +376,7 @@ function mergePreloadedRows(existing, preloaded){
         fatherName: x.fatherName || base.fatherName || "",
         aliasIds: aliasIds,
         aliasStudentIds: aliasStudentIds,
-        deleted: (base.preloaded || base.protectedOfficial) ? false : !!x.deleted
+        deleted: (x.deleted && (x.hidePreloaded||x.permanentDeleted||x.cleanupDeletedAt||x.adminDeletedAt)) ? true : ((base.preloaded || base.protectedOfficial) ? false : !!x.deleted)
       };
       if(sid) sidMap[sid] = targetId;
     });
@@ -5922,6 +5925,61 @@ function cleanupFilterWritingDoc(doc,students,idSet,classIds){
   return {doc:clone,matchedSubmissions,matchedStudents};
 }
 
+
+// STUDENT_CLASS_ADMIN_FIX_20260630: safe student/class deletion + strict student ID uniqueness.
+function adminStudentTokens(st){
+  const set=new Set();
+  if(!st) return set;
+  [st.id,st._id,st.studentId,st.studentNumber,st.password].concat(st.aliasIds||[],st.aliasStudentIds||[]).forEach(v=>{ if(v!==undefined&&v!==null&&String(v).trim()) set.add(String(v).trim()); });
+  return set;
+}
+function adminStudentMatchesRecord(r,st){
+  if(!r||!st) return false;
+  try{ if(typeof responseBelongsToStudent==="function" && responseBelongsToStudent(r,st)) return true; }catch(e){}
+  const set=adminStudentTokens(st);
+  const vals=[r.studentId,r.studentNumber,r.studentNo,r.sid,r.userId,r.uid,r.student_id,r.ownerId,r.createdBy,r.studentPassword,r.password].map(v=>v==null?"":String(v).trim()).filter(Boolean);
+  return vals.some(v=>set.has(v));
+}
+async function adminDeleteStudentRecords(st, opts){
+  opts=opts||{};
+  const deleted={responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,writing:0,notes:0};
+  const [responses,readingSubmissions,readingAttemptResets,readingTheoryResponses,projectSubmissions,gradebook,notes,appSettings]=await Promise.all([fsAll("responses"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryResponses"),fsAll("projectSubmissions"),fsAll("gradebook"),fsAll("notes"),fsAll("appSettings")]);
+  for(const r of (responses||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("responses",r.id||r._id); deleted.responses++; }
+  for(const r of (readingSubmissions||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingSubmissions",r.id||r._id); deleted.reading++; }
+  for(const r of (readingAttemptResets||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingAttemptResets",r.id||r._id); deleted.reading++; }
+  for(const r of (readingTheoryResponses||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingTheoryResponses",r.id||r._id); deleted.readingTheory++; }
+  for(const r of (projectSubmissions||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("projectSubmissions",r.id||r._id); deleted.projects++; }
+  for(const r of (gradebook||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("gradebook",r.id||r._id); deleted.gradebook++; }
+  for(const n of (notes||[]).filter(n=>String(n.studentId||"")===String(st.id||"") || String(n.studentId||"")===String(st.studentId||""))){ await fsDel("notes",n.id||n._id); deleted.notes++; }
+  const wdoc=cleanupWriteDocFromSettings(appSettings||[]);
+  if(wdoc){
+    const clone=JSON.parse(JSON.stringify(wdoc));
+    const before=(clone.submissions||[]).length;
+    clone.submissions=(clone.submissions||[]).filter(x=>!adminStudentMatchesRecord(x,st));
+    deleted.writing=before-clone.submissions.length;
+    if(deleted.writing>0){ clone.updatedAt=new Date().toISOString(); clone.cleanupLastUpdatedAt=new Date().toISOString(); await fsSet("appSettings",clone.id||clone._id,clone); }
+  }
+  return deleted;
+}
+async function adminDeleteStudent(st, mode){
+  // mode: removeClass | hide | hard
+  if(mode==="removeClass"){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); return {student:"removed from class"}; }
+  if(mode==="hard"){ const deleted=await adminDeleteStudentRecords(st); await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); return deleted; }
+  await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); return {student:"deleted"};
+}
+async function adminDeleteClass(cls, students, mode){
+  // mode: classOnly | classStudents | classStudentsData
+  const deleted={};
+  if(mode==="classOnly"){
+    for(const st of students){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); }
+    if(cls.preloaded) await fsSet("classes",cls.id,{...cls,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); else await fsDel("classes",cls.id);
+    return {class:"deleted", studentsMoved:students.length};
+  }
+  for(const st of students){ const d=await adminDeleteStudent(st, mode==="classStudentsData"?"hard":"hide"); Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0)); }
+  if(cls.preloaded) await fsSet("classes",cls.id,{...cls,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); else await fsDel("classes",cls.id);
+  deleted.students=students.length; deleted.classes=1; return deleted;
+}
+
 function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [scope,setScope]=useState("class");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"");
@@ -5984,7 +6042,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function hardDeleteOrMark(col,row){
     const id=row.id||row._id; if(!id)return;
-    if((col==="users"||col==="classes") && row.preloaded){ await fsSet(col,id,{...row,deleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
+    if((col==="users"||col==="classes") && row.preloaded){ await fsSet(col,id,{...row,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
     else { await fsDel(col,id); }
   }
   async function executeDelete(){
@@ -6079,7 +6137,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [esMsg,setEsMsg]=useState("");
   const stuFileRef = useRef();
   const [resumeAfterEdit,setResumeAfterEdit]=useState(false);
-  const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
+  const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[manageClass,setManageClass]=useState(null),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
+  const [addStuModal,setAddStuModal]=useState(null),[addStuForm,setAddStuForm]=useState({name:"",studentId:"",password:""}),[addStuMsg,setAddStuMsg]=useState("");
   const [shareModal,setShareModal]=useState(null);
   const [pendingExpanded,setPendingExpanded]=useState(false);
   const [qDash,setQDash]=useState(false);
@@ -6451,17 +6510,44 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     await fsSet("classes", cls.id, {...cls, name:name.trim(), grade:(grade||"").trim(), teacherIds:(cls.teacherIds&&cls.teacherIds.includes("GLOBAL"))?cls.teacherIds:[user.id], updatedAt:today()});
     await reload();
   }
+  async function addStudentToClass(cls){
+    setAddStuModal(cls); setAddStuForm({name:"",studentId:"",password:""}); setAddStuMsg("");
+  }
+  async function saveNewStudentToClass(){
+    const cls=addStuModal; if(!cls)return;
+    const name=(addStuForm.name||"").trim(), sid=(addStuForm.studentId||"").trim(), pass=(addStuForm.password||sid).trim();
+    if(!name||!sid){setAddStuMsg("Name and Student ID are required.");return;}
+    const all=(await loadAllData()).users||[];
+    const existing=all.find(u=>u.role==="student" && !u.deleted && String(u.studentId||"").trim()===sid);
+    if(existing){
+      if(!window.confirm("This Student ID already exists: "+existing.name+" in "+((data.classes||[]).find(c=>c.id===existing.classId)?.name||"No class")+".\nMove this existing student to "+cls.name+" instead of creating a duplicate?")){ setAddStuMsg("Cancelled. No duplicate was created."); return; }
+      await fsSet("users",existing.id,{...existing,classId:cls.id,updatedAt:today()});
+      await reload(); setAddStuMsg("✅ Existing student moved to this class."); setTimeout(()=>setAddStuModal(null),600); return;
+    }
+    const id="student_"+sid;
+    await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,password:pass||sid,createdAt:today()});
+    await reload(); setAddStuMsg("✅ Student added."); setTimeout(()=>setAddStuModal(null),600);
+  }
   async function deleteClass(cls){
     const studs = data.users.filter(u=>u.role==="student" && u.classId===cls.id && !u.deleted);
-    if(!confirm("Delete class: "+cls.name+"?"+(studs.length?"\nStudents in this class will be moved to No class.":""))) return;
-    for(const st of studs){ await fsSet("users", st.id, {...st, classId:""}); }
-    await fsSet("classes", cls.id, {...cls, deleted:true, updatedAt:today()});
-    await reload();
+    const choice=prompt("Delete class: "+cls.name+"\nStudents: "+studs.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete class + students only\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","1");
+    if(!choice)return;
+    const map={"1":"classOnly","2":"classStudents","3":"classStudentsData"}; const mode=map[String(choice).trim()];
+    if(!mode){alert("Cancelled. Invalid option.");return;}
+    const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
+    if(prompt("Final confirmation required. Type exactly: "+phrase)!==phrase) return;
+    const res=await adminDeleteClass(cls,studs,mode);
+    alert("Done. "+JSON.stringify(res)); await reload();
   }
   async function deleteStudent(st){
-    if(!confirm("Delete student: "+st.name+"?")) return;
-    await fsSet("users", st.id, {...st, deleted:true, updatedAt:today()});
-    await reload();
+    const choice=prompt("Delete student: "+st.name+" #"+(st.studentId||"")+"\n\nType one option number:\n1 = Remove from class only\n2 = Delete student only\n3 = Delete student + all results\n\nFor safety, type 1, 2, or 3:","1");
+    if(!choice)return;
+    const map={"1":"removeClass","2":"hide","3":"hard"}; const mode=map[String(choice).trim()];
+    if(!mode){alert("Cancelled. Invalid option.");return;}
+    const phrase=mode==="hard"?"DELETE STUDENT DATA":"DELETE STUDENT";
+    if(prompt("Final confirmation required. Type exactly: "+phrase)!==phrase) return;
+    const res=await adminDeleteStudent(st,mode);
+    alert("Done. "+JSON.stringify(res)); await reload();
   }
 
   function quizLink(quiz){
@@ -6841,7 +6927,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px"}}><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete Class</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete Class</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div>
             </Card>;
           })}
@@ -6852,7 +6938,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             <label htmlFor="stuImport" style={{flex:1,minWidth:"150px",padding:"10px",background:C.s,color:"#fff",borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,boxSizing:"border-box"}}>📥 Import Students (Excel)</label>
             <input id="stuImport" type="file" accept=".xlsx,.xls,.csv" ref={stuFileRef} onChange={importStudents} style={{display:"none"}}/>
             <Btn color={C.w} onClick={exportResults}>📤 Export Results</Btn>
-            <Btn color={C.pu} onClick={()=>{setMergeMsg("");setMergeModal(true);}}>🔗 Merge Duplicates</Btn>
+            <Btn color="#475569" onClick={()=>{setMergeMsg("");setMergeModal(true);}}>🛠 Advanced Repair / Merge</Btn>
           </div>
           {importMsg && <div style={{background:importMsg.startsWith("✅")?"#f0fdf4":"#eff6ff",border:"1px solid "+(importMsg.startsWith("✅")?"#86efac":"#93c5fd"),borderRadius:"8px",padding:"9px 12px",fontSize:"12px",color:importMsg.startsWith("✅")?"#166534":"#1e40af",marginBottom:"9px",fontFamily:F}}>{importMsg}</div>}
           <div style={{fontSize:"10px",color:C.mu,marginBottom:"9px",fontFamily:F,background:"#f8fafc",padding:"8px 11px",borderRadius:"7px"}}>💡 Excel columns: <strong>Name</strong>, <strong>ID</strong> (required), <strong>Class</strong> (optional). Students log in with name + class + ID + password. Default password for imported students is their ID; teacher can edit it.</div>
@@ -7159,6 +7245,21 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         <TxtInput label="Class Name *" value={newCls.name} onChange={v=>setNewCls(c=>({...c,name:v}))} placeholder="e.g. Class 5A"/>
         <TxtInput label="Grade" value={newCls.grade} onChange={v=>setNewCls(c=>({...c,grade:v}))} placeholder="e.g. Grade 5"/>
         <Btn onClick={createCls} style={{width:"100%",marginTop:"4px"}}>Create Class</Btn>
+      </Modal>
+      <Modal open={!!addStuModal} onClose={()=>setAddStuModal(null)} title={"Add Student — "+(addStuModal?.name||"")}>
+        <TxtInput label="Student Name *" value={addStuForm.name} onChange={v=>setAddStuForm(f=>({...f,name:v}))} placeholder="Student full name"/>
+        <TxtInput label="Student ID *" value={addStuForm.studentId} onChange={v=>setAddStuForm(f=>({...f,studentId:v}))} placeholder="Official student number"/>
+        <TxtInput label="Password (optional)" value={addStuForm.password} onChange={v=>setAddStuForm(f=>({...f,password:v}))} placeholder="Default = Student ID"/>
+        {addStuMsg&&<div style={{fontSize:"12px",fontWeight:800,color:addStuMsg.startsWith("✅")?C.s:C.d,marginBottom:"8px",fontFamily:F}}>{addStuMsg}</div>}
+        <Btn color={C.s} onClick={saveNewStudentToClass} style={{width:"100%"}}>➕ Add / Move Student</Btn>
+      </Modal>
+      <Modal open={!!manageClass} onClose={()=>setManageClass(null)} title={"Manage Class — "+(manageClass?.name||"")}>
+        {manageClass&&(()=>{const studs=myStudents.filter(s=>s.classId===manageClass.id);return <div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Stat icon="👥" label="Students" value={studs.length} color={C.p}/><Stat icon="🏫" label="Class" value={manageClass.grade||"—"} color={C.pu}/></div>
+          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(manageClass)}>🗑 Delete Class</Btn></div>
+          <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",padding:"8px",borderRadius:"8px",marginBottom:"9px",fontFamily:F}}>Student ID is protected: the system will not create another student with the same ID. If the ID already exists, it offers to move the existing student to this class.</div>
+          <div style={{maxHeight:"310px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px"}}>{studs.length===0?<div style={{padding:"12px",fontSize:"12px",color:C.mu,fontFamily:F}}>No students in this class.</div>:studs.map(st=><div key={st.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"9px",borderBottom:"1px solid "+C.br}}><div style={{flex:1}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {st.studentId||"—"}</div></div><Btn size="sm" color={C.pu} onClick={()=>{setEditStu(st);setEsForm({name:st.name||"",shortName:st.shortName||String(st.name||"").split(/\s+/).slice(0,2).join(" "),studentId:st.studentId||"",classId:st.classId||"",email:st.email||"",password:"",fatherName:st.fatherName||""});setEsMsg("");}}>✏️ Edit/Move</Btn><Btn size="sm" color={C.d} onClick={()=>deleteStudent(st)}>🗑 Delete</Btn></div>)}</div>
+        </div>;})()}
       </Modal>
       <ProfileModal user={user} classes={data.classes} open={profileOpen} onClose={()=>setProfileOpen(false)} onSaved={async()=>{await reload();}}/>
       <Modal open={viewAsOpen} onClose={()=>setViewAsOpen(false)} title="👁 View as Student">
