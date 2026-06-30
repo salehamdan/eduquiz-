@@ -292,14 +292,21 @@ function officialClassRow(id){
 }
 function normalizeClassRows(rows){
   const map={};
+  const deletedOfficial=new Set();
   (rows||[]).forEach(c=>{
+    if(!c) return;
     const cid=canonicalClassId(c.id||c.name||c.grade);
+    if(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || c.cleanupDeletedAt || c.adminDeletedAt){
+      if(cid) deletedOfficial.add(cid);
+      if(c.id) map[c.id]={...c,deleted:true};
+      return;
+    }
     const official=officialClassRow(cid);
-    if(official) map[cid]={...official,...(map[cid]||{})};
+    if(official) map[cid]={...official,...(map[cid]||{}),...c,deleted:false};
     else if(c && c.id) map[c.id]=c;
   });
-  ["class_3_1","class_3_2","class_3_3","class_3_4","class_2_4"].forEach(id=>{ if(!map[id]) map[id]=officialClassRow(id); });
-  return Object.values(map).filter(Boolean);
+  ["class_3_1","class_3_2","class_3_3","class_3_4","class_2_4"].forEach(id=>{ if(!deletedOfficial.has(id) && !map[id]) map[id]=officialClassRow(id); });
+  return Object.values(map).filter(function(x){return x && x.deleted!==true && x.status!=="deleted";});
 }
 function protectedStudentMatch(u, sid, aliases){
   const id=eqDigits(u&&u.studentId);
@@ -5940,6 +5947,10 @@ function adminStudentMatchesRecord(r,st){
   const vals=[r.studentId,r.studentNumber,r.studentNo,r.sid,r.userId,r.uid,r.student_id,r.ownerId,r.createdBy,r.studentPassword,r.password].map(v=>v==null?"":String(v).trim()).filter(Boolean);
   return vals.some(v=>set.has(v));
 }
+function adminConfirmOk(input, phrase){
+  function norm(x){return String(x||"").trim().replace(/\s+/g," ").toUpperCase();}
+  return norm(input)===norm(phrase);
+}
 async function adminDeleteStudentRecords(st, opts){
   opts=opts||{};
   const deleted={responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,writing:0,notes:0};
@@ -5970,13 +5981,18 @@ async function adminDeleteStudent(st, mode){
 async function adminDeleteClass(cls, students, mode){
   // mode: classOnly | classStudents | classStudentsData
   const deleted={};
+  async function deleteClassRow(c){
+    const cid=canonicalClassId(c.id||c.name||c.grade)||c.id;
+    if(c.preloaded || officialClassRow(cid)) await fsSet("classes",cid,{...c,id:cid,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()});
+    else await fsDel("classes",c.id);
+  }
   if(mode==="classOnly"){
     for(const st of students){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); }
-    if(cls.preloaded) await fsSet("classes",cls.id,{...cls,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); else await fsDel("classes",cls.id);
+    await deleteClassRow(cls);
     return {class:"deleted", studentsMoved:students.length};
   }
   for(const st of students){ const d=await adminDeleteStudent(st, mode==="classStudentsData"?"hard":"hide"); Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0)); }
-  if(cls.preloaded) await fsSet("classes",cls.id,{...cls,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); else await fsDel("classes",cls.id);
+  await deleteClassRow(cls);
   deleted.students=students.length; deleted.classes=1; return deleted;
 }
 
@@ -6042,12 +6058,18 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function hardDeleteOrMark(col,row){
     const id=row.id||row._id; if(!id)return;
-    if((col==="users"||col==="classes") && row.preloaded){ await fsSet(col,id,{...row,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
+    if(col==="classes"){
+      const cid=canonicalClassId(id||row.name||row.grade)||id;
+      if(row.preloaded || officialClassRow(cid)){ await fsSet("classes",cid,{...row,id:cid,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
+      else { await fsDel("classes",id); }
+      return;
+    }
+    if(col==="users" && row.preloaded){ await fsSet(col,id,{...row,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
     else { await fsDel(col,id); }
   }
   async function executeDelete(){
     const p=preview||await buildPreview(); if(!p)return;
-    if(confirmText.trim()!==correctConfirm){ setMsg("❌ اكتب التأكيد بالضبط: "+correctConfirm); return; }
+    if(!adminConfirmOk(confirmText, correctConfirm)){ setMsg("❌ اكتب التأكيد: "+correctConfirm+" (الحروف الكبيرة/الصغيرة مقبولة)"); return; }
     const selected=new Set(p.itemIds);
     const total=Object.entries(p.counts).filter(([k])=>selected.has(k)).reduce((a,[,v])=>a+Number(v||0),0);
     const warn=(scope==="all"?"سيتم حذف بيانات جميع الصفوف المختارة.\n":"سيتم حذف بيانات الفصل المختار فقط.\n")+"عدد السجلات المحددة تقريباً: "+total+"\n\nهل أنت متأكد؟ لا يمكن التراجع إلا من النسخة الاحتياطية.";
@@ -6149,8 +6171,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [profileOpen,setProfileOpen]=useState(false);
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
-  const myClasses=data.classes.filter(c=>!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded);
-  const myStudents=data.users.filter(u=>u.role==="student"&&(myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
+  const myClasses=data.classes.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded));
+  const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -6535,7 +6557,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const map={"1":"classOnly","2":"classStudents","3":"classStudentsData"}; const mode=map[String(choice).trim()];
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
-    if(prompt("Final confirmation required. Type exactly: "+phrase)!==phrase) return;
+    if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
     const res=await adminDeleteClass(cls,studs,mode);
     alert("Done. "+JSON.stringify(res)); await reload();
   }
@@ -6545,7 +6567,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const map={"1":"removeClass","2":"hide","3":"hard"}; const mode=map[String(choice).trim()];
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="hard"?"DELETE STUDENT DATA":"DELETE STUDENT";
-    if(prompt("Final confirmation required. Type exactly: "+phrase)!==phrase) return;
+    if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
     const res=await adminDeleteStudent(st,mode);
     alert("Done. "+JSON.stringify(res)); await reload();
   }
