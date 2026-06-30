@@ -529,6 +529,21 @@ async function fsDel(col, id) {
   try { await db.collection(col).doc(id).delete(); }
   catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
 }
+
+// QUIZ_SPEED_OPTIMIZATION_20260630
+// Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
+const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_v1";
+function eqSaveFastDataCache(d){
+  try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
+}
+function eqLoadFastDataCache(){
+  try{
+    const x = JSON.parse(localStorage.getItem(EQ_FAST_DATA_CACHE_KEY)||"null");
+    if(!x || !x.data) return null;
+    return x.data;
+  }catch(e){ return null; }
+}
+
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
   const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
@@ -539,7 +554,9 @@ async function loadAllData() {
   // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
   const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  return {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions};
+  const allData = {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions};
+  eqSaveFastDataCache(allData);
+  return allData;
 }
 
 // Session (this device only)
@@ -6359,8 +6376,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [qrdClass,setQrdClass]=useState("all");
   const [qrdSearch,setQrdSearch]=useState("");
   const [profileOpen,setProfileOpen]=useState(false);
+  const [quizFastPatch,setQuizFastPatch]=useState({});
+  const [quizBusy,setQuizBusy]=useState({});
+  const [quizPerfMsg,setQuizPerfMsg]=useState("");
 
-  const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id);
+  function fastPatchedQuiz(q){ return quizFastPatch[q.id] ? {...q, ...quizFastPatch[q.id]} : q; }
+  function patchQuizFast(id, patch){ setQuizFastPatch(prev=>({...prev, [id]: {...(prev[id]||{}), ...patch}})); }
+
+  const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
   const myClasses=data.classes.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded));
   const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
@@ -6592,28 +6615,62 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     await fsSet("users", u.id, {...u, deleted: true, hiddenDuplicate:true, hiddenAt:new Date().toISOString()});
     await reload();
   }
-  // Auto-pause: close the quiz before editing so no new students start mid-change
+  // QUIZ_FAST_ACTIONS_20260630: edit/open/close should not reload the whole platform.
   async function startEditQuiz(quiz){
-    const wasOpen = quiz.status!=="closed";
-    if(wasOpen){ await fsSet("quizzes",quiz.id,{...quiz,status:"closed"}); await reload(); }
+    const current = fastPatchedQuiz(quiz);
+    const wasOpen = current.status!=="closed";
+    const editing = {...current, status: wasOpen ? "closed" : current.status};
     setResumeAfterEdit(wasOpen);
-    setEditingQuiz({...quiz,status:wasOpen?"closed":quiz.status});
+    setEditingQuiz(editing);
     setView("edit");
+    if(wasOpen){
+      patchQuizFast(current.id,{status:"closed"});
+      setQuizBusy(prev=>({...prev,[current.id]:true}));
+      setQuizPerfMsg("Closing quiz for editing...");
+      try{ await fsSet("quizzes",current.id,editing); setQuizPerfMsg("Quiz closed for editing."); }
+      catch(e){ console.warn(e); setQuizPerfMsg("Could not close quiz in Firebase. Please try again."); }
+      finally{ setQuizBusy(prev=>({...prev,[current.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1800); }
+    }
   }
-  // On save while editing: reopen the quiz if it was open before editing
+  // On save while editing: reopen the quiz if it was open before editing. No full reload.
   async function saveEditedQuiz(q){
-    const finalStatus = resumeAfterEdit ? "open" : q.status;
-    await fsSet("quizzes",q.id,{...q,status:finalStatus});
-    await reload();
+    const finalQuiz = {...q, status: resumeAfterEdit ? "open" : q.status};
+    patchQuizFast(q.id, finalQuiz);
+    setQuizBusy(prev=>({...prev,[q.id]:true}));
+    setQuizPerfMsg("Saving quiz...");
+    try{ await fsSet("quizzes",q.id,finalQuiz); setQuizPerfMsg("Quiz saved."); }
+    catch(e){ console.warn(e); setQuizPerfMsg("Save failed. Please try again."); }
+    finally{ setQuizBusy(prev=>({...prev,[q.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1800); }
     setView(null); setEditingQuiz(null); setResumeAfterEdit(false);
   }
   function cancelEdit(){
-    // If we auto-closed it, reopen it on cancel too
-    (async()=>{ if(resumeAfterEdit&&editingQuiz){ await fsSet("quizzes",editingQuiz.id,{...editingQuiz,status:"open"}); await reload(); } setView(null); setEditingQuiz(null); setResumeAfterEdit(false); })();
+    (async()=>{
+      if(resumeAfterEdit&&editingQuiz){
+        const reopened={...editingQuiz,status:"open"};
+        patchQuizFast(editingQuiz.id,{status:"open"});
+        setQuizBusy(prev=>({...prev,[editingQuiz.id]:true}));
+        setQuizPerfMsg("Reopening quiz...");
+        try{ await fsSet("quizzes",editingQuiz.id,reopened); setQuizPerfMsg("Quiz reopened."); }
+        catch(e){ console.warn(e); setQuizPerfMsg("Could not reopen quiz. Check connection."); }
+        finally{ setQuizBusy(prev=>({...prev,[editingQuiz.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1800); }
+      }
+      setView(null); setEditingQuiz(null); setResumeAfterEdit(false);
+    })();
   }
   async function delQuiz(id){if(!confirm("Delete this quiz?"))return;await fsDel("quizzes",id);await reload();}
   async function delResponse(rid, studentName){if(!confirm("Delete this attempt by "+studentName+"? This will update their progress and mastery."))return;await fsDel("responses",rid);await reload();}
-  async function toggleQuiz(quiz){await fsSet("quizzes",quiz.id,{...quiz,status:quiz.status==="closed"?"open":"closed"});await reload();}
+  async function toggleQuiz(quiz){
+    if(quizBusy[quiz.id]) return;
+    const oldStatus=quiz.status;
+    const newStatus=oldStatus==="closed"?"open":"closed";
+    const next={...quiz,status:newStatus};
+    patchQuizFast(quiz.id,{status:newStatus});
+    setQuizBusy(prev=>({...prev,[quiz.id]:true}));
+    setQuizPerfMsg((newStatus==="closed"?"Closing":"Opening")+" quiz...");
+    try{ await fsSet("quizzes",quiz.id,next); setQuizPerfMsg("Updated."); }
+    catch(e){ console.warn(e); patchQuizFast(quiz.id,{status:oldStatus}); setQuizPerfMsg("Update failed. Status was restored."); }
+    finally{ setQuizBusy(prev=>({...prev,[quiz.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1500); }
+  }
   async function saveNote(){const ex=data.notes.find(n=>n.teacherId===user.id&&n.studentId===noteModal.id);const id=ex?ex.id:uid();await fsSet("notes",id,{id,teacherId:user.id,studentId:noteModal.id,note:noteText,updatedAt:today()});await reload();setNoteModal(null);}
   async function postAnn(){const id=uid();await fsSet("announcements",id,{id,teacherId:user.id,...ann,createdAt:today()});await reload();setAnnModal(false);setAnn({title:"",text:"",classIds:[]});}
   // ── IMPORT STUDENTS FROM EXCEL/CSV ──
@@ -7121,6 +7178,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   <Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn>
                 </div>
               </div>
+              {quizPerfMsg&&<div style={{margin:"0 0 8px",padding:"8px 10px",borderRadius:"9px",background:"#eff6ff",border:"1px solid #bfdbfe",color:C.p,fontSize:"12px",fontWeight:"800",fontFamily:F}}>{quizPerfMsg}</div>}
               {myQuizzes.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No quizzes yet.</p></Card>
               :myQuizzes.map((quiz,i)=>{
                 const rs=data.responses.filter(r=>r.quizId===quiz.id);const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;const col=COLORS[i%COLORS.length];const open=selQuiz===quiz.id;const icon=quiz.imported?"📥":quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
@@ -7131,8 +7189,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} onClick={()=>setShareModal(quiz)}>🔗 Share</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
-                      <Btn size="sm" color={C.pu} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
-                      <Btn size="sm" color={quiz.status==="closed"?C.s:C.w} onClick={()=>toggleQuiz(quiz)}>{quiz.status==="closed"?"Open":"Close"}</Btn>
+                      <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
+                      <Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>
                       <Btn size="sm" color={C.d} onClick={()=>delQuiz(quiz.id)}>🗑</Btn>
                     </div>
                   </div>
@@ -7523,12 +7581,22 @@ function App() {
 
   useEffect(()=>{
     (async()=>{
-      const d=await loadAllData();setData(d);
-      // Check for ?quiz=CODE link
       const params=new URLSearchParams(location.search);
       const code=params.get("quiz");
-      if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
       const sess=loadSession();
+      // Show cached dashboard immediately when available, then refresh Firebase in the background.
+      const cached=eqLoadFastDataCache();
+      if(cached && !data){
+        try{
+          setData(cached);
+          if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase());if(cq)setDirectQuiz(cq);}
+          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu)setUser(fixAhmedStudent(cu));else if(sess.id)setUser(fixAhmedStudent(sess));}
+          setLoading(false);
+        }catch(e){}
+      }
+      const d=await loadAllData();setData(d);
+      // Check for ?quiz=CODE link
+      if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
       if(sess){const u=d.users.find(x=>x.id===sess.id);if(u)setUser(fixAhmedStudent(u));else if(sess.id)setUser(fixAhmedStudent(sess));}
       else if(FIREBASE_OK && auth && auth.currentUser){
         const au=auth.currentUser;
