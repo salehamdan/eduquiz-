@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- CLEANUP_SELECTED_STUDENTS_PROGRESS_SAFE_20260630 -->
 <!-- FAST_ADMIN_FIX_20260630 -->
 <!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
 <!-- PROJECTS_CLASSMATE_COPY_CHECK_20260629 -->
@@ -5925,6 +5926,7 @@ const CLEANUP_ITEMS = [
 ];
 const CLEANUP_CONFIRM_CLASS = "DELETE SELECTED CLASS DATA";
 const CLEANUP_CONFIRM_ALL = "DELETE SELECTED ALL CLASSES DATA";
+const CLEANUP_CONFIRM_STUDENTS = "DELETE SELECTED STUDENTS";
 
 function cleanupIdSet(students){
   const set=new Set();
@@ -6000,15 +6002,21 @@ function adminUniqueRows(rows){
   (rows||[]).forEach(r=>{const id=String((r&&(r._id||r.id))||""); if(id) m[id]=r;});
   return Object.values(m);
 }
-async function adminBatchDelete(col, rows){
+async function adminBatchDelete(col, rows, onProgress){
   rows=adminUniqueRows(rows||[]);
   if(!rows.length) return 0;
-  if(!FIREBASE_OK){ for(const r of rows){ await fsDel(col,r.id||r._id); } return rows.length; }
+  if(!FIREBASE_OK){
+    let count=0;
+    for(const r of rows){ await fsDel(col,r.id||r._id); count++; if(onProgress) onProgress(1,col,count,rows.length); }
+    return count;
+  }
   let count=0;
   for(let i=0;i<rows.length;i+=450){
+    const slice=rows.slice(i,i+450);
     const batch=db.batch();
-    rows.slice(i,i+450).forEach(r=>{const id=r._id||r.id; if(id){ batch.delete(db.collection(col).doc(String(id))); count++; }});
-    await batch.commit();
+    let chunkCount=0;
+    slice.forEach(r=>{const id=r._id||r.id; if(id){ batch.delete(db.collection(col).doc(String(id))); chunkCount++; }});
+    if(chunkCount){ await batch.commit(); count+=chunkCount; if(onProgress) onProgress(chunkCount,col,count,rows.length); }
   }
   return count;
 }
@@ -6042,7 +6050,9 @@ async function adminFindStudentRecordsFast(st, col){
 }
 async function adminDeleteStudentRecords(st, opts){
   opts=opts||{};
+  const progress=typeof opts.onProgress==="function"?opts.onProgress:null;
   const deleted={responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,writing:0,notes:0};
+  if(progress) progress({stage:"Finding related records",done:0,total:0});
   const [responses,readingSubmissions,readingAttemptResets,readingTheoryResponses,projectSubmissions,gradebook,notes]=await Promise.all([
     adminFindStudentRecordsFast(st,"responses"),
     adminFindStudentRecordsFast(st,"readingSubmissions"),
@@ -6052,13 +6062,16 @@ async function adminDeleteStudentRecords(st, opts){
     adminFindStudentRecordsFast(st,"gradebook"),
     adminFindStudentRecordsFast(st,"notes")
   ]);
-  deleted.responses=await adminBatchDelete("responses",responses);
-  deleted.reading+=(await adminBatchDelete("readingSubmissions",readingSubmissions));
-  deleted.reading+=(await adminBatchDelete("readingAttemptResets",readingAttemptResets));
-  deleted.readingTheory=await adminBatchDelete("readingTheoryResponses",readingTheoryResponses);
-  deleted.projects=await adminBatchDelete("projectSubmissions",projectSubmissions);
-  deleted.gradebook=await adminBatchDelete("gradebook",gradebook);
-  deleted.notes=await adminBatchDelete("notes",notes);
+  const total=responses.length+readingSubmissions.length+readingAttemptResets.length+readingTheoryResponses.length+projectSubmissions.length+gradebook.length+notes.length;
+  let done=0;
+  const step=(label)=>(inc)=>{done+=inc||0; if(progress) progress({stage:label,done,total});};
+  deleted.responses=await adminBatchDelete("responses",responses,step("Deleting quiz responses"));
+  deleted.reading+=(await adminBatchDelete("readingSubmissions",readingSubmissions,step("Deleting reading submissions")));
+  deleted.reading+=(await adminBatchDelete("readingAttemptResets",readingAttemptResets,step("Deleting reading resets")));
+  deleted.readingTheory=await adminBatchDelete("readingTheoryResponses",readingTheoryResponses,step("Deleting AI reading records"));
+  deleted.projects=await adminBatchDelete("projectSubmissions",projectSubmissions,step("Deleting project submissions"));
+  deleted.gradebook=await adminBatchDelete("gradebook",gradebook,step("Deleting gradebook records"));
+  deleted.notes=await adminBatchDelete("notes",notes,step("Deleting notes"));
   // Writing submissions are stored inside one appSettings document; keep this targeted and optional.
   try{
     const appSettings=await fsAll("appSettings");
@@ -6073,11 +6086,12 @@ async function adminDeleteStudentRecords(st, opts){
   }catch(e){}
   return deleted;
 }
-async function adminDeleteStudent(st, mode){
+async function adminDeleteStudent(st, mode, opts){
+  opts=opts||{};
   // mode: removeClass | hide | hard
   if(mode==="removeClass"){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); return {student:"removed from class"}; }
   if(mode==="hard"){
-    const deleted=await adminDeleteStudentRecords(st);
+    const deleted=await adminDeleteStudentRecords(st,opts);
     await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()});
     return deleted;
   }
@@ -6126,19 +6140,24 @@ async function adminDeleteClass(cls, students, mode){
 function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [scope,setScope]=useState("class");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"");
+  const [selectedStudentIds,setSelectedStudentIds]=useState({});
   const [deleteAll,setDeleteAll]=useState(false);
   const [items,setItems]=useState({quizResponses:true,gradebookRecords:true,reading:true,zipgrade:true,projectSubmissions:true,projectGrades:true,writing:true,aiReading:true});
   const [preview,setPreview]=useState(null);
   const [busy,setBusy]=useState(false);
   const [confirmText,setConfirmText]=useState("");
   const [msg,setMsg]=useState("");
+  const [progress,setProgress]=useState(null);
   const [extra,setExtra]=useState({gradebook:[],cleanupLogs:[]});
   const selectedItemIds=deleteAll?CLEANUP_ITEMS.map(x=>x.id):Object.keys(items).filter(k=>items[k]);
-  const selectedClassIds=scope==="all"?new Set((myClasses||[]).map(c=>String(c.id))):new Set([String(classId||"")].filter(Boolean));
-  const selectedClasses=scope==="all"?(myClasses||[]):(myClasses||[]).filter(c=>String(c.id)===String(classId));
-  const selectedStudents=(myStudents||[]).filter(st=>scope==="all"?true:selectedClassIds.has(String(st.classId||"")));
+  const currentClass=(myClasses||[]).find(c=>String(c.id)===String(classId)) || null;
+  const currentClassAliases=new Set(adminClassAliases(currentClass||{id:classId}).map(canonicalClassId));
+  const studentsInCurrentClass=(myStudents||[]).filter(st=>st&&st.role==="student"&&!st.deleted&&currentClassAliases.has(canonicalClassId(st.classId||st.className||st.class||"")));
+  const selectedClasses=scope==="all"?(myClasses||[]):(scope==="students"?[]:(myClasses||[]).filter(c=>String(c.id)===String(classId)));
+  const selectedClassIds=scope==="all"?new Set((myClasses||[]).map(c=>String(c.id))):(scope==="students"?new Set():new Set([String(classId||"")].filter(Boolean)));
+  const selectedStudents=scope==="all"?(myStudents||[]):(scope==="students"?studentsInCurrentClass.filter(st=>!!selectedStudentIds[String(st.id||st._id||st.studentId)]):studentsInCurrentClass);
   const idSet=cleanupIdSet(selectedStudents);
-  const correctConfirm=scope==="all"?CLEANUP_CONFIRM_ALL:CLEANUP_CONFIRM_CLASS;
+  const correctConfirm=scope==="all"?CLEANUP_CONFIRM_ALL:(scope==="students"?CLEANUP_CONFIRM_STUDENTS:CLEANUP_CONFIRM_CLASS);
   function toggleItem(id){ setPreview(null); setDeleteAll(false); setItems(prev=>({...prev,[id]:!prev[id]})); }
   function setEverything(v){ setPreview(null); setDeleteAll(v); if(v){ const all={}; CLEANUP_ITEMS.forEach(x=>all[x.id]=true); setItems(all); } }
   async function loadExtra(){
@@ -6146,9 +6165,10 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     const ex={gradebook:gradebook||[],cleanupLogs:cleanupLogs||[]}; setExtra(ex); return ex;
   }
   async function buildPreview(){
-    if(scope==="class"&&!classId){setMsg("اختر الفصل أولاً.");return null;}
+    if(scope!=="all"&&!classId){setMsg("اختر الفصل أولاً.");return null;}
+    if(scope==="students"&&selectedStudents.length===0){setMsg("حدد طالبًا واحدًا على الأقل.");return null;}
     if(selectedItemIds.length===0){setMsg("حدد نوع بيانات واحد على الأقل للحذف.");return null;}
-    setBusy(true); setMsg("جاري حساب المعاينة...");
+    setBusy(true); setProgress(null); setMsg("جاري حساب المعاينة...");
     const ex=await loadExtra();
     const responses=(data.responses||[]).filter(r=>cleanupStudentMatchesRecord(r,selectedStudents,idSet)||cleanupClassMatchesRecord(r,selectedClassIds));
     const normalResponses=responses.filter(r=>!cleanupIsProjectResponse(r)&&!cleanupIsZipResponse(r));
@@ -6196,28 +6216,39 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     if(col==="users" && row.preloaded){ await fsSet(col,id,{...row,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
     else { await fsDel(col,id); }
   }
+  function cleanupTotalRows(p){
+    if(!p) return 0;
+    return (p.itemIds||[]).reduce((sum,id)=>sum+((p.rows&&p.rows[id]&&p.rows[id].length)||0),0);
+  }
+  async function cleanupDeleteRows(col,rows,label,progressState){
+    rows=adminUniqueRows(rows||[]);
+    if(!rows.length) return 0;
+    const total=progressState.total||rows.length;
+    const add=(inc)=>{progressState.done+=(inc||0); setProgress({stage:label,done:progressState.done,total});};
+    setProgress({stage:label,done:progressState.done,total});
+    return await adminBatchDelete(col,rows,add);
+  }
   async function executeDelete(){
     const p=preview||await buildPreview(); if(!p)return;
-    if(!adminConfirmOk(confirmText, correctConfirm)){ setMsg("❌ اكتب التأكيد: "+correctConfirm+" (الحروف الكبيرة/الصغيرة مقبولة)"); return; }
-    const selected=new Set(p.itemIds);
-    const total=Object.entries(p.counts).filter(([k])=>selected.has(k)).reduce((a,[,v])=>a+Number(v||0),0);
-    const warn=(scope==="all"?"سيتم حذف بيانات جميع الصفوف المختارة.\n":"سيتم حذف بيانات الفصل المختار فقط.\n")+"عدد السجلات المحددة تقريباً: "+total+"\n\nهل أنت متأكد؟ لا يمكن التراجع إلا من النسخة الاحتياطية.";
-    if(!window.confirm(warn)) return;
-    setBusy(true); setMsg("جاري الحذف من Firebase...");
-    const deleted={};
+    if(!adminConfirmOk(confirmText,correctConfirm)){setMsg("اكتب جملة التأكيد بالضبط قبل الحذف.");return;}
+    setBusy(true); setProgress({stage:"Preparing delete",done:0,total:cleanupTotalRows(p)}); setMsg("جاري الحذف...");
+    const selected=new Set(p.itemIds||selectedItemIds); const deleted={};
+    const progressState={done:0,total:cleanupTotalRows(p)};
     try{
-      if(selected.has("quizResponses")){ for(const r of p.rows.quizResponses||[]){ await fsDel("responses",r.id||r._id); } deleted.quizResponses=(p.rows.quizResponses||[]).length; }
-      if(selected.has("zipgrade")){ for(const r of p.rows.zipgrade||[]){ await fsDel("responses",r.id||r._id); } deleted.zipgrade=(p.rows.zipgrade||[]).length; }
-      if(selected.has("projectSubmissions")){ for(const r of p.rows.projectSubmissions||[]){ await fsDel("projectSubmissions",r.id||r._id); } deleted.projectSubmissions=(p.rows.projectSubmissions||[]).length; }
-      if(selected.has("projectGrades")){ for(const r of p.rows.projectGrades||[]){ await fsDel("responses",r.id||r._id); } deleted.projectGrades=(p.rows.projectGrades||[]).length; }
+      if(selected.has("quizResponses")){ deleted.quizResponses=await cleanupDeleteRows("responses",p.rows.quizResponses||[],"Deleting quiz responses",progressState); }
+      if(selected.has("zipgrade")){ deleted.zipgrade=await cleanupDeleteRows("responses",p.rows.zipgrade||[],"Deleting ZipGrade records",progressState); }
+      if(selected.has("projectSubmissions")){ deleted.projectSubmissions=await cleanupDeleteRows("projectSubmissions",p.rows.projectSubmissions||[],"Deleting project submissions",progressState); }
+      if(selected.has("projectGrades")){ deleted.projectGrades=await cleanupDeleteRows("responses",p.rows.projectGrades||[],"Deleting project grade records",progressState); }
       if(selected.has("reading")){
-        for(const r of (data.readingSubmissions||[]).filter(x=>(p.rows.reading||[]).some(y=>String(y.id||y._id)===String(x.id||x._id)))) await fsDel("readingSubmissions",r.id||r._id);
-        for(const r of (data.readingAttemptResets||[]).filter(x=>(p.rows.reading||[]).some(y=>String(y.id||y._id)===String(x.id||x._id)))) await fsDel("readingAttemptResets",r.id||r._id);
-        deleted.reading=(p.rows.reading||[]).length;
+        const readRows=p.rows.reading||[];
+        const rs=readRows.filter(r=>(data.readingSubmissions||[]).some(x=>String(x.id||x._id)===String(r.id||r._id)));
+        const rr=readRows.filter(r=>(data.readingAttemptResets||[]).some(x=>String(x.id||x._id)===String(r.id||r._id)));
+        deleted.reading=(await cleanupDeleteRows("readingSubmissions",rs,"Deleting reading submissions",progressState))+(await cleanupDeleteRows("readingAttemptResets",rr,"Deleting reading resets",progressState));
       }
-      if(selected.has("aiReading")){ for(const r of p.rows.aiReading||[]){ await fsDel("readingTheoryResponses",r.id||r._id); } deleted.aiReading=(p.rows.aiReading||[]).length; }
-      if(selected.has("gradebookRecords")){ for(const r of p.rows.gradebookRecords||[]){ await fsDel("gradebook",r.id||r._id); } deleted.gradebookRecords=(p.rows.gradebookRecords||[]).length; }
+      if(selected.has("aiReading")){ deleted.aiReading=await cleanupDeleteRows("readingTheoryResponses",p.rows.aiReading||[],"Deleting AI reading records",progressState); }
+      if(selected.has("gradebookRecords")){ deleted.gradebookRecords=await cleanupDeleteRows("gradebook",p.rows.gradebookRecords||[],"Deleting gradebook records",progressState); }
       if(selected.has("writing")){
+        setProgress({stage:"Deleting writing submissions",done:progressState.done,total:progressState.total});
         const wdoc=cleanupWriteDocFromSettings(data.appSettings||[]);
         if(wdoc){
           const clone=JSON.parse(JSON.stringify(wdoc));
@@ -6226,23 +6257,25 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
           clone.updatedAt=new Date().toISOString(); clone.cleanupLastUpdatedAt=new Date().toISOString();
           await fsSet("appSettings",clone.id||clone._id,clone);
         }
-        deleted.writing=(p.rows.writing||[]).length;
+        deleted.writing=(p.rows.writing||[]).length; progressState.done+=deleted.writing; setProgress({stage:"Deleting writing submissions",done:progressState.done,total:progressState.total});
       }
-      if(selected.has("classes")){
-        for(const c of p.rows.classes||[]){
-          const mode = selected.has("students") ? ((selected.has("quizResponses")||selected.has("gradebookRecords")||selected.has("reading")||selected.has("zipgrade")||selected.has("projectSubmissions")||selected.has("projectGrades")||selected.has("writing")||selected.has("aiReading")) ? "classStudentsData" : "classStudents") : "classOnly";
-          const r=await adminDeleteClass(c,p.rows.students||[],mode);
-          Object.keys(r||{}).forEach(k=>{ if(typeof r[k]==="number") deleted[k]=(deleted[k]||0)+r[k]; });
-        }
-        deleted.classes=(p.rows.classes||[]).length;
-        if(selected.has("students")) deleted.students=(p.rows.students||[]).length;
-      } else if(selected.has("students")){
-        for(const st of p.rows.students||[]){ await adminDeleteStudent(st,"hide"); }
-        deleted.students=(p.rows.students||[]).length;
+      if(selected.has("students")){
+        const rows=p.rows.students||[];
+        const marked=rows.map(st=>({...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}));
+        setProgress({stage:"Deleting selected students",done:progressState.done,total:progressState.total});
+        await adminBatchSet("users",marked);
+        deleted.students=rows.length;
       }
-      if(selected.has("cleanupLogs")){ for(const l of p.rows.cleanupLogs||[]){ await fsDel("cleanupLogs",l.id||l._id); } deleted.cleanupLogs=(p.rows.cleanupLogs||[]).length; }
+      if(selected.has("classes") && scope!=="students"){
+        const rows=p.rows.classes||[];
+        setProgress({stage:"Deleting classes",done:progressState.done,total:progressState.total});
+        for(const c of rows){ await adminDeleteClass(c,p.rows.students||[],selected.has("students")?"classStudents":"classOnly"); }
+        deleted.classes=rows.length;
+      }
+      if(selected.has("cleanupLogs")){ deleted.cleanupLogs=await cleanupDeleteRows("cleanupLogs",p.rows.cleanupLogs||[],"Deleting cleanup logs",progressState); }
       const logId="cleanup_"+uid();
-      await fsSet("cleanupLogs",logId,{id:logId,scope,classes:p.classes.map(c=>({id:c.id,name:c.name})),items:p.itemIds,deleted,createdAt:new Date().toISOString(),createdBy:user.id||user.name||"teacher"});
+      await fsSet("cleanupLogs",logId,{id:logId,scope,classes:p.classes.map(c=>({id:c.id,name:c.name})),students:p.students.map(s=>({id:s.id,studentId:s.studentId,name:s.name})),items:p.itemIds,deleted,createdAt:new Date().toISOString(),createdBy:user.id||user.name||"teacher"});
+      setProgress({stage:"Done",done:progressState.total,total:progressState.total});
       setMsg("✅ Cleanup completed. Deleted/cleared: "+Object.entries(deleted).map(([k,v])=>k+": "+v).join(" · "));
       setPreview(null); setConfirmText(""); await reload();
     }catch(e){ setMsg("❌ فشل الحذف: "+(e.message||e)); }
@@ -6260,9 +6293,21 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
     <Card style={{marginBottom:"10px"}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px"}}>
-        <div><Label text="Delete Scope"/><select value={scope} onChange={e=>{setScope(e.target.value);setPreview(null);}} style={input}><option value="class">One Class</option><option value="all">All Classes</option></select></div>
-        <div><Label text="Class"/><select disabled={scope==="all"} value={classId} onChange={e=>{setClassId(e.target.value);setPreview(null);}} style={{...input,opacity:scope==="all"?0.55:1}}>{(myClasses||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div><Label text="Delete Scope"/><select value={scope} onChange={e=>{setScope(e.target.value);setPreview(null);setSelectedStudentIds({});}} style={input}><option value="class">One Class</option><option value="students">Selected Students</option><option value="all">All Classes</option></select></div>
+        <div><Label text="Class"/><select disabled={scope==="all"} value={classId} onChange={e=>{setClassId(e.target.value);setPreview(null);setSelectedStudentIds({});}} style={{...input,opacity:scope==="all"?0.55:1}}>{(myClasses||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
       </div>
+      {scope==="students"&&<div style={{marginTop:"10px",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",background:"#f8fafc"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"7px"}}>
+          <b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Select students in this class</b>
+          <label style={{fontSize:"11px",fontWeight:800,color:C.p,fontFamily:F}}><input type="checkbox" checked={studentsInCurrentClass.length>0&&studentsInCurrentClass.every(st=>selectedStudentIds[String(st.id||st._id||st.studentId)])} onChange={e=>{const next={}; if(e.target.checked){studentsInCurrentClass.forEach(st=>next[String(st.id||st._id||st.studentId)]=true);} setSelectedStudentIds(next); setPreview(null);}}/> Select all</label>
+        </div>
+        <div style={{maxHeight:"180px",overflow:"auto",display:"grid",gridTemplateColumns:"1fr",gap:"6px"}}>
+          {studentsInCurrentClass.map(st=><label key={st.id||st._id||st.studentId} style={{display:"flex",gap:"8px",alignItems:"center",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",background:selectedStudentIds[String(st.id||st._id||st.studentId)]?"#eff6ff":"#fff",fontFamily:F}}>
+            <input type="checkbox" checked={!!selectedStudentIds[String(st.id||st._id||st.studentId)]} onChange={e=>{const k=String(st.id||st._id||st.studentId); setSelectedStudentIds(prev=>{const n={...prev}; if(e.target.checked)n[k]=true; else delete n[k]; return n;}); setPreview(null);}}/>
+            <span style={{fontSize:"12px",fontWeight:800,color:C.tx}}>{st.name} <span style={{color:C.mu,fontWeight:700}}>#{st.studentId||st.id}</span></span>
+          </label>)}
+        </div>
+      </div>}
       <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
         <Stat icon="🏫" label="Classes affected" value={selectedClasses.length} color={scope==="all"?C.d:C.p}/><Stat icon="👥" label="Students affected" value={selectedStudents.length} color={scope==="all"?C.d:C.pu}/><Stat icon="☑️" label="Data types" value={selectedItemIds.length} color={C.w}/>
       </div>
@@ -6278,6 +6323,11 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{marginTop:"10px",padding:"9px",borderRadius:"9px",background:scope==="all"?"#fef2f2":"#fff7ed",fontSize:"12px",fontFamily:F,color:scope==="all"?"#991b1b":"#9a3412"}}>Confirmation required: <b>{correctConfirm}</b></div>
       <input value={confirmText} onChange={e=>setConfirmText(e.target.value)} placeholder={correctConfirm} style={{...input,marginTop:"8px",borderColor:adminConfirmOk(confirmText,correctConfirm)?C.s:C.br}}/>
       <Btn color={C.d} disabled={busy||!adminConfirmOk(confirmText,correctConfirm)} onClick={executeDelete} style={{width:"100%",marginTop:"8px"}}>🗑️ Delete Selected Data Permanently</Btn>
+    </Card>}
+    {progress&&<Card style={{marginBottom:"10px",fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F}}>
+      <div>{progress.stage||"Working..."}</div>
+      <div style={{height:"10px",background:"#e5e7eb",borderRadius:"999px",overflow:"hidden",marginTop:"7px"}}><div style={{height:"100%",width:((progress.total?Math.min(100,Math.round((progress.done/progress.total)*100)):0))+"%",background:C.p}}></div></div>
+      <div style={{marginTop:"5px",color:C.mu}}>{progress.done||0} / {progress.total||0}</div>
     </Card>}
     {msg&&<Card style={{whiteSpace:"pre-wrap",fontSize:"12px",fontWeight:"700",color:msg.startsWith("❌")?C.d:msg.startsWith("✅")?C.s:C.tx,fontFamily:F}}>{msg}</Card>}
   </div>;
@@ -6719,7 +6769,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
     try{
       setAdminBusy("⏳ Deleting student... please wait.");
-      const res=await adminDeleteStudent(st,mode);
+      const res=await adminDeleteStudent(st,mode,{onProgress:(p)=>setAdminBusy("⏳ "+(p.stage||"Deleting")+"... "+(p.total?(p.done+" / "+p.total):""))});
       setAdminBusy("✅ Student deleted. "+JSON.stringify(res));
       await reload();
       setTimeout(()=>setAdminBusy(""),3500);
