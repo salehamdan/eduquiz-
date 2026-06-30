@@ -21,7 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
-<!-- FINAL_CLASS_DELETE_SPEED_FIX_20260630 -->
+<!-- FAST_ADMIN_FIX_20260630 -->
 <!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
 <!-- PROJECTS_CLASSMATE_COPY_CHECK_20260629 -->
 <!-- READING_PASSAGE_STUDENT_VISIBLE_FAB_HIDE_20260629 -->
@@ -154,7 +154,7 @@ function canonicalClassId(v){
   return s;
 }
 
-// FINAL_CLASS_DELETE_SPEED_FIX_20260630
+// FAST_ADMIN_FIX_20260630
 function adminClassKey(v){ return String(v||"").trim(); }
 function adminDeletedClassSet(){
   const set=new Set();
@@ -5983,32 +5983,114 @@ function adminConfirmOk(input, phrase){
   function norm(x){return String(x||"").trim().replace(/\s+/g," ").toUpperCase();}
   return norm(input)===norm(phrase);
 }
+async function adminFastQuery(col, field, value){
+  value = value==null ? "" : String(value).trim();
+  if(!value) return [];
+  if(!FIREBASE_OK){
+    const arr = await fsAll(col);
+    return (arr||[]).filter(x=>String(x&&x[field]||"").trim()===value);
+  }
+  try{
+    const snap = await db.collection(col).where(field,"==",value).get();
+    return snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
+  }catch(e){ console.warn("fast query failed", col, field, value, e&&e.message); return []; }
+}
+function adminUniqueRows(rows){
+  const m={};
+  (rows||[]).forEach(r=>{const id=String((r&&(r._id||r.id))||""); if(id) m[id]=r;});
+  return Object.values(m);
+}
+async function adminBatchDelete(col, rows){
+  rows=adminUniqueRows(rows||[]);
+  if(!rows.length) return 0;
+  if(!FIREBASE_OK){ for(const r of rows){ await fsDel(col,r.id||r._id); } return rows.length; }
+  let count=0;
+  for(let i=0;i<rows.length;i+=450){
+    const batch=db.batch();
+    rows.slice(i,i+450).forEach(r=>{const id=r._id||r.id; if(id){ batch.delete(db.collection(col).doc(String(id))); count++; }});
+    await batch.commit();
+  }
+  return count;
+}
+async function adminBatchSet(col, rows){
+  rows=(rows||[]).filter(r=>r && (r.id||r._id));
+  if(!rows.length) return 0;
+  if(!FIREBASE_OK){ for(const r of rows){ await fsSet(col,r.id||r._id,r); } return rows.length; }
+  let count=0;
+  for(let i=0;i<rows.length;i+=450){
+    const batch=db.batch();
+    rows.slice(i,i+450).forEach(r=>{const id=r.id||r._id; if(id){ batch.set(db.collection(col).doc(String(id)),{...r,id:String(id)},{merge:false}); count++; }});
+    await batch.commit();
+  }
+  return count;
+}
+function adminStudentFastTokens(st){
+  const set=new Set();
+  if(!st) return [];
+  [st.id,st._id,st.studentId,st.studentNumber,st.password,eqDigits(st.studentId||""),eqDigits(st.id||"")].concat(st.aliasIds||[],st.aliasStudentIds||[]).forEach(v=>{if(v!==undefined&&v!==null&&String(v).trim()) set.add(String(v).trim());});
+  const d=eqDigits(st.studentId||st.id||"");
+  if(d) set.add("student_"+d);
+  return Array.from(set).filter(Boolean).slice(0,8);
+}
+async function adminFindStudentRecordsFast(st, col){
+  const tokens=adminStudentFastTokens(st);
+  const fields=["studentId","userId","uid","studentNumber","studentIdNumber","student_id","ownerId","createdBy","password","studentPassword","restoredFromStudentId","restoredFrom"];
+  const tasks=[];
+  tokens.forEach(t=>fields.forEach(f=>tasks.push(adminFastQuery(col,f,t))));
+  const chunks=await Promise.all(tasks);
+  return adminUniqueRows([].concat(...chunks));
+}
 async function adminDeleteStudentRecords(st, opts){
   opts=opts||{};
   const deleted={responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,writing:0,notes:0};
-  const [responses,readingSubmissions,readingAttemptResets,readingTheoryResponses,projectSubmissions,gradebook,notes,appSettings]=await Promise.all([fsAll("responses"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryResponses"),fsAll("projectSubmissions"),fsAll("gradebook"),fsAll("notes"),fsAll("appSettings")]);
-  for(const r of (responses||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("responses",r.id||r._id); deleted.responses++; }
-  for(const r of (readingSubmissions||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingSubmissions",r.id||r._id); deleted.reading++; }
-  for(const r of (readingAttemptResets||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingAttemptResets",r.id||r._id); deleted.reading++; }
-  for(const r of (readingTheoryResponses||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("readingTheoryResponses",r.id||r._id); deleted.readingTheory++; }
-  for(const r of (projectSubmissions||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("projectSubmissions",r.id||r._id); deleted.projects++; }
-  for(const r of (gradebook||[]).filter(r=>adminStudentMatchesRecord(r,st))){ await fsDel("gradebook",r.id||r._id); deleted.gradebook++; }
-  for(const n of (notes||[]).filter(n=>String(n.studentId||"")===String(st.id||"") || String(n.studentId||"")===String(st.studentId||""))){ await fsDel("notes",n.id||n._id); deleted.notes++; }
-  const wdoc=cleanupWriteDocFromSettings(appSettings||[]);
-  if(wdoc){
-    const clone=JSON.parse(JSON.stringify(wdoc));
-    const before=(clone.submissions||[]).length;
-    clone.submissions=(clone.submissions||[]).filter(x=>!adminStudentMatchesRecord(x,st));
-    deleted.writing=before-clone.submissions.length;
-    if(deleted.writing>0){ clone.updatedAt=new Date().toISOString(); clone.cleanupLastUpdatedAt=new Date().toISOString(); await fsSet("appSettings",clone.id||clone._id,clone); }
-  }
+  const [responses,readingSubmissions,readingAttemptResets,readingTheoryResponses,projectSubmissions,gradebook,notes]=await Promise.all([
+    adminFindStudentRecordsFast(st,"responses"),
+    adminFindStudentRecordsFast(st,"readingSubmissions"),
+    adminFindStudentRecordsFast(st,"readingAttemptResets"),
+    adminFindStudentRecordsFast(st,"readingTheoryResponses"),
+    adminFindStudentRecordsFast(st,"projectSubmissions"),
+    adminFindStudentRecordsFast(st,"gradebook"),
+    adminFindStudentRecordsFast(st,"notes")
+  ]);
+  deleted.responses=await adminBatchDelete("responses",responses);
+  deleted.reading+=(await adminBatchDelete("readingSubmissions",readingSubmissions));
+  deleted.reading+=(await adminBatchDelete("readingAttemptResets",readingAttemptResets));
+  deleted.readingTheory=await adminBatchDelete("readingTheoryResponses",readingTheoryResponses);
+  deleted.projects=await adminBatchDelete("projectSubmissions",projectSubmissions);
+  deleted.gradebook=await adminBatchDelete("gradebook",gradebook);
+  deleted.notes=await adminBatchDelete("notes",notes);
+  // Writing submissions are stored inside one appSettings document; keep this targeted and optional.
+  try{
+    const appSettings=await fsAll("appSettings");
+    const wdoc=cleanupWriteDocFromSettings(appSettings||[]);
+    if(wdoc){
+      const clone=JSON.parse(JSON.stringify(wdoc));
+      const before=(clone.submissions||[]).length;
+      clone.submissions=(clone.submissions||[]).filter(x=>!adminStudentMatchesRecord(x,st));
+      deleted.writing=before-clone.submissions.length;
+      if(deleted.writing>0){ clone.updatedAt=new Date().toISOString(); clone.cleanupLastUpdatedAt=new Date().toISOString(); await fsSet("appSettings",clone.id||clone._id,clone); }
+    }
+  }catch(e){}
   return deleted;
 }
 async function adminDeleteStudent(st, mode){
   // mode: removeClass | hide | hard
   if(mode==="removeClass"){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); return {student:"removed from class"}; }
-  if(mode==="hard"){ const deleted=await adminDeleteStudentRecords(st); await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); return deleted; }
+  if(mode==="hard"){
+    const deleted=await adminDeleteStudentRecords(st);
+    await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()});
+    return deleted;
+  }
   await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); return {student:"deleted"};
+}
+async function adminFastClassStudents(cls, fallbackStudents){
+  const aliases=adminClassAliases(cls);
+  const tasks=[];
+  aliases.forEach(a=>{ tasks.push(adminFastQuery("users","classId",a)); tasks.push(adminFastQuery("users","className",a)); });
+  const rows=adminUniqueRows([].concat(...(await Promise.all(tasks))));
+  const aliasSet=new Set(aliases.map(canonicalClassId));
+  const fb=(fallbackStudents||[]).filter(u=>u&&u.role==="student"&&!u.deleted&&aliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
+  return adminUniqueRows(rows.concat(fb)).filter(u=>u&&u.role==="student"&&!u.deleted);
 }
 async function adminDeleteClass(cls, students, mode){
   // mode: classOnly | classStudents | classStudentsData
@@ -6020,23 +6102,24 @@ async function adminDeleteClass(cls, students, mode){
     const base={...(cls||{}),id:canonical||cls.id||cls._id,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,cleanupDeletedAt:stamp,updatedAt:today()};
     const ids=Array.from(new Set([canonical, cls&&cls.id, cls&&cls._id].concat(aliases))).filter(Boolean);
     adminRememberDeletedClassIds(ids);
-    for(const id of ids){
-      // Always set tombstones, even if the original row came from PRELOADED_CLASSES or an English alias.
-      await fsSet("classes", id, {...base, id});
-    }
+    await adminBatchSet("classes", ids.map(id=>({...base,id})));
   }
+  const studs=await adminFastClassStudents(cls, students);
   if(mode==="classOnly"){
-    // Move matching students out of the class first, then hide/delete all aliases of the class.
-    for(const st of students){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); }
+    await adminBatchSet("users", studs.map(st=>({...st,classId:"",updatedAt:today()})));
     await writeClassTombstones();
-    return {class:"deleted", studentsMoved:students.length};
+    return {class:"deleted", studentsMoved:studs.length};
   }
-  for(const st of students){
-    const d=await adminDeleteStudent(st, mode==="classStudentsData"?"hard":"hide");
-    Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0));
+  if(mode==="classStudentsData"){
+    for(const st of studs){
+      const d=await adminDeleteStudent(st,"hard");
+      Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0));
+    }
+  } else {
+    await adminBatchSet("users", studs.map(st=>({...st,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()})));
   }
   await writeClassTombstones();
-  deleted.students=students.length; deleted.classes=1; return deleted;
+  deleted.students=studs.length; deleted.classes=1; return deleted;
 }
 
 
@@ -6145,8 +6228,18 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
         }
         deleted.writing=(p.rows.writing||[]).length;
       }
-      if(selected.has("students")){ for(const st of p.rows.students||[]){ await hardDeleteOrMark("users",st); } deleted.students=(p.rows.students||[]).length; }
-      if(selected.has("classes")){ for(const c of p.rows.classes||[]){ await hardDeleteOrMark("classes",c); } deleted.classes=(p.rows.classes||[]).length; }
+      if(selected.has("classes")){
+        for(const c of p.rows.classes||[]){
+          const mode = selected.has("students") ? ((selected.has("quizResponses")||selected.has("gradebookRecords")||selected.has("reading")||selected.has("zipgrade")||selected.has("projectSubmissions")||selected.has("projectGrades")||selected.has("writing")||selected.has("aiReading")) ? "classStudentsData" : "classStudents") : "classOnly";
+          const r=await adminDeleteClass(c,p.rows.students||[],mode);
+          Object.keys(r||{}).forEach(k=>{ if(typeof r[k]==="number") deleted[k]=(deleted[k]||0)+r[k]; });
+        }
+        deleted.classes=(p.rows.classes||[]).length;
+        if(selected.has("students")) deleted.students=(p.rows.students||[]).length;
+      } else if(selected.has("students")){
+        for(const st of p.rows.students||[]){ await adminDeleteStudent(st,"hide"); }
+        deleted.students=(p.rows.students||[]).length;
+      }
       if(selected.has("cleanupLogs")){ for(const l of p.rows.cleanupLogs||[]){ await fsDel("cleanupLogs",l.id||l._id); } deleted.cleanupLogs=(p.rows.cleanupLogs||[]).length; }
       const logId="cleanup_"+uid();
       await fsSet("cleanupLogs",logId,{id:logId,scope,classes:p.classes.map(c=>({id:c.id,name:c.name})),items:p.itemIds,deleted,createdAt:new Date().toISOString(),createdBy:user.id||user.name||"teacher"});
@@ -6183,8 +6276,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       <b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>Preview Summary</b>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"7px",marginTop:"9px"}}>{CLEANUP_ITEMS.filter(it=>preview.itemIds.includes(it.id)).map(it=><div key={it.id} style={{display:"flex",justifyContent:"space-between",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#f8fafc",fontFamily:F}}><span style={{fontSize:"12px",color:C.tx,fontWeight:"700"}}>{it.label}</span><b style={{color:(preview.counts[it.id]||0)>0?C.d:C.mu,fontSize:"12px"}}>{preview.counts[it.id]||0}</b></div>)}</div>
       <div style={{marginTop:"10px",padding:"9px",borderRadius:"9px",background:scope==="all"?"#fef2f2":"#fff7ed",fontSize:"12px",fontFamily:F,color:scope==="all"?"#991b1b":"#9a3412"}}>Confirmation required: <b>{correctConfirm}</b></div>
-      <input value={confirmText} onChange={e=>setConfirmText(e.target.value)} placeholder={correctConfirm} style={{...input,marginTop:"8px",borderColor:confirmText.trim()===correctConfirm?C.s:C.br}}/>
-      <Btn color={C.d} disabled={busy||confirmText.trim()!==correctConfirm} onClick={executeDelete} style={{width:"100%",marginTop:"8px"}}>🗑️ Delete Selected Data Permanently</Btn>
+      <input value={confirmText} onChange={e=>setConfirmText(e.target.value)} placeholder={correctConfirm} style={{...input,marginTop:"8px",borderColor:adminConfirmOk(confirmText,correctConfirm)?C.s:C.br}}/>
+      <Btn color={C.d} disabled={busy||!adminConfirmOk(confirmText,correctConfirm)} onClick={executeDelete} style={{width:"100%",marginTop:"8px"}}>🗑️ Delete Selected Data Permanently</Btn>
     </Card>}
     {msg&&<Card style={{whiteSpace:"pre-wrap",fontSize:"12px",fontWeight:"700",color:msg.startsWith("❌")?C.d:msg.startsWith("✅")?C.s:C.tx,fontFamily:F}}>{msg}</Card>}
   </div>;
@@ -6207,6 +6300,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [resumeAfterEdit,setResumeAfterEdit]=useState(false);
   const [clsModal,setClsModal]=useState(false),[newCls,setNewCls]=useState({name:"",grade:""}),[manageClass,setManageClass]=useState(null),[search,setSearch]=useState(""),[sortBy,setSortBy]=useState("name"),[filterCls,setFilterCls]=useState("all");
   const [addStuModal,setAddStuModal]=useState(null),[addStuForm,setAddStuForm]=useState({name:"",studentId:"",password:""}),[addStuMsg,setAddStuMsg]=useState("");
+  const [adminBusy,setAdminBusy]=useState("");
   const [shareModal,setShareModal]=useState(null);
   const [pendingExpanded,setPendingExpanded]=useState(false);
   const [qDash,setQDash]=useState(false);
@@ -6585,17 +6679,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const cls=addStuModal; if(!cls)return;
     const name=(addStuForm.name||"").trim(), sid=(addStuForm.studentId||"").trim(), pass=(addStuForm.password||sid).trim();
     if(!name||!sid){setAddStuMsg("Name and Student ID are required.");return;}
-    const all=(await loadAllData()).users||[];
-    const existing=all.find(u=>u.role==="student" && !u.deleted && String(u.studentId||"").trim()===sid);
+    setAddStuMsg("⏳ Checking student ID...");
+    const found=await adminFastQuery("users","studentId",sid);
+    const existing=(found||[]).find(u=>u.role==="student" && !u.deleted);
     if(existing){
       if(!window.confirm("This Student ID already exists: "+existing.name+" in "+((data.classes||[]).find(c=>c.id===existing.classId)?.name||"No class")+".\nMove this existing student to "+cls.name+" instead of creating a duplicate?")){ setAddStuMsg("Cancelled. No duplicate was created."); return; }
-      await fsSet("users",existing.id,{...existing,classId:cls.id,updatedAt:today()});
-      await reload(); setAddStuMsg("✅ Existing student moved to this class."); setTimeout(()=>setAddStuModal(null),600); return;
+      setAddStuMsg("⏳ Moving existing student... please wait.");
+      await fsSet("users",existing.id||existing._id,{...existing,id:existing.id||existing._id,classId:cls.id,updatedAt:today()});
+      setAddStuMsg("✅ Existing student moved to this class."); await reload(); setTimeout(()=>setAddStuModal(null),600); return;
     }
     const id="student_"+sid;
     setAddStuMsg("⏳ Adding student... please wait.");
     await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,password:pass||sid,createdAt:today()});
-    await reload(); setAddStuMsg("✅ Student added."); setTimeout(()=>setAddStuModal(null),600);
+    setAddStuMsg("✅ Student added."); await reload(); setTimeout(()=>setAddStuModal(null),600);
   }
   async function deleteClass(cls){
     const classAliasSet=new Set(adminClassAliases(cls).map(canonicalClassId));
@@ -6606,9 +6702,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
-    alert("Working... deleting class. Please wait until the Done message appears.");
-    const res=await adminDeleteClass(cls,studs,mode);
-    alert("Done. "+JSON.stringify(res)); await reload();
+    try{
+      setAdminBusy("⏳ Deleting class... please keep this page open.");
+      const res=await adminDeleteClass(cls,studs,mode);
+      setAdminBusy("✅ Class deleted. "+JSON.stringify(res));
+      await reload();
+      setTimeout(()=>setAdminBusy(""),3500);
+    }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
   }
   async function deleteStudent(st){
     const choice=prompt("Delete student: "+st.name+" #"+(st.studentId||"")+"\n\nType one option number:\n1 = Remove from class only\n2 = Delete student only\n3 = Delete student + all results\n\nFor safety, type 1, 2, or 3:","1");
@@ -6617,9 +6717,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="hard"?"DELETE STUDENT DATA":"DELETE STUDENT";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
-    alert("Working... deleting student. Please wait until the Done message appears.");
-    const res=await adminDeleteStudent(st,mode);
-    alert("Done. "+JSON.stringify(res)); await reload();
+    try{
+      setAdminBusy("⏳ Deleting student... please wait.");
+      const res=await adminDeleteStudent(st,mode);
+      setAdminBusy("✅ Student deleted. "+JSON.stringify(res));
+      await reload();
+      setTimeout(()=>setAdminBusy(""),3500);
+    }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
   }
 
   function quizLink(quiz){
@@ -6644,6 +6748,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <TabBar tabs={tabs} active={tab} onChange={setTab}/>
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
+        {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F}}>{adminBusy}</Card>}
         {tab==="overview" && <div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"9px",marginBottom:"13px"}}>
             <Stat icon="📋" label="Quizzes" value={myQuizzes.length} color={C.p}/><Stat icon="👥" label="Students" value={myStudents.length} color={C.pu}/><Stat icon="📝" label="Submissions" value={myResps.length} color={C.s}/><Stat icon="🚨" label="Need Help" value={flags.length} color={C.d}/>
