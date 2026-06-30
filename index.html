@@ -171,6 +171,53 @@ function adminRememberDeletedClassIds(ids){
     localStorage.setItem("eq_deleted_class_ids", JSON.stringify(Array.from(set)));
   }catch(e){}
 }
+
+function adminDeletedStudentSet(){
+  const set=new Set();
+  try{ (JSON.parse(localStorage.getItem("eq_deleted_student_ids")||"[]")||[]).forEach(x=>{ if(x) set.add(String(x)); }); }catch(e){}
+  return set;
+}
+function adminRememberDeletedStudentIds(ids){
+  try{
+    const set=adminDeletedStudentSet();
+    (ids||[]).forEach(x=>{ if(x) set.add(String(x)); });
+    localStorage.setItem("eq_deleted_student_ids", JSON.stringify(Array.from(set)));
+  }catch(e){}
+}
+function adminStudentDeleteKeys(u){
+  const out=[];
+  if(!u) return out;
+  [u.id,u._id,u.studentId,u.studentNumber,u.number,u.authUid,u.linkedAuthUid,u.email,u.password].forEach(v=>{ if(v) out.push(String(v)); });
+  const d=eqDigits(u.studentId||u.studentNumber||u.number||u.id||"");
+  if(d){ out.push(d); out.push("student_"+d); }
+  try{ (u.aliasIds||[]).concat(u.aliasStudentIds||[],u.linkedIds||[],u.linkedStudentIds||[]).forEach(v=>{ if(v) out.push(String(v)); }); }catch(e){}
+  return Array.from(new Set(out.filter(Boolean)));
+}
+function adminRememberDeletedStudent(u){ adminRememberDeletedStudentIds(adminStudentDeleteKeys(u)); }
+function isStudentTombstone(u){ return !!(u && u.role==="student" && (u.deleted===true || u.status==="deleted" || u.hidePreloaded || u.permanentDeleted || u.cleanupDeletedAt || u.adminDeletedAt)); }
+function deletedStudentKeySetFromRows(rows){
+  const set=adminDeletedStudentSet();
+  (rows||[]).forEach(u=>{ if(isStudentTombstone(u)) adminStudentDeleteKeys(u).forEach(k=>set.add(String(k))); });
+  return set;
+}
+function studentMatchesDeletedSet(u,set){
+  if(!u||!set) return false;
+  return adminStudentDeleteKeys(u).some(k=>set.has(String(k)));
+}
+function activeStudentInData(user,data){
+  if(!user || String(user.role||"")!=="student") return true;
+  const set=deletedStudentKeySetFromRows((data&&data.users)||[]);
+  if(studentMatchesDeletedSet(user,set)) return false;
+  const sid=eqDigits(user.studentId||user.id||"");
+  const list=(data&&data.users)||[];
+  const found=list.find(u=>u && u.role==="student" && !isStudentTombstone(u) && (String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid)));
+  if(!found) return false;
+  const cid=canonicalClassId(found.classId||user.classId||"");
+  if(!cid || (typeof adminDeletedClassSet==="function" && adminDeletedClassSet().has(cid))) return false;
+  const classes=(data&&data.classes)||[];
+  if(classes.length && !classes.some(c=>canonicalClassId(c.id||c.name||c.grade)===cid)) return false;
+  return true;
+}
 function adminClassAliases(c){
   const vals=[c&&c.id,c&&c._id,c&&c.name,c&&c.grade,c&&c.classId,c&&c.className].filter(Boolean).map(String);
   const out=new Set(vals);
@@ -355,7 +402,9 @@ function ensureProtectedStudents(rows){
   ];
   const out=[];
   const used={};
+  const deletedSet=(typeof deletedStudentKeySetFromRows==="function")?deletedStudentKeySetFromRows(rows||[]):new Set();
   specs.forEach(sp=>{
+    if(deletedSet.has(String(sp.sid)) || deletedSet.has("student_"+String(sp.sid))) return;
     const matches=(rows||[]).filter(u=>protectedStudentMatch(u,sp.sid,sp.aliases));
     const tombstone=matches.find(u=>u && u.deleted && (u.hidePreloaded||u.permanentDeleted||u.cleanupDeletedAt||u.adminDeletedAt));
     if(tombstone){ matches.forEach(u=>{used[u.id]=true;}); return; }
@@ -385,9 +434,11 @@ function mergePreloadedRows(existing, preloaded){
   if(preloaded.some(function(x){return x && x.role==="student";})){
     const map = {};
     const sidMap = {};
+    const deletedStudentSet=(typeof deletedStudentKeySetFromRows==="function")?deletedStudentKeySetFromRows(existing||[]):new Set();
     function addUnique(arr, v){ v=String(v||"").trim(); if(v && !arr.includes(v)) arr.push(v); }
     preloaded.forEach(function(x){
       const sid = eqDigits(x.studentId || x.studentNumber || x.number || x.id);
+      if(deletedStudentSet.has(String(x.id||"")) || (sid && (deletedStudentSet.has(sid)||deletedStudentSet.has("student_"+sid)))) return;
       const row = {...x, aliasIds:[], aliasStudentIds:[]};
       addUnique(row.aliasIds, x.id);
       addUnique(row.aliasStudentIds, sid);
@@ -401,6 +452,11 @@ function mergePreloadedRows(existing, preloaded){
       const targetId = (sid && sidMap[sid]) || x.id || (sid ? "student_"+sid : uid());
       const base = map[targetId] || {};
       const official = !!(base.preloaded || base.protectedOfficial);
+      if(isStudentTombstone(x) || (sid && (deletedStudentSet.has(sid)||deletedStudentSet.has("student_"+sid))) || deletedStudentSet.has(String(x.id||""))){
+        map[targetId] = {...base,...x,id:base.id||x.id||targetId,role:"student",deleted:true,hidePreloaded:true,permanentDeleted:true};
+        if(sid) sidMap[sid]=targetId;
+        return;
+      }
       const aliasIds = [].concat(base.aliasIds||[]);
       const aliasStudentIds = [].concat(base.aliasStudentIds||[]);
       [base.id, x.id].concat(x.aliasIds||[], x.linkedIds||[], x.mergeIds||[]).forEach(function(v){addUnique(aliasIds,v);});
@@ -1643,6 +1699,9 @@ function Landing({onLogin, prefillQuiz}) {
       setErr("رقم الطالب غير موجود في قوائم الفصل. تأكد من الرقم أو تواصل مع معلمك.\nStudent ID not found. Please check the number or contact your teacher.");
       setLoading(false); return;
     }
+    // ── Block deleted/archived student IDs ──
+    const tomb = users.find(function(u){ return u && u.role==="student" && isStudentTombstone(u) && (String(u.id||"") === "student_"+enteredId || String(u.studentId||"").trim()===enteredId || eqDigits(u.id||"")===enteredId); });
+    if(tomb){ setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher."); setLoading(false); return; }
     // ── Check class matches ──
     if (preloaded.classId && f.classId && !sameClassId(preloaded.classId, f.classId)) {
       setErr("رقم الطالب لا ينتمي للفصل المختار. تأكد من الفصل الصحيح.\nThis Student ID does not belong to the selected class.");
@@ -1679,6 +1738,8 @@ function Landing({onLogin, prefillQuiz}) {
     // Check if already registered with exact ID
     let u = users.find(function(u){ return u.role==="student" && !u.deleted && String(u.studentId||"").trim()===enteredId; });
     if (!u) {
+      const tomb = users.find(function(x){ return x && x.role==="student" && isStudentTombstone(x) && (String(x.id||"") === "student_"+enteredId || String(x.studentId||"").trim()===enteredId || eqDigits(x.id||"")===enteredId); });
+      if(tomb){ setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher."); setLoading(false); return; }
       // Exact match only from preloaded roster
       const preloaded = PRELOADED_USERS.find(function(p){ return String(p.studentId)===enteredId; });
       if (!preloaded) {
@@ -6126,12 +6187,19 @@ async function adminDeleteStudent(st, mode, opts){
   opts=opts||{};
   // mode: removeClass | hide | hard
   if(mode==="removeClass"){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); return {student:"removed from class"}; }
+  adminRememberDeletedStudent(st);
+  const tomb={...st,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()};
   if(mode==="hard"){
     const deleted=await adminDeleteStudentRecords(st,opts);
-    await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()});
+    await fsSet("users",st.id,tomb);
+    const sid=eqDigits(st.studentId||st.id||"");
+    if(sid) await fsSet("users","student_"+sid,{...tomb,id:"student_"+sid,studentId:st.studentId||sid});
     return deleted;
   }
-  await fsSet("users",st.id,{...st,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()}); return {student:"deleted"};
+  await fsSet("users",st.id,tomb);
+  const sid=eqDigits(st.studentId||st.id||"");
+  if(sid) await fsSet("users","student_"+sid,{...tomb,id:"student_"+sid,studentId:st.studentId||sid});
+  return {student:"deleted"};
 }
 async function adminFastClassStudents(cls, fallbackStudents){
   const aliases=adminClassAliases(cls);
@@ -6166,7 +6234,8 @@ async function adminDeleteClass(cls, students, mode){
       Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0));
     }
   } else {
-    await adminBatchSet("users", studs.map(st=>({...st,deleted:true,hidePreloaded:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()})));
+    studs.forEach(st=>adminRememberDeletedStudent(st));
+    await adminBatchSet("users", studs.map(st=>({...st,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()})));
   }
   await writeClassTombstones();
   deleted.students=studs.length; deleted.classes=1; return deleted;
@@ -6306,7 +6375,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       }
       if(selected.has("students")){
         const rows=p.rows.students||[];
-        const marked=rows.map(st=>({...st,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}));
+        rows.forEach(st=>adminRememberDeletedStudent(st));
+        const marked=rows.map(st=>({...st,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}));
         setProgress({stage:"Deleting selected students",done:progressState.done,total:progressState.total});
         await adminBatchSet("users",marked);
         deleted.students=rows.length;
@@ -7618,14 +7688,14 @@ function App() {
         try{
           setData(cached);
           if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase());if(cq)setDirectQuiz(cq);}
-          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu)setUser(fixAhmedStudent(cu));else if(sess.id)setUser(fixAhmedStudent(sess));}
+          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cached))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));}
           setLoading(false);
         }catch(e){}
       }
       const d=await loadAllData();setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
-      if(sess){const u=d.users.find(x=>x.id===sess.id);if(u)setUser(fixAhmedStudent(u));else if(sess.id)setUser(fixAhmedStudent(sess));}
+      if(sess){const u=d.users.find(x=>x.id===sess.id);if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
       else if(FIREBASE_OK && auth && auth.currentUser){
         const au=auth.currentUser;
         const linked=d.users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(au.uid));
@@ -7640,6 +7710,18 @@ function App() {
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
+  if(user && user.role==="student" && data && !activeStudentInData(user,data)) {
+    clearSession();
+    try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){}
+    return <div style={{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",padding:"22px",fontFamily:F}}>
+      <div style={{background:"#fff",borderRadius:"18px",padding:"24px",maxWidth:"420px",textAlign:"center",boxShadow:"0 18px 50px rgba(0,0,0,.25)"}}>
+        <div style={{fontSize:"42px",marginBottom:"10px"}}>🚫</div>
+        <h2 style={{margin:"0 0 10px",color:"#0f172a"}}>Account removed</h2>
+        <p style={{color:"#64748b",lineHeight:1.7}}>تم حذف حساب الطالب من المنصة أو لم يعد مرتبطًا بفصل نشط. لا يمكن عرض المهام أو إرسال التسجيلات. تواصل مع المعلم.</p>
+        <button onClick={()=>{clearSession();location.reload();}} style={{marginTop:"12px",border:"none",background:"#2563eb",color:"#fff",borderRadius:"12px",padding:"12px 18px",fontWeight:900}}>Back to login</button>
+      </div>
+    </div>;
+  }
   // If opened via a quiz share link, ALWAYS show the quiz entry (guest), even if someone is logged in.
   if(directQuiz && !user) return <Landing onLogin={handleLogin} prefillQuiz={directQuiz}/>;
   if(directQuiz && user && user.role==="teacher"){
