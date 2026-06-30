@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- FINAL_CLASS_DELETE_SPEED_FIX_20260630 -->
 <!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
 <!-- PROJECTS_CLASSMATE_COPY_CHECK_20260629 -->
 <!-- READING_PASSAGE_STUDENT_VISIBLE_FAB_HIDE_20260629 -->
@@ -142,14 +143,38 @@ function eqDigits(v){
 function canonicalClassId(v){
   const s=String(v||"").trim();
   const n=normalizeNameText(s).replace(/[\s_—–-]+/g," ");
+  const e=s.toLowerCase().replace(/[\s_—–-]+/g," ").trim();
   const d=eqDigits(s);
-  if(s==="class_3_1" || d==="31" || d==="13" || n.includes("ثالث اول") || n.includes("3 1") || n.includes("1 3")) return "class_3_1";
-  if(s==="class_3_2" || d==="32" || d==="23" || n.includes("ثالث ثاني") || n.includes("3 2") || n.includes("2 3")) return "class_3_2";
-  if(s==="class_3_3" || d==="33" || n.includes("ثالث ثالث") || n.includes("3 3")) return "class_3_3";
-  if(s==="class_3_4" || d==="34" || d==="43" || n.includes("ثالث رابع") || n.includes("3 4") || n.includes("4 3")) return "class_3_4";
-  if(s==="class_2_4" || d==="24" || d==="42" || n.includes("ثاني رابع") || n.includes("2 4") || n.includes("4 2")) return "class_2_4";
+  // Arabic + English aliases. This is critical for deleting old/English class names like Second Fourth.
+  if(s==="class_3_1" || d==="31" || d==="13" || n.includes("ثالث اول") || e.includes("third first") || e.includes("3 1") || n.includes("3 1") || n.includes("1 3")) return "class_3_1";
+  if(s==="class_3_2" || d==="32" || d==="23" || n.includes("ثالث ثاني") || e.includes("third second") || e.includes("3 2") || n.includes("3 2") || n.includes("2 3")) return "class_3_2";
+  if(s==="class_3_3" || d==="33" || n.includes("ثالث ثالث") || e.includes("third third") || e.includes("3 3") || n.includes("3 3")) return "class_3_3";
+  if(s==="class_3_4" || d==="34" || d==="43" || n.includes("ثالث رابع") || e.includes("third fourth") || e.includes("3 4") || n.includes("3 4") || n.includes("4 3")) return "class_3_4";
+  if(s==="class_2_4" || d==="24" || d==="42" || n.includes("ثاني رابع") || e.includes("second fourth") || e.includes("2 4") || n.includes("2 4") || n.includes("4 2")) return "class_2_4";
   return s;
 }
+
+// FINAL_CLASS_DELETE_SPEED_FIX_20260630
+function adminClassKey(v){ return String(v||"").trim(); }
+function adminDeletedClassSet(){
+  const set=new Set();
+  try{ (JSON.parse(localStorage.getItem("eq_deleted_class_ids")||"[]")||[]).forEach(x=>{ if(x) set.add(String(x)); }); }catch(e){}
+  return set;
+}
+function adminRememberDeletedClassIds(ids){
+  try{
+    const set=adminDeletedClassSet();
+    (ids||[]).forEach(x=>{ if(x) set.add(String(x)); });
+    localStorage.setItem("eq_deleted_class_ids", JSON.stringify(Array.from(set)));
+  }catch(e){}
+}
+function adminClassAliases(c){
+  const vals=[c&&c.id,c&&c._id,c&&c.name,c&&c.grade,c&&c.classId,c&&c.className].filter(Boolean).map(String);
+  const out=new Set(vals);
+  vals.forEach(v=>{ const cid=canonicalClassId(v); if(cid) out.add(cid); });
+  return Array.from(out).filter(Boolean);
+}
+
 function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
 
 // RESPONSE_STUDENT_LINK_FIX_20260610
@@ -292,22 +317,29 @@ function officialClassRow(id){
 }
 function normalizeClassRows(rows){
   const map={};
-  const deletedOfficial=new Set();
+  const deletedOfficial=adminDeletedClassSet ? adminDeletedClassSet() : new Set();
   (rows||[]).forEach(c=>{
     if(!c) return;
-    const cid=canonicalClassId(c.id||c.name||c.grade);
-    if(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || c.cleanupDeletedAt || c.adminDeletedAt){
+    const aliases=adminClassAliases ? adminClassAliases(c) : [String(c.id||c.name||c.grade||"")];
+    const cid=canonicalClassId(c.id||c.name||c.grade||c._id);
+    const isDeleted=(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || c.cleanupDeletedAt || c.adminDeletedAt);
+    if(isDeleted){
+      aliases.forEach(a=>deletedOfficial.add(a));
       if(cid) deletedOfficial.add(cid);
       if(c.id) map[c.id]={...c,deleted:true};
+      if(c._id) map[c._id]={...c,deleted:true};
       return;
     }
+    // If any alias was already tombstoned, do not bring this class back from PRELOADED_CLASSES.
+    if(aliases.some(a=>deletedOfficial.has(a))) return;
     const official=officialClassRow(cid);
-    if(official) map[cid]={...official,...(map[cid]||{}),...c,deleted:false};
-    else if(c && c.id) map[c.id]=c;
+    if(official) map[cid]={...official,...(map[cid]||{}),...c,id:cid,deleted:false};
+    else if(c && (c.id||c._id)) map[c.id||c._id]={...c,id:c.id||c._id};
   });
   ["class_3_1","class_3_2","class_3_3","class_3_4","class_2_4"].forEach(id=>{ if(!deletedOfficial.has(id) && !map[id]) map[id]=officialClassRow(id); });
   return Object.values(map).filter(function(x){return x && x.deleted!==true && x.status!=="deleted";});
 }
+
 function protectedStudentMatch(u, sid, aliases){
   const id=eqDigits(u&&u.studentId);
   const n=normalizeNameText(u&&u.name);
@@ -5981,20 +6013,32 @@ async function adminDeleteStudent(st, mode){
 async function adminDeleteClass(cls, students, mode){
   // mode: classOnly | classStudents | classStudentsData
   const deleted={};
-  async function deleteClassRow(c){
-    const cid=canonicalClassId(c.id||c.name||c.grade)||c.id;
-    if(c.preloaded || officialClassRow(cid)) await fsSet("classes",cid,{...c,id:cid,deleted:true,hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()});
-    else await fsDel("classes",c.id);
+  const aliases=adminClassAliases(cls);
+  const canonical=canonicalClassId(cls.id||cls._id||cls.name||cls.grade)||cls.id||cls._id;
+  async function writeClassTombstones(){
+    const stamp=new Date().toISOString();
+    const base={...(cls||{}),id:canonical||cls.id||cls._id,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,cleanupDeletedAt:stamp,updatedAt:today()};
+    const ids=Array.from(new Set([canonical, cls&&cls.id, cls&&cls._id].concat(aliases))).filter(Boolean);
+    adminRememberDeletedClassIds(ids);
+    for(const id of ids){
+      // Always set tombstones, even if the original row came from PRELOADED_CLASSES or an English alias.
+      await fsSet("classes", id, {...base, id});
+    }
   }
   if(mode==="classOnly"){
+    // Move matching students out of the class first, then hide/delete all aliases of the class.
     for(const st of students){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); }
-    await deleteClassRow(cls);
+    await writeClassTombstones();
     return {class:"deleted", studentsMoved:students.length};
   }
-  for(const st of students){ const d=await adminDeleteStudent(st, mode==="classStudentsData"?"hard":"hide"); Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0)); }
-  await deleteClassRow(cls);
+  for(const st of students){
+    const d=await adminDeleteStudent(st, mode==="classStudentsData"?"hard":"hide");
+    Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0));
+  }
+  await writeClassTombstones();
   deleted.students=students.length; deleted.classes=1; return deleted;
 }
+
 
 function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [scope,setScope]=useState("class");
@@ -6059,9 +6103,11 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   async function hardDeleteOrMark(col,row){
     const id=row.id||row._id; if(!id)return;
     if(col==="classes"){
-      const cid=canonicalClassId(id||row.name||row.grade)||id;
-      if(row.preloaded || officialClassRow(cid)){ await fsSet("classes",cid,{...row,id:cid,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
-      else { await fsDel("classes",id); }
+      const aliases=adminClassAliases(row);
+      const cid=canonicalClassId(id||row.name||row.grade||row._id)||id;
+      const ids=Array.from(new Set([cid,id,row._id].concat(aliases))).filter(Boolean);
+      adminRememberDeletedClassIds(ids);
+      for(const x of ids){ await fsSet("classes",x,{...row,id:x,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
       return;
     }
     if(col==="users" && row.preloaded){ await fsSet(col,id,{...row,deleted:true,hidePreloaded:true,permanentDeleted:true,cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}); }
@@ -6547,17 +6593,20 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       await reload(); setAddStuMsg("✅ Existing student moved to this class."); setTimeout(()=>setAddStuModal(null),600); return;
     }
     const id="student_"+sid;
+    setAddStuMsg("⏳ Adding student... please wait.");
     await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,password:pass||sid,createdAt:today()});
     await reload(); setAddStuMsg("✅ Student added."); setTimeout(()=>setAddStuModal(null),600);
   }
   async function deleteClass(cls){
-    const studs = data.users.filter(u=>u.role==="student" && u.classId===cls.id && !u.deleted);
+    const classAliasSet=new Set(adminClassAliases(cls).map(canonicalClassId));
+    const studs = data.users.filter(u=>u.role==="student" && !u.deleted && classAliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
     const choice=prompt("Delete class: "+cls.name+"\nStudents: "+studs.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete class + students only\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","1");
     if(!choice)return;
     const map={"1":"classOnly","2":"classStudents","3":"classStudentsData"}; const mode=map[String(choice).trim()];
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
+    alert("Working... deleting class. Please wait until the Done message appears.");
     const res=await adminDeleteClass(cls,studs,mode);
     alert("Done. "+JSON.stringify(res)); await reload();
   }
@@ -6568,6 +6617,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="hard"?"DELETE STUDENT DATA":"DELETE STUDENT";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
+    alert("Working... deleting student. Please wait until the Done message appears.");
     const res=await adminDeleteStudent(st,mode);
     alert("Done. "+JSON.stringify(res)); await reload();
   }
