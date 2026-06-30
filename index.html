@@ -194,6 +194,51 @@ function adminStudentDeleteKeys(u){
   return Array.from(new Set(out.filter(Boolean)));
 }
 function adminRememberDeletedStudent(u){ adminRememberDeletedStudentIds(adminStudentDeleteKeys(u)); }
+function adminDeletedStudentRowsFromData(data){
+  const rows=[];
+  try{ (data&&data.deletedStudents||[]).forEach(x=>{ if(x) rows.push({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}); }); }catch(e){}
+  try{ (data&&data.archivedStudents||[]).forEach(x=>{ if(x) rows.push({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}); }); }catch(e){}
+  return rows;
+}
+function deletedStudentKeySetFromData(data){
+  const rows=[].concat((data&&data.users)||[], adminDeletedStudentRowsFromData(data));
+  return deletedStudentKeySetFromRows(rows);
+}
+async function adminRememberDeletedStudentRemote(st){
+  try{
+    if(!st) return;
+    const sid=eqDigits(st.studentId||st.studentNumber||st.number||st.id||"");
+    const keys=adminStudentDeleteKeys(st);
+    const id=sid?('student_'+sid):String(st.id||uid());
+    const row={id, role:'student', deleted:true, status:'deleted', hidePreloaded:true, permanentDeleted:true, studentId:sid||st.studentId||'', originalId:st.id||'', name:st.name||'', classId:st.classId||'', className:st.className||'', authUid:st.authUid||st.linkedAuthUid||'', keys, deletedAt:new Date().toISOString(), updatedAt:today()};
+    await fsSet('deletedStudents', id, row);
+    // Also write a users tombstone so old merge/preloaded logic cannot revive the student.
+    await fsSet('users', id, row);
+    if(st.id && String(st.id)!==String(id)) await fsSet('users', String(st.id), {...row,id:String(st.id), tombstoneFor:id});
+  }catch(e){ console.warn('deleted student archive failed', e&&e.message); }
+}
+function adminDeletedClassRowsFromData(data){
+  const rows=[];
+  try{ (data&&data.deletedClasses||[]).forEach(x=>{ if(x) rows.push({...x,deleted:true,status:'deleted',hidePreloaded:true,permanentDeleted:true}); }); }catch(e){}
+  try{ (data&&data.archivedClasses||[]).forEach(x=>{ if(x) rows.push({...x,deleted:true,status:'deleted',hidePreloaded:true,permanentDeleted:true}); }); }catch(e){}
+  return rows;
+}
+function deletedClassSetFromData(data){
+  const set=adminDeletedClassSet();
+  try{ adminDeletedClassRowsFromData(data).forEach(c=>adminClassAliases(c).forEach(v=>set.add(String(v)))); }catch(e){}
+  try{ ((data&&data.classes)||[]).forEach(c=>{ if(c&&(c.deleted||c.status==='deleted'||c.hidePreloaded||c.permanentDeleted)) adminClassAliases(c).forEach(v=>set.add(String(v))); }); }catch(e){}
+  return set;
+}
+async function adminRememberDeletedClassRemote(cls){
+  try{
+    if(!cls) return;
+    const canonical=canonicalClassId(cls.id||cls._id||cls.name||cls.grade||cls.classId||'')||String(cls.id||uid());
+    const aliases=adminClassAliases(cls);
+    const row={...cls,id:canonical,deleted:true,status:'deleted',hidePreloaded:true,permanentDeleted:true,aliases,deletedAt:new Date().toISOString(),updatedAt:today()};
+    await fsSet('deletedClasses', canonical, row);
+    await fsSet('classes', canonical, row);
+  }catch(e){ console.warn('deleted class archive failed', e&&e.message); }
+}
 function isStudentTombstone(u){ return !!(u && u.role==="student" && (u.deleted===true || u.status==="deleted" || u.hidePreloaded || u.permanentDeleted || u.cleanupDeletedAt || u.adminDeletedAt)); }
 function deletedStudentKeySetFromRows(rows){
   const set=adminDeletedStudentSet();
@@ -206,16 +251,18 @@ function studentMatchesDeletedSet(u,set){
 }
 function activeStudentInData(user,data){
   if(!user || String(user.role||"")!=="student") return true;
-  const set=deletedStudentKeySetFromRows((data&&data.users)||[]);
+  const set=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(data):deletedStudentKeySetFromRows((data&&data.users)||[]);
   if(studentMatchesDeletedSet(user,set)) return false;
   const sid=eqDigits(user.studentId||user.id||"");
+  if(sid && (set.has(sid)||set.has("student_"+sid))) return false;
   const list=(data&&data.users)||[];
-  const found=list.find(u=>u && u.role==="student" && !isStudentTombstone(u) && (String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid)));
+  const found=list.find(u=>u && u.role==="student" && !isStudentTombstone(u) && !studentMatchesDeletedSet(u,set) && (String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid)));
   if(!found) return false;
   const cid=canonicalClassId(found.classId||user.classId||"");
-  if(!cid || (typeof adminDeletedClassSet==="function" && adminDeletedClassSet().has(cid))) return false;
+  const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
+  if(!cid || delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
   const classes=(data&&data.classes)||[];
-  if(classes.length && !classes.some(c=>canonicalClassId(c.id||c.name||c.grade)===cid)) return false;
+  if(classes.length && !classes.some(c=>!c.deleted && c.status!=="deleted" && canonicalClassId(c.id||c.name||c.grade)===cid)) return false;
   return true;
 }
 function adminClassAliases(c){
@@ -604,15 +651,17 @@ function eqLoadFastDataCache(){
 
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions")
+  const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
-  const users = ensureProtectedStudents(mergePreloadedRows(usersRaw, PRELOADED_USERS));
-  const classes = normalizeClassRows(mergePreloadedRows(classesRaw, PRELOADED_CLASSES));
+  const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
+  const deletedClassRows=(deletedClasses||[]).map(x=>({...x,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
+  const users = ensureProtectedStudents(mergePreloadedRows([].concat(usersRaw||[], deletedStudentRows), PRELOADED_USERS));
+  const classes = normalizeClassRows(mergePreloadedRows([].concat(classesRaw||[], deletedClassRows), PRELOADED_CLASSES));
   // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
   const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  const allData = {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions};
+  const allData = {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses};
   eqSaveFastDataCache(allData);
   return allData;
 }
@@ -1679,8 +1728,16 @@ function Landing({onLogin, prefillQuiz}) {
     if(!f.name.trim()){setErr("Enter your name. Full name or first two names are accepted.");setLoading(false);return;}
     if(!f.classId){setErr("Select your class.");setLoading(false);return;}
     if(!f.password){setErr("Enter your password.");setLoading(false);return;}
-    const u = users.find(u=>u.role==="student" && !u.deleted && (u.studentId||"").toLowerCase()===id);
-    if(!u){setErr("Student ID not found. Check with your teacher.");setLoading(false);return;}
+    const deletedSet=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(users);
+    const idDigits=eqDigits(id);
+    if((idDigits && (deletedSet.has(idDigits)||deletedSet.has("student_"+idDigits))) || deletedSet.has(id)){
+      setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher.");setLoading(false);return;
+    }
+    const u = users.find(u=>u.role==="student" && !isStudentTombstone(u) && !studentMatchesDeletedSet(u,deletedSet) && (u.studentId||"").toLowerCase()===id);
+    if(!u){setErr("Student ID not found or account removed. Check with your teacher.");setLoading(false);return;}
+    const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
+    const cid=canonicalClassId(u.classId||"");
+    if(delCls.has(cid)||delCls.has(String(u.classId||""))){setErr("تم أرشفة هذا الفصل أو حذف حساب الطالب. تواصل مع المعلم.\nThis class/account is archived. Contact your teacher.");setLoading(false);return;}
     if(!sameClassId(u.classId, f.classId)){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
     if(!studentNameMatches(u, f.name)){setErr("Name does not match this Student ID. You may enter your full name or first two names.");setLoading(false);return;}
     if(String(u.password||"") !== String(f.password)){setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
@@ -1691,7 +1748,8 @@ function Landing({onLogin, prefillQuiz}) {
     if(!f.name||!f.studentId||!f.password||!f.classId){setErr("Fill all required fields.");return;}
     if(!f.fatherName||!f.fatherName.trim()){setErr("Please enter your father's name (for password recovery).");return;}
     setLoading(true); setErr("");
-    const users = await fsAll("users");
+    const allD = await loadAllData();
+    const users = allD.users||[];
     const enteredId = f.studentId.trim().replace(/\s/g,"");
     // ── Exact ID match only — no suggestions ──
     const preloaded = PRELOADED_USERS.find(function(u){ return String(u.studentId) === enteredId; });
@@ -1700,7 +1758,8 @@ function Landing({onLogin, prefillQuiz}) {
       setLoading(false); return;
     }
     // ── Block deleted/archived student IDs ──
-    const tomb = users.find(function(u){ return u && u.role==="student" && isStudentTombstone(u) && (String(u.id||"") === "student_"+enteredId || String(u.studentId||"").trim()===enteredId || eqDigits(u.id||"")===enteredId); });
+    const delSetReg=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(allD):deletedStudentKeySetFromRows(users);
+    const tomb = delSetReg.has(enteredId)||delSetReg.has("student_"+enteredId)||users.find(function(u){ return u && u.role==="student" && isStudentTombstone(u) && (String(u.id||"") === "student_"+enteredId || String(u.studentId||"").trim()===enteredId || eqDigits(u.id||"")===enteredId); });
     if(tomb){ setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher."); setLoading(false); return; }
     // ── Check class matches ──
     if (preloaded.classId && f.classId && !sameClassId(preloaded.classId, f.classId)) {
@@ -1733,12 +1792,14 @@ function Landing({onLogin, prefillQuiz}) {
   async function doQuickStart() {
     if(!f.name||!f.studentId){setErr("Enter your name and ID.");return;}
     setLoading(true); setErr("");
-    const users = await fsAll("users");
+    const allD = await loadAllData();
+    const users = allD.users||[];
     const enteredId = f.studentId.trim().replace(/\s/g,"");
     // Check if already registered with exact ID
     let u = users.find(function(u){ return u.role==="student" && !u.deleted && String(u.studentId||"").trim()===enteredId; });
     if (!u) {
-      const tomb = users.find(function(x){ return x && x.role==="student" && isStudentTombstone(x) && (String(x.id||"") === "student_"+enteredId || String(x.studentId||"").trim()===enteredId || eqDigits(x.id||"")===enteredId); });
+      const delSetQS=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(allD):deletedStudentKeySetFromRows(users);
+      const tomb = delSetQS.has(enteredId)||delSetQS.has("student_"+enteredId)||users.find(function(x){ return x && x.role==="student" && isStudentTombstone(x) && (String(x.id||"") === "student_"+enteredId || String(x.studentId||"").trim()===enteredId || eqDigits(x.id||"")===enteredId); });
       if(tomb){ setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher."); setLoading(false); return; }
       // Exact match only from preloaded roster
       const preloaded = PRELOADED_USERS.find(function(p){ return String(p.studentId)===enteredId; });
@@ -4336,9 +4397,16 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 // ── TEACHER APP ───────────────────────────────────────────────
 
 function ReadingProgressStudent({user,data,reload}){
+  if(!activeStudentInData(user,data)){
+    try{ clearSession(); localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); localStorage.removeItem("rp_attempt_records_v11"); }catch(e){}
+    return <Card><strong style={{fontSize:"14px",color:C.d}}>🚫 Account removed</strong><p style={{fontSize:"12px",color:C.mu,lineHeight:1.7}}>تم حذف حسابك أو لم يعد مرتبطًا بفصل نشط. لا يمكن عرض مهام Reading Progress أو إرسال تسجيلات. تواصل مع المعلم.</p></Card>;
+  }
   const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed").filter(t=>{
     if(t.status==="closed") return false;
-    const classOk=!t.classIds||t.classIds.length===0||t.classIds.includes(user.classId);
+    const userCid=canonicalClassId(user.classId||"");
+    const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
+    if(!userCid || delCls.has(userCid) || delCls.has(String(user.classId||""))) return false;
+    const classOk=!t.classIds||t.classIds.length===0||t.classIds.map(canonicalClassId).includes(userCid)||t.classIds.includes(user.classId);
     const studentOk=!t.studentIds||t.studentIds.length===0||t.studentIds.includes(user.id)||t.studentIds.includes(user.studentId);
     const now=new Date();
     const timeOk=(!t.openDate||new Date(t.openDate)<=now)&&(!t.closeDate||new Date(t.closeDate)>=now);
@@ -4512,6 +4580,7 @@ function ReadingProgressStudent({user,data,reload}){
   async function submit(){
     if(submitting){setMsg("Uploading already in progress. Please wait.");return;}
     if(!task||!blob){setMsg("Record your reading first.");return;}
+    try{ const fresh=await loadAllData(); if(!activeStudentInData(user,fresh)){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);localStorage.removeItem("rp_attempt_records_v11");}catch(e){} setMsg("Account removed. Submission blocked. Please contact your teacher."); return; } }catch(e){}
     const key=currentBlobKey();
     if((sentBlobKey && sentBlobKey===key)||isRecordingSubmitted(recordingId)){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
     if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
@@ -4520,28 +4589,15 @@ function ReadingProgressStudent({user,data,reload}){
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
     setMsg("Uploading…");
     const id=uid(); const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
-    let url="";
+    let url=""; let audioDataUrl="";
+    try{ if(blob.size < 900000) audioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
     try{url=await rpUploadAudio(blob,path);}
-    catch(e){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("Upload failed. Check Firebase Storage permissions.");return;}
+    catch(e){ if(!audioDataUrl){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("Upload failed. Check Firebase Storage permissions.");return;} }
+    // الطالب يرسل الصوت فقط. التحليل التلقائي يتم من لوحة المعلم باستخدام مفتاح المعلم/المفتاح المشترك.
     var analysis=null;
     var tx=String(transcript||"").trim();
-    var isAuto = task.autoAnalysis!==false;
-    if(isAuto){
-      setMsg("Analyzing your reading…");
-      try{
-        const openaiKey=(task.openaiKey||localStorage.getItem("rp_openai_api_key")||"").trim();
-        if(openaiKey && !tx){
-          const file=new File([blob],"reading-progress.webm",{type:blob.type||"audio/webm"});
-          const form=new FormData();
-          form.append("file",file); form.append("model","whisper-1"); form.append("language","en"); form.append("response_format","json");
-          const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+openaiKey},body:form});
-          if(resp.ok){ const out=await resp.json(); tx=String(out.text||"").trim(); }
-        }
-        if(tx) analysis=rpAnalyze(task.text,tx,seconds);
-      }catch(e){ /* analysis stays null */ }
-    }
-    const newStatus = analysis ? "pending_review" : "submitted";
-    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,audioPath:path,audioType:blob.type||"audio/webm",transcript:tx,seconds,createdAt:today(),status:newStatus,analysis:analysis||null,analyzedAt:analysis?new Date().toISOString():null};
+    const newStatus = "submitted";
+    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,audioDataUrl:audioDataUrl,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),status:newStatus,analysis:null,analysisStatus:"Waiting for teacher auto analysis",analyzedAt:null};
     try{
       await fsSet("readingSubmissions",id,submission);
       saveStudentAttemptMarker(submission);
@@ -4639,7 +4695,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(s&&s.analysis&&Number.isFinite(Number(s.analysis.fluency))) return Math.round(Number(s.analysis.fluency));
     return null;
   }
-  const subs=rawSubs.filter(s=>!rpOldDeleted(s) && taskIds.has(s.taskId));
+  const rpDeletedStudents=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(data):deletedStudentKeySetFromRows((data&&data.users)||[]);
+  const rpDeletedClasses=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
+  function rpSubIsActive(s){
+    if(!s || rpOldDeleted(s) || !taskIds.has(s.taskId)) return false;
+    const sid=eqDigits(s.studentNumber||s.studentId||"");
+    if(rpDeletedStudents.has(String(s.studentId||""))||rpDeletedStudents.has(String(s.studentNumber||""))||(sid&&(rpDeletedStudents.has(sid)||rpDeletedStudents.has("student_"+sid)))) return false;
+    const cid=canonicalClassId(s.classId||s.className||"");
+    if(rpDeletedClasses.has(String(s.classId||""))||rpDeletedClasses.has(String(s.className||""))||rpDeletedClasses.has(cid)) return false;
+    return true;
+  }
+  const subs=rawSubs.filter(rpSubIsActive);
   async function gen(){
     const topic=title.trim()||"Reading";
     const fallback=rpGenerateTextWords(level,wordCount,topic);
@@ -4697,7 +4763,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }
   }
   async function analyzeWaitingNow(silent){
-    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted").slice(0,20);
+    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && (s.audioDataUrl||s.audioUrl)).slice(0,20);
     if(!waiting.length){ if(!silent) setMsg("No waiting recordings to analyze."); return; }
     let ok=0,fail=0,lastErr="";
     for(const s of waiting){
@@ -4710,7 +4776,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   useEffect(()=>{
     try{localStorage.setItem("rp_teacher_auto_correction", teacherAuto?"1":"0");}catch(e){}
     if(!teacherAuto || autoBusyRef.current) return;
-    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted");
+    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && (s.audioDataUrl||s.audioUrl));
     if(!waiting.length) return;
     autoBusyRef.current=true;
     (async()=>{try{await analyzeWaitingNow(true);}finally{autoBusyRef.current=false;}})();
@@ -6188,6 +6254,7 @@ async function adminDeleteStudent(st, mode, opts){
   // mode: removeClass | hide | hard
   if(mode==="removeClass"){ await fsSet("users",st.id,{...st,classId:"",updatedAt:today()}); return {student:"removed from class"}; }
   adminRememberDeletedStudent(st);
+  await adminRememberDeletedStudentRemote(st);
   const tomb={...st,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()};
   if(mode==="hard"){
     const deleted=await adminDeleteStudentRecords(st,opts);
@@ -6220,6 +6287,7 @@ async function adminDeleteClass(cls, students, mode){
     const base={...(cls||{}),id:canonical||cls.id||cls._id,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,cleanupDeletedAt:stamp,updatedAt:today()};
     const ids=Array.from(new Set([canonical, cls&&cls.id, cls&&cls._id].concat(aliases))).filter(Boolean);
     adminRememberDeletedClassIds(ids);
+    await adminRememberDeletedClassRemote(base);
     await adminBatchSet("classes", ids.map(id=>({...base,id})));
   }
   const studs=await adminFastClassStudents(cls, students);
@@ -9066,6 +9134,7 @@ document.addEventListener("click", function(e){
     const st=String((r&&r.status)||'').toLowerCase();
     if(!r || r.deleted===true) return false;
     try{ if(typeof adminDeletedClassSet==='function'){ const set=adminDeletedClassSet(); const cid=(typeof canonicalClassId==='function'?canonicalClassId(r.classId||r.className||''):(r.classId||r.className||'')); if(set.has(String(r.classId||''))||set.has(String(r.className||''))||set.has(String(cid||''))) return false; } }catch(e){}
+    try{ if(typeof adminDeletedStudentSet==='function'){ const ds=adminDeletedStudentSet(); const sid=(typeof eqDigits==='function'?eqDigits(r.studentNumber||r.studentId||''):(r.studentNumber||r.studentId||'')); if(ds.has(String(r.studentId||''))||ds.has(String(r.studentNumber||''))||(sid&&(ds.has(String(sid))||ds.has('student_'+sid)))) return false; } }catch(e){}
     return !!(r && hasAudio(r) && !analyzed(r) && !['accepted','approved','rejected','deleted','retake_allowed'].includes(st));
   }
   function clean(s){ return String(s||'').replace(/\s+/g,' ').trim(); }
@@ -9155,7 +9224,7 @@ document.addEventListener("click", function(e){
           ok++;
         }catch(e){
           fail++; lastErr=e && e.message ? e.message : String(e);
-          try{ await db.collection('readingSubmissions').doc(r.id).set({analysisStatus:'Failed: '+lastErr.slice(0,160), updatedAt:new Date().toISOString()},{merge:true}); }catch(_e){}
+          try{ await db.collection('readingSubmissions').doc(r.id).set({analysisStatus:'Waiting for teacher retry: '+lastErr.slice(0,160), lastAnalysisError:lastErr.slice(0,200), updatedAt:new Date().toISOString()},{merge:true}); }catch(_e){}
         }
       }
       window.__rpLastDirectAutoResult={ok,fail,lastErr,checked:todo.length,at:new Date().toISOString()};
