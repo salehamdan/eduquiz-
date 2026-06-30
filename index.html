@@ -22,6 +22,7 @@
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
+<!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
 <!-- CLEANUP_SELECTED_STUDENTS_PROGRESS_SAFE_20260630 -->
 <!-- FAST_ADMIN_FIX_20260630 -->
 <!-- STUDENT_CLASS_ADMIN_FIX_20260630 -->
@@ -8038,7 +8039,11 @@ document.addEventListener("click", function(e){
     studentStatus();
   }, true);
 
-  function getKey(){ try{return localStorage.getItem(API_KEY)||"";}catch(e){return"";} }
+  function getKey(){
+    try{
+      return String(localStorage.getItem(API_KEY)||localStorage.getItem("eq_aikey")||localStorage.getItem("openai_api_key")||localStorage.getItem("ai_key")||"").trim();
+    }catch(e){return"";}
+  }
   function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
 
   async function transcribeBlob(blob,type){
@@ -8198,8 +8203,10 @@ document.addEventListener("click", function(e){
       const saved=await updateRecord(id,{...res,transcript:text,analysisStatus:"Completed"});
       if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%");
     }catch(err){
-      await updateRecord(id,{analysisStatus:"Failed: "+err.message});
-      if(!silent) alert("فشل التحليل: "+err.message);
+      const em=String(err&&err.message||err||"");
+      const noKey=/api key|key missing|add openai/i.test(em);
+      await updateRecord(id,{analysisStatus:noKey?"Waiting for teacher auto analysis":"Failed: "+em});
+      if(!silent) alert("فشل التحليل: "+em);
     }
     await renderCards();
   }
@@ -8328,7 +8335,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260606-second-fourth-official-safe</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260630-real-clean-auto</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -8433,13 +8440,78 @@ document.addEventListener("click", function(e){
     {id:"student_3135", studentId:"3135", name:"حسن محمد العلي", classId:"class_3_1", manual:true},
     {id:"student_3136", studentId:"3136", name:"أحمد علي الخميس", classId:"class_3_1", manual:true}
   ];
-  function rpClassesBase(){ const arr=Array.isArray(PRELOADED_CLASSES)?PRELOADED_CLASSES:[]; return arr.map(c=>({id:String(c.id||""), name:c.name||c.grade||c.id||""})).filter(c=>c.id); }
-  function rpClassName(id){ const raw=String(id||"").trim(); const c=rpClassesBase().find(x=>String(x.id)===raw || String(x.name)===raw); return c ? c.name : raw; }
+
+  // RP_REAL_CLEAN_AUTO_ANALYZE_20260630
+  // The floating RP drawer must not use the old hard-coded roster after a class/student is deleted.
+  // It now loads the live users/classes from Firebase, respects deleted class ids, and hides orphan Auth users.
+  let RP_ACTIVE_CLASSES_CACHE=[];
+  let RP_ACTIVE_STUDENTS_CACHE=[];
+  let RP_LAST_ROSTER_LOAD=0;
+  function rpDeletedClassSet(){
+    try{ if(typeof adminDeletedClassSet==="function") return adminDeletedClassSet(); }catch(e){}
+    const set=new Set();
+    try{ (JSON.parse(localStorage.getItem("eq_deleted_class_ids")||"[]")||[]).forEach(x=>{ if(x) set.add(String(x)); }); }catch(e){}
+    return set;
+  }
+  function rpIsDeletedClass(v){
+    const raw=String(v||"").trim();
+    if(!raw) return false;
+    const canon=(typeof canonicalClassId==="function")?canonicalClassId(raw):raw;
+    const set=rpDeletedClassSet();
+    return set.has(raw) || set.has(canon);
+  }
+  function rpCleanClassRow(c){
+    if(!c || c.deleted===true || c.hidden===true || c.archived===true) return null;
+    const id=String(c.id||c._id||c.classId||c.name||"").trim();
+    const name=String(c.name||c.grade||c.className||id||"").trim();
+    if(!id || rpIsDeletedClass(id) || rpIsDeletedClass(name)) return null;
+    return {id:id, name:name};
+  }
+  function rpCleanStudentRow(u){
+    if(!u || u.deleted===true || u.hidden===true || u.hiddenDuplicate===true || String(u.role||"student").toLowerCase()!=="student") return null;
+    const studentId=String(u.studentId||u.studentNumber||u.number||u.password||"").trim();
+    const id=String(u.id||u.uid||studentId||"").trim();
+    const name=String(u.name||u.fullName||u.shortName||"").trim();
+    const classId=String(u.classId||u.className||"").trim();
+    if(!id && !studentId) return null;
+    // Hide anonymous/Auth-only rows such as Student — mpo... — Unassigned.
+    if(!studentId && (/^mpo/i.test(id) || /^student$/i.test(name) || !name)) return null;
+    if(classId && rpIsDeletedClass(classId)) return null;
+    return {...u,id:id||("student_"+studentId),studentId:studentId||id,name:name||("Student "+(studentId||id)),classId:classId};
+  }
+  async function rpRefreshRosters(force){
+    if(!force && Date.now()-RP_LAST_ROSTER_LOAD<5000 && (RP_ACTIVE_CLASSES_CACHE.length||RP_ACTIVE_STUDENTS_CACHE.length)) return;
+    RP_LAST_ROSTER_LOAD=Date.now();
+    try{
+      let cls=[], users=[];
+      if(typeof fsAll==="function"){
+        const res=await Promise.all([fsAll("classes"),fsAll("users")]);
+        cls=res[0]||[]; users=res[1]||[];
+      }
+      const preCls=Array.isArray(PRELOADED_CLASSES)?PRELOADED_CLASSES:[];
+      const preUsers=Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[];
+      const cMap=new Map();
+      [...preCls,...cls].forEach(c=>{ const cc=rpCleanClassRow(c); if(cc) cMap.set(cc.id,cc); });
+      RP_ACTIVE_CLASSES_CACHE=Array.from(cMap.values());
+      const sMap=new Map();
+      [...preUsers,...users].forEach(u=>{ const su=rpCleanStudentRow(u); if(su) sMap.set(String(su.studentId||su.id),su); });
+      for(const m of RP_MANUAL_STUDENTS){ const su=rpCleanStudentRow(m); if(su && !sMap.has(String(su.studentId||su.id))) sMap.set(String(su.studentId||su.id),su); }
+      RP_ACTIVE_STUDENTS_CACHE=Array.from(sMap.values());
+    }catch(e){
+      // Keep the old cache if Firebase is temporarily unavailable.
+      console.warn("RP roster refresh failed", e);
+    }
+  }
+  function rpClassesBase(){
+    const src=RP_ACTIVE_CLASSES_CACHE.length?RP_ACTIVE_CLASSES_CACHE:(Array.isArray(PRELOADED_CLASSES)?PRELOADED_CLASSES:[]).map(rpCleanClassRow).filter(Boolean);
+    return src.filter(c=>c && !rpIsDeletedClass(c.id) && !rpIsDeletedClass(c.name)).map(c=>({id:String(c.id||""), name:c.name||c.grade||c.id||""})).filter(c=>c.id);
+  }
+  function rpClassName(id){ const raw=String(id||"").trim(); const c=rpClassesBase().find(x=>String(x.id)===raw || String(x.name)===raw || ((typeof canonicalClassId==="function")&&canonicalClassId(x.id)===canonicalClassId(raw))); return c ? c.name : raw; }
   function rpRosterBase(){
-    const pre=(Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[]).filter(u=>String(u.role||"").toLowerCase()==="student" || String(u.id||"").startsWith("student_"));
-    const out=[...pre];
-    for(const m of RP_MANUAL_STUDENTS){ const n=rpNorm(m.name), sid=String(m.studentId); if(!out.some(u=>String(u.studentId)===sid || rpNorm(u.name)===n)) out.push(m); }
-    return out;
+    const base=RP_ACTIVE_STUDENTS_CACHE.length?RP_ACTIVE_STUDENTS_CACHE:(Array.isArray(PRELOADED_USERS)?PRELOADED_USERS:[]).map(rpCleanStudentRow).filter(Boolean);
+    const out=[...base];
+    for(const m of RP_MANUAL_STUDENTS){ const cm=rpCleanStudentRow(m); if(!cm) continue; const n=rpNorm(cm.name), sid=String(cm.studentId); if(!out.some(u=>String(u.studentId)===sid || rpNorm(u.name)===n)) out.push(cm); }
+    return out.filter(Boolean);
   }
   function rpFindStudent(v){ const raw=String(v||"").trim(); if(!raw) return null; const n=rpNorm(raw); return rpRosterBase().find(u=>String(u.id)===raw || String(u.studentId)===raw || rpNorm(u.name)===n || rpNorm(u.shortName)===n) || null; }
   function rpStudentForRecord(r){
@@ -8457,6 +8529,21 @@ document.addEventListener("click", function(e){
     const classId=(u&&u.classId) || r.classId || "";
     const className=rpClassName(classId || r.className || "");
     return {u:u,sid:String(sid||""),name:name,classId:String(classId||""),className:className};
+  }
+  function rpRecordVisible(r){
+    if(!r || isDeleted(r)) return false;
+    const info=rpRecInfo(r);
+    const sid=String(info.sid||"").trim();
+    const name=String(info.name||"").trim();
+    const classId=String(info.classId||r.classId||r.className||"").trim();
+    if(classId && rpIsDeletedClass(classId)) return false;
+    if(info.className && rpIsDeletedClass(info.className)) return false;
+    // Hide orphan Auth rows and old unassigned records unless they match a real current roster student.
+    if(!info.u){
+      if(!sid || /^mpo/i.test(sid) || /^student$/i.test(name) || /unassigned/i.test(String(info.className||r.className||""))) return false;
+      if(RP_ACTIVE_STUDENTS_CACHE.length && !rpRosterBase().some(u=>String(u.studentId)===sid || String(u.id)===sid || rpNorm(u.name)===rpNorm(name))) return false;
+    }
+    return true;
   }
   const RP_TASK_TITLE_CACHE = new Map();
   const RP_TASK_META_CACHE = [];
@@ -8594,12 +8681,14 @@ document.addEventListener("click", function(e){
     return `${r.studentName||"Student"}${r.studentId?` · ${r.studentId}`:""}${r.className?` · ${r.className}`:""}`;
   }
   async function currentVisibleRecords(){
-    const arr=await syncCloudIntoLocal();
+    await rpRefreshRosters(false);
+    const arr=(await syncCloudIntoLocal()).filter(rpRecordVisible);
     const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
     const stuVal=String(document.getElementById("rp-v11-student")?.value||"");
     const searchQ=rpNorm(document.getElementById("rp-v11-search")?.value||"");
     const taskVal=String(document.getElementById("rp-v11-task")?.value||"");
     return arr.filter(r=>{
+      if(!rpRecordVisible(r)) return false;
       if(isDeleted(r)) return false;
       const info=rpRecInfo(r);
       const recTaskVal=taskKey(r);
@@ -8617,7 +8706,9 @@ document.addEventListener("click", function(e){
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    const allLocal=await syncCloudIntoLocal();
+    await rpRefreshRosters(false);
+    const allLocalRaw=await syncCloudIntoLocal();
+    const allLocal=allLocalRaw.filter(rpRecordVisible);
     const rpTasks=await rpLoadReadingTasks();
     rpPopulateFilterOptions(allLocal,rpTasks);
     const waitingAll=allLocal.filter(isWaitingForTeacher).length;
@@ -8668,6 +8759,8 @@ document.addEventListener("click", function(e){
       last.status==="rejected"?"Rejected":
       last.status==="retake_allowed"?"Retake allowed":
       last.analysisStatus==="Completed"?"Analyzed / waiting for teacher":
+      String(last.analysisStatus||"").toLowerCase().includes("waiting for teacher")?"Auto analysis waiting for teacher dashboard":
+      String(last.analysisStatus||"").toLowerCase().includes("analyzing")?"Analyzing... / waiting for teacher":
       "Submitted / waiting for teacher";
 
     let box=document.getElementById("rp-v11-student-status");
@@ -8878,7 +8971,7 @@ document.addEventListener("click", function(e){
       return role.includes('teacher') || txt.includes('TEACHER DASHBOARD') || txt.includes('SALEH AL HAMDAN') || txt.includes('+ Quiz');
     }catch(e){ return false; }
   }
-  function key(){ try{return String(localStorage.getItem(KEY)||'').trim();}catch(e){return '';} }
+  function key(){ try{return String(localStorage.getItem(KEY)||localStorage.getItem('eq_aikey')||localStorage.getItem('openai_api_key')||localStorage.getItem('ai_key')||'').trim();}catch(e){return '';} }
   function hasAudio(r){ return !!(r && (r.audioDataUrl || r.audioUrl)); }
   function analyzed(r){
     if(!r) return false;
@@ -8889,7 +8982,9 @@ document.addEventListener("click", function(e){
   }
   function needs(r){
     const st=String((r&&r.status)||'').toLowerCase();
-    return !!(r && hasAudio(r) && !analyzed(r) && !['accepted','rejected','deleted','retake_allowed'].includes(st));
+    if(!r || r.deleted===true) return false;
+    try{ if(typeof adminDeletedClassSet==='function'){ const set=adminDeletedClassSet(); const cid=(typeof canonicalClassId==='function'?canonicalClassId(r.classId||r.className||''):(r.classId||r.className||'')); if(set.has(String(r.classId||''))||set.has(String(r.className||''))||set.has(String(cid||''))) return false; } }catch(e){}
+    return !!(r && hasAudio(r) && !analyzed(r) && !['accepted','approved','rejected','deleted','retake_allowed'].includes(st));
   }
   function clean(s){ return String(s||'').replace(/\s+/g,' ').trim(); }
   function normalizeText(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9'\s]/g,' ').replace(/\s+/g,' ').trim(); }
