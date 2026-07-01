@@ -25,6 +25,7 @@
 <!-- RP106_DIRECT_AUDIO_DELIVERY_FAST_DRAWER_20260701 -->
 <!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
 <!-- RP_108_STUDENT_BACK_SYNC_ACCEPTED_FIX_20260701 -->
+<!-- RP_109_OVERVIEW_WCPM_ACCEPT_STUDENT_SYNC_FIX_20260701 -->
 <!-- RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701 -->
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
@@ -730,12 +731,65 @@ function rpAnalyze(reference, transcript, seconds){
   while(i<ref.length){missing.push(ref[i++]);}
   while(j<got.length){extra.push(got[j++]);}
   const accuracy=ref.length?Math.max(0,Math.round(correct/ref.length*100)):0;
-  const minutes=Math.max(1/60,(seconds||0)/60);
-  const wcpm=Math.round(correct/minutes);
+  const safeSeconds=Number(seconds)||0;
+  // RP109: never create fantasy WCPM from 0-second audio.
+  const minutes=safeSeconds>0 ? safeSeconds/60 : null;
+  const wcpm=minutes ? Math.round(correct/minutes) : null;
   const mistakeCount=missing.length+extra.length+substitutions.length;
-  const fluency=Math.max(0,Math.min(100,Math.round((accuracy*0.7)+Math.min(30,wcpm/4)-Math.min(20,repeated.length*2))));
-  return {accuracy,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,missing,extra,substitutions,repeated,seconds:Math.round(seconds||0)};
+  const fluencyBase=Number.isFinite(Number(wcpm))?Number(wcpm):0;
+  const fluency=Math.max(0,Math.min(100,Math.round((accuracy*0.7)+Math.min(30,fluencyBase/4)-Math.min(20,repeated.length*2))));
+  return {accuracy,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,missing,extra,substitutions,repeated,seconds:Math.round(safeSeconds)};
 }
+function rpSafeNumber(v){ const n=Number(v); return Number.isFinite(n)?n:null; }
+function rpValidWcpm(v){
+  const n=rpSafeNumber(v);
+  // Adult/student oral reading above 350 WCPM is usually a duration/data error in this app.
+  if(n===null || n<0 || n>350) return null;
+  return Math.round(n);
+}
+function rpMetricFromSubmission(s,k){
+  if(!s) return null;
+  const keys=k==="mistakes"?["mistakes","mistakeCount"]:[k];
+  for(const kk of keys){
+    if(kk==="wcpm"){
+      const w1=rpValidWcpm(s[kk]); if(w1!==null) return w1;
+      const w2=rpValidWcpm(s.analysis&&s.analysis[kk]); if(w2!==null) return w2;
+      continue;
+    }
+    const n1=rpSafeNumber(s[kk]); if(n1!==null) return Math.round(n1);
+    const n2=rpSafeNumber(s.analysis&&s.analysis[kk]); if(n2!==null) return Math.round(n2);
+  }
+  return null;
+}
+function rpAcceptedScoreFromSubmission(s){
+  const vals=[s&&s.teacherScore,s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.accuracy,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.aiScore,s&&s.analysis&&s.analysis.accuracy];
+  for(const v of vals){ const n=rpSafeNumber(v); if(n!==null) return Math.max(0,Math.min(100,Math.round(n))); }
+  return "";
+}
+function rpBuildAcceptedSubmission(s, extra){
+  const now=new Date().toISOString();
+  const score=rpAcceptedScoreFromSubmission(s);
+  const accuracy=rpMetricFromSubmission(s,"accuracy");
+  const wcpm=rpMetricFromSubmission(s,"wcpm");
+  const fluency=rpMetricFromSubmission(s,"fluency");
+  const mistakes=rpMetricFromSubmission(s,"mistakes");
+  return {
+    ...(s||{}), ...(extra||{}),
+    status:"accepted", reviewStatus:"accepted", teacherReview:"accepted",
+    analysisStatus:"completed", visibleToStudent:true, scoreVisible:true,
+    approvedAt:(s&&s.approvedAt)||now, acceptedAt:(s&&s.acceptedAt)||now, reviewedAt:now, updatedAt:now,
+    teacherScore:score===""?(s&&s.teacherScore):score, finalScore:score===""?(s&&s.finalScore):score, score:score===""?(s&&s.score):score,
+    accuracy:accuracy===null?(s&&s.accuracy):accuracy,
+    wcpm:wcpm===null?(s&&s.wcpm):wcpm,
+    fluency:fluency===null?(s&&s.fluency):fluency,
+    mistakes:mistakes===null?(s&&s.mistakes):mistakes
+  };
+}
+function rpIsAcceptedSubmission(s){
+  const vals=[s&&s.status,s&&s.reviewStatus,s&&s.teacherReview];
+  return vals.some(v=>String(v||"").toLowerCase()==="accepted" || String(v||"").toLowerCase()==="approved");
+}
+
 function rpGenerateText(level, lines){
   const bank={
     beginner:["I like my school.","My friend reads a book.","We play in the park.","The sun is bright today.","I can speak English slowly."],
@@ -4635,7 +4689,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const cloud=subs.filter(function(s){return s.taskId===t.id && s.deleted!==true && s.status!=="deleted" && afterReset(s,t.id);});
     const local=rpLocalAttemptsForTask(t.id);
     const map={};
-    [...cloud,...local].forEach(function(r){ if(r&&r.id) map[r.id]=r; });
+    [...local,...cloud].forEach(function(r){ if(r&&r.id) map[r.id]=r; });
     const arr=Object.values(map);
     const cut=resetCutoffForTask(t.id);
     const counted = cut ? arr.length : Math.max(arr.length, getAttemptCounter(t.id));
@@ -4654,7 +4708,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   function rpStudentScore(a){
     if(!a) return null;
     const st=String(a.status||"").toLowerCase();
-    const accepted=(st==="accepted"||st==="approved");
+    const accepted=rpIsAcceptedSubmission(a);
     const vals=[a.teacherScore,a.finalScore,a.aiScore,a.score,a.accuracy,a.analysis&&a.analysis.finalScore,a.analysis&&a.analysis.aiScore,a.analysis&&a.analysis.accuracy];
     for(const v of vals){
       if(v===undefined||v===null||v==="") continue;
@@ -4664,13 +4718,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return null;
   }
   function rpStudentMetric(a,k){
-    if(!a) return null;
-    const keys=k==="mistakes"?["mistakes","mistakeCount"]:[k];
-    for(const kk of keys){
-      if(a[kk]!==undefined&&a[kk]!==null&&a[kk]!==""&&Number.isFinite(Number(a[kk]))) return Math.round(Number(a[kk]));
-      if(a.analysis&&a.analysis[kk]!==undefined&&a.analysis[kk]!==null&&a.analysis[kk]!==""&&Number.isFinite(Number(a.analysis[kk]))) return Math.round(Number(a.analysis[kk]));
-    }
-    return null;
+    return rpMetricFromSubmission(a,k);
   }
   function rpStudentIsAnalyzed(a){
     if(!a) return false;
@@ -4681,7 +4729,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if(!last) return "No submission yet";
     const st=String(last.status||"").toLowerCase();
     const an=String(last.analysisStatus||"").toLowerCase();
-    if(st==="accepted" || st==="approved") return "Accepted";
+    if(rpIsAcceptedSubmission(last)) return "Accepted";
     if(st==="rejected") return "Rejected / try again";
     if(st==="retake_allowed") return "Retake allowed";
     if(st==="pending_review" || an==="completed") return "Analyzed / waiting for teacher approval";
@@ -4696,7 +4744,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     all=all.filter(a=>a && a.status!=="deleted" && a.deleted!==true && !String(a.id||"").startsWith("local_counter_"));
     all.sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0));
     const last=all.length?all[all.length-1]:null;
-    const accepted=all.filter(a=>{const st=String(a.status||"").toLowerCase(); return st==="accepted"||st==="approved";});
+    const accepted=all.filter(a=>rpIsAcceptedSubmission(a));
     const rejected=all.filter(a=>String(a.status||"").toLowerCase()==="rejected").length;
     const scores=accepted.map(rpStudentScore).filter(x=>x!==null);
     const lastScore=last?rpStudentScore(last):null;
@@ -4908,7 +4956,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       const allowed=canAttemptTask(t);
       const isRejected = last && last.status==="rejected";
       const isPending = last && (last.status==="pending_review" || last.status==="submitted" || String(last.analysisStatus||"").toLowerCase().includes("queued") || (rpStudentIsAnalyzed(last) && !(last.status==="approved"||last.status==="accepted")));
-      const isApproved = last && (last.status==="approved" || last.status==="accepted");
+      const isApproved = last && rpIsAcceptedSubmission(last);
       const lastScoreVal=rpStudentScore(last);
       const lastAccVal=rpStudentMetric(last,"accuracy");
       const lastWcpmVal=rpStudentMetric(last,"wcpm");
@@ -4958,7 +5006,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   function rpOldDeleted(s){return !!(s && (s.deleted===true || s.status==="deleted"));}
   function rpApprovedForDashboard(s){
     const teacherScore=Number(s&&s.teacherScore);
-    return !!(s && !rpOldDeleted(s) && s.status!=="rejected" && (s.status==="accepted" || (!Number.isNaN(teacherScore)&&teacherScore>0)));
+    return !!(s && !rpOldDeleted(s) && s.status!=="rejected" && (rpIsAcceptedSubmission(s) || (!Number.isNaN(teacherScore)&&teacherScore>0)));
   }
   function rpScoreForDashboard(s){
     const teacherScore=Number(s&&s.teacherScore);
@@ -4969,9 +5017,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return null;
   }
   function rpWcpmForDashboard(s){
-    if(Number.isFinite(Number(s&&s.wcpm))) return Math.round(Number(s.wcpm));
-    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.wcpm))) return Math.round(Number(s.analysis.wcpm));
-    return null;
+    return rpMetricFromSubmission(s,"wcpm");
   }
   function rpFluencyForDashboard(s){
     if(Number.isFinite(Number(s&&s.fluency))) return Math.round(Number(s.fluency));
@@ -5254,12 +5300,12 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
-            {(s.status==="pending_review"||String(s.status||"").toLowerCase()==="submitted")&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const approvedScore=(s.teacherScore!==undefined&&s.teacherScore!==""?Number(s.teacherScore):(s.finalScore!==undefined&&s.finalScore!==""?Number(s.finalScore):(s.analysis&&Number.isFinite(Number(s.analysis.accuracy))?Number(s.analysis.accuracy):"")));const upd={...s,status:"accepted",approvedAt:new Date().toISOString(),acceptedAt:new Date().toISOString(),teacherScore:approvedScore===""?s.teacherScore:Math.round(approvedScore),finalScore:approvedScore===""?s.finalScore:Math.round(approvedScore),accuracy:(s.accuracy!==undefined?s.accuracy:(s.analysis&&s.analysis.accuracy)),wcpm:(s.wcpm!==undefined?s.wcpm:(s.analysis&&s.analysis.wcpm)),fluency:(s.fluency!==undefined?s.fluency:(s.analysis&&s.analysis.fluency)),mistakes:(s.mistakes!==undefined?s.mistakes:(s.analysis&&(s.analysis.mistakeCount??s.analysis.mistakes))),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
+            {(s.status==="pending_review"||String(s.status||"").toLowerCase()==="submitted")&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {(s.status==="approved"||s.status==="accepted")&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
           </div>
         </div>
-        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}
+        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={rpWcpmForDashboard(s)??"-"} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}
       </div>;
     })}</Card>
   </div>;
@@ -7382,7 +7428,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.taskTitle||"Reading Task"} · {s.createdAt}</div>
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
-                  <button onClick={async function(){var approvedScore=(s.teacherScore!==undefined&&s.teacherScore!==""?Number(s.teacherScore):(s.finalScore!==undefined&&s.finalScore!==""?Number(s.finalScore):(s.analysis&&Number.isFinite(Number(s.analysis.accuracy))?Number(s.analysis.accuracy):"")));await fsSet("readingSubmissions",s.id,{...s,status:"accepted",approvedAt:new Date().toISOString(),acceptedAt:new Date().toISOString(),teacherScore:approvedScore===""?s.teacherScore:Math.round(approvedScore),finalScore:approvedScore===""?s.finalScore:Math.round(approvedScore),accuracy:(s.accuracy!==undefined?s.accuracy:(s.analysis&&s.analysis.accuracy)),wcpm:(s.wcpm!==undefined?s.wcpm:(s.analysis&&s.analysis.wcpm)),fluency:(s.fluency!==undefined?s.fluency:(s.analysis&&s.analysis.fluency)),mistakes:(s.mistakes!==undefined?s.mistakes:(s.analysis&&(s.analysis.mistakeCount??s.analysis.mistakes)))});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
+                  <button onClick={async function(){await fsSet("readingSubmissions",s.id,rpBuildAcceptedSubmission(s));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
                   <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,{...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||""});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
@@ -8385,7 +8431,7 @@ document.addEventListener("click", function(e){
     const aa=Number(r.analysis&&r.analysis.accuracy);
     if(!Number.isNaN(aa)&&aa>0) return Math.max(0,Math.min(100,Math.round(aa)));
 
-    const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=Number(r.wcpm);
+    const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=rpValidWcpm(r.wcpm);
     const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/100*100)):NaN;
     if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)){
       let v=Math.round(acc*0.80+flu*0.10+ws*0.10);
@@ -8397,20 +8443,15 @@ document.addEventListener("click", function(e){
   }
 
   function rpMetricValue(r,k){
-    if(!r) return "";
-    const keys=k==="mistakes"?["mistakes","mistakeCount"]:[k];
-    for(const kk of keys){
-      if(r[kk]!==undefined&&r[kk]!==null&&r[kk]!==""&&Number.isFinite(Number(r[kk]))) return Math.round(Number(r[kk]));
-      if(r.analysis&&r.analysis[kk]!==undefined&&r.analysis[kk]!==null&&r.analysis[kk]!==""&&Number.isFinite(Number(r.analysis[kk]))) return Math.round(Number(r.analysis[kk]));
-    }
-    return "";
+    const v=rpMetricFromSubmission(r,k);
+    return v===null?"":v;
   }
   function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted")); }
   function isRejected(r){ return !!(r && r.status==="rejected"); }
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
   function isTeacherApproved(r){
     const manual=Number(r&&r.teacherScore);
-    return !!(r && ((r.status==="accepted"||r.status==="approved") || (!Number.isNaN(manual) && manual>0)));
+    return !!(r && (rpIsAcceptedSubmission(r) || (!Number.isNaN(manual) && manual>0)));
   }
   function isCountableAttempt(r){
     // لا تدخل المحاولة في لوحة الأداء إلا بعد اعتماد المعلم أو وضع درجة يدوية.
@@ -8432,8 +8473,7 @@ document.addEventListener("click", function(e){
       }
       if(updates && (updates.status || updates.teacherScore!==undefined || updates.teacherNotes!==undefined)){
         if(updates.status==="accepted"||updates.status==="approved"){
-          const fs=finalScore(m);
-          if(fs!==""){ m.status="accepted"; m.teacherScore=m.teacherScore||fs; m.finalScore=fs; }
+          Object.assign(m, rpBuildAcceptedSubmission(m, updates));
         }
         m.reviewedAt=m.updatedAt;
       }
@@ -9193,7 +9233,7 @@ document.addEventListener("click", function(e){
   function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && !isAnalyzedRecord(r)); }
   function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && isAnalyzedRecord(r)); }
   function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && r.status!=="deleted"); }
-  function isPreviousRp(r){ return !!(r && !isDeleted(r) && (r.status==="accepted" || r.status==="rejected" || r.status==="retake_allowed")); }
+  function isPreviousRp(r){ return !!(r && !isDeleted(r) && (rpIsAcceptedSubmission(r) || r.status==="rejected" || r.status==="retake_allowed")); }
   function taskKey(r){
     const inferred=rpInferRealTask(r);
     if(inferred && inferred.id) return inferred.id;
@@ -9298,7 +9338,7 @@ document.addEventListener("click", function(e){
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)||0),0)/counted.length):"";
     const lastScore=last&&finalScore(last)!==""?finalScore(last):"";
     const statusText=!last?"No submission yet":
-      (last.status==="accepted"||last.status==="approved")?"Accepted":
+      rpIsAcceptedSubmission(last)?"Accepted":
       last.status==="rejected"?"Rejected":
       last.status==="retake_allowed"?"Retake allowed":
       last.analysisStatus==="Completed"?"Analyzed / waiting for teacher":
