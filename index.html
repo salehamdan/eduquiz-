@@ -24,6 +24,7 @@
 <!-- RP_AUDIO_SUBMIT_ATTEMPTS_FINAL_20260701 -->
 <!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
 <!-- RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701 -->
+<!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
@@ -776,9 +777,54 @@ async function rpSetReadingSubmissionStrict(id, data){
   }
 }
 function rpSafeAudioDataUrlAllowed(blob){
-  // Firestore documents are small; keep fallback audio under a safe limit.
-  return !!(blob && Number(blob.size||0)>0 && Number(blob.size||0)<650000);
+  // Keep the main submission document under Firestore limits; larger recordings are saved as chunks.
+  return !!(blob && Number(blob.size||0)>0 && Number(blob.size||0)<850000);
 }
+function rpAudioChunkId(submissionId, idx){ return "__rp_audio_chunk__"+String(submissionId)+"__"+String(idx); }
+async function rpSaveAudioChunks(submissionId, dataUrl){
+  const raw=String(dataUrl||"");
+  if(!raw) return {ok:false,count:0};
+  const chunkSize=420000;
+  const total=Math.ceil(raw.length/chunkSize);
+  if(!total) return {ok:false,count:0};
+  for(let i=0;i<total;i++){
+    await rpSetReadingSubmissionStrict(rpAudioChunkId(submissionId,i),{
+      id:rpAudioChunkId(submissionId,i),
+      source:"rp_audio_chunk",
+      submissionId:String(submissionId),
+      part:i,
+      total:total,
+      data:raw.slice(i*chunkSize,(i+1)*chunkSize),
+      createdAt:new Date().toISOString()
+    });
+  }
+  return {ok:true,count:total};
+}
+async function rpLoadAudioChunks(submissionId, count){
+  const n=Math.max(0,Math.min(30,Number(count)||0));
+  if(!n) return "";
+  const parts=[];
+  for(let i=0;i<n;i++){
+    const id=rpAudioChunkId(submissionId,i);
+    let row=null;
+    if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
+      const doc=await db.collection("readingSubmissions").doc(id).get();
+      if(doc && doc.exists) row=doc.data();
+    }else{
+      const arr=JSON.parse(localStorage.getItem("eq_readingSubmissions")||"[]");
+      row=(arr||[]).find(x=>x&&x.id===id);
+    }
+    if(!row || !row.data) throw new Error("Audio chunk missing: "+(i+1)+"/"+n);
+    parts.push(String(row.data||""));
+  }
+  return parts.join("");
+}
+async function rpResolveAudioDataUrl(sub){
+  if(sub && sub.audioDataUrl) return sub.audioDataUrl;
+  if(sub && sub.audioChunked && sub.audioChunkCount){ return await rpLoadAudioChunks(sub.id, sub.audioChunkCount); }
+  return "";
+}
+function rpHasAnyAudio(sub){ return !!(sub && (sub.audioUrl || sub.audioDataUrl || (sub.audioChunked && sub.audioChunkCount))); }
 
 // ---- AI Text-to-Speech (OpenAI tts-1-hd) ----
 // Generates a natural-sounding MP3 for a Listening Script and uploads it to
@@ -875,8 +921,9 @@ async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
   if(!key) throw new Error("OpenAI key is missing. Add it in Teacher-side Auto Correction or recreate/update the task with Auto mode.");
   let blob=null;
-  if(sub && sub.audioDataUrl){
-    blob=await (await fetch(sub.audioDataUrl)).blob();
+  const chunkDataUrl=await rpResolveAudioDataUrl(sub).catch(()=>"");
+  if(chunkDataUrl){
+    blob=await (await fetch(chunkDataUrl)).blob();
   }else if(sub && sub.audioUrl){
     blob=await (await fetch(sub.audioUrl)).blob();
   }
@@ -4722,10 +4769,11 @@ function ReadingProgressStudent({user,data,reload}){
     const id=uid();
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     var tx=String(transcript||"").trim();
-    let audioDataUrl="";
-    try{ if(rpSafeAudioDataUrlAllowed(blob)) audioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
+    let fullAudioDataUrl="";
+    try{ fullAudioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
+    let audioDataUrl=rpSafeAudioDataUrlAllowed(blob)?fullAudioDataUrl:"";
 
-    const baseSubmission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:"uploading"};
+    const baseSubmission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:"uploading"};
 
     // الطالب يرى التسليم فوراً بدون تحديث الصفحة، حتى قبل انتهاء رفع الصوت.
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
@@ -4735,19 +4783,23 @@ function ReadingProgressStudent({user,data,reload}){
     markRecordingSubmitted(recordingId);
     setSentBlobKey(key);
     setMsg("✅ Submitted + Pending Review. Uploading audio…");
-    setBlob(null); setAudioUrl(""); setTask(null);
+    setBlob(null); setAudioUrl("");
 
     let finalSubmission={...baseSubmission};
     try{
       let url="";
       try{ url=await rpUploadAudio(blob,path); }catch(uploadErr){ console.warn("RP audio upload failed", uploadErr); }
-      if(!url && !audioDataUrl){
+      let chunkInfo={ok:false,count:0};
+      if(!audioDataUrl && fullAudioDataUrl){
+        try{ chunkInfo=await rpSaveAudioChunks(id, fullAudioDataUrl); }catch(chunkErr){ console.warn("RP audio chunk save failed", chunkErr); }
+      }
+      if(!url && !audioDataUrl && !chunkInfo.ok){
         finalSubmission={...baseSubmission,uploadStatus:"audio_upload_failed",analysisStatus:"audio_upload_failed"};
         setLocalRpSubmissions(prev=>(prev||[]).map(x=>x&&x.id===id?finalSubmission:x));
-        setMsg("⚠️ Submitted locally, but audio upload failed. Record again if teacher cannot see audio.");
+        setMsg("⚠️ Submitted, but audio save failed. Please record again now.");
         return;
       }
-      finalSubmission={...baseSubmission,audioUrl:url||"",audioDataUrl:audioDataUrl||"",uploadStatus:url?"storage_url_saved":"firestore_audio_saved",updatedAt:new Date().toISOString()};
+      finalSubmission={...baseSubmission,audioUrl:url||"",audioDataUrl:audioDataUrl||"",audioChunked:(!audioDataUrl && chunkInfo.ok),audioChunkCount:chunkInfo.count||0,uploadStatus:url?"storage_url_saved":(audioDataUrl?"firestore_audio_saved":"firestore_audio_chunks_saved"),analysisStatus:"queued_for_analysis",updatedAt:new Date().toISOString()};
       await rpSetReadingSubmissionStrict(id,finalSubmission);
       setLocalRpSubmissions(prev=>{ const clean=(prev||[]).filter(x=>x&&x.id!==id); return [...clean,finalSubmission]; });
       saveStudentAttemptMarker(finalSubmission);
@@ -4761,7 +4813,17 @@ function ReadingProgressStudent({user,data,reload}){
     }
   }
   if(task)return <div>
-    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}</div></Card>
+    {recentSubmit&&String(recentSubmit.taskId)===String(task.id)&&<Card style={{marginBottom:"10px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
+      <strong style={{fontSize:"13px",color:"#92400e"}}>📨 Submission Result</strong>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#fff7ed",color:"#9a3412",fontWeight:900}}>Status: Submitted</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Attempts: {attemptsForTask(task).length}/{totalAllowedAttempts(task)}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#eff6ff",color:"#1d4ed8",fontWeight:900}}>Analysis: Pending</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Teacher review: Pending</span>
+      </div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>تم إرسال التسجيل للمعلم. لن تظهر درجة صفر قبل التحليل والاعتماد.</div>
+    </Card>}
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}<Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Show all tasks</Btn></div></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ تسجيل القراءة</strong><p style={{fontSize:"11px",color:C.mu}}>استخدم مايكروفون الجوال. بعد الإيقاف استمع للتسجيل، ثم أرسله للمعلم أو أعد التسجيل.</p>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>بدء التسجيل</Btn>:<Btn color={C.d} onClick={stopRec}>إيقاف</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>أوقف صوت النموذج قبل التسجيل.</div>}
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
@@ -4878,6 +4940,21 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return true;
   }
   const subs=rawSubs.filter(rpSubIsActive);
+  useEffect(()=>{
+    const need=(data.readingSubmissions||[]).filter(s=>s && s.audioChunked && s.audioChunkCount && !s.audioDataUrl && (s.teacherId===user.id || taskIds.has(String(s.taskId)))).slice(0,25);
+    if(!need.length) return;
+    let cancelled=false;
+    (async()=>{
+      for(const s of need){
+        try{
+          const dataUrl=await rpLoadAudioChunks(s.id,s.audioChunkCount);
+          if(cancelled || !dataUrl) continue;
+          setLocalTeacherSubs(prev=>rpMergeById(prev,[{...s,audioDataUrl:dataUrl,uploadStatus:"audio_chunks_loaded"}]));
+        }catch(e){ console.warn("RP audio chunk hydrate failed", s&&s.id, e); }
+      }
+    })();
+    return ()=>{cancelled=true;};
+  },[(data.readingSubmissions||[]).length,user&&user.id]);
   async function gen(){
     const topic=title.trim()||"Reading";
     const fallback=rpGenerateTextWords(level,wordCount,topic);
@@ -4906,7 +4983,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     setRpButton(bid,"Updating...");
     setLocalTeacherTasks(prev=>rpMergeById(prev,[nextTask]));
     setMsg("Updating... Max attempts = "+max);
-    try{await fsSet("readingTasks",t.id,nextTask);setMsg("✅ Max attempts set to "+max);reload();}catch(e){setMsg("⚠️ Max attempts update failed.");}finally{clearRpButton(bid);}
+    clearRpButton(bid);
+    fsSet("readingTasks",t.id,nextTask).then(function(){setMsg("✅ Max attempts set to "+max); setTimeout(function(){try{reload();}catch(e){}},50);}).catch(function(){setMsg("⚠️ Max attempts update failed.");});
   }
   async function toggleTaskOpen(t){
     const bid="open_"+t.id;
@@ -4915,7 +4993,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     setRpButton(bid,"Updating...");
     setLocalTeacherTasks(prev=>rpMergeById(prev,[nextTask]));
     setMsg("Updating... "+(next==="open"?"Opening":"Closing"));
-    try{await fsSet("readingTasks",t.id,nextTask);setMsg(next==="open"?"✅ Task opened for students.":"✅ Task closed for students.");reload();}catch(e){setMsg("⚠️ Open/Close update failed.");}finally{clearRpButton(bid);}
+    clearRpButton(bid);
+    fsSet("readingTasks",t.id,nextTask).then(function(){setMsg(next==="open"?"✅ Task opened for students.":"✅ Task closed for students."); setTimeout(function(){try{reload();}catch(e){}},50);}).catch(function(){setMsg("⚠️ Open/Close update failed.");});
   }
   async function shareTask(t){
     const txt="Reading Progress: "+(t.title||"Reading Task")+"\nStatus: "+(t.status==="closed"?"Closed":"Open")+"\nRetakes: "+(t.retakeLimit??0);
@@ -4930,7 +5009,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
     if(!task) throw new Error("Task not found");
     let tx=String(sub.transcript||"").trim();
-    if(!tx && (sub.audioUrl||sub.audioDataUrl)){
+    if(!tx && rpHasAnyAudio(sub)){
       tx=await rpTranscribeSubmissionAudio(sub, task);
     }
     if(!tx) throw new Error("No transcript available. Add OpenAI key or ask student to resubmit with audio.");
@@ -4956,7 +5035,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }finally{clearRpButton(bid);}
   }
   async function analyzeWaitingNow(silent){
-    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && (s.audioDataUrl||s.audioUrl)).slice(0,20);
+    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && rpHasAnyAudio(s)).slice(0,20);
     if(!waiting.length){ if(!silent) setMsg("No waiting recordings to analyze."); return; }
     let ok=0,fail=0,lastErr="";
     for(const s of waiting){
@@ -4969,7 +5048,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   useEffect(()=>{
     try{localStorage.setItem("rp_teacher_auto_correction", teacherAuto?"1":"0");}catch(e){}
     if(!teacherAuto || autoBusyRef.current) return;
-    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && (s.audioDataUrl||s.audioUrl));
+    const waiting=subs.filter(s=>!s.analysis && s.status!=="rejected" && s.status!=="deleted" && rpHasAnyAudio(s));
     if(!waiting.length) return;
     autoBusyRef.current=true;
     (async()=>{try{await analyzeWaitingNow(true);}finally{autoBusyRef.current=false;}})();
@@ -5104,6 +5183,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · Max attempts: {Number(t.retakeLimit??0)+1} · {t.autoAnalysis!==false?"🤖 Auto":"👨‍🏫 Manual"} · {(t.classIds||[]).length? (t.classIds||[]).map(function(id){var c=myClasses.find(function(c){return c.id===id;}); return c?c.name:"";}).filter(Boolean).join(", ") : "All classes"}{t.openDate?" · 📅 "+t.openDate.replace("T"," ").slice(0,16):""}{t.closeDate?" · 🔒 "+t.closeDate.replace("T"," ").slice(0,16):""}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} disabled={!!rpBusy["open_"+t.id]} onClick={()=>toggleTaskOpen(t)}>{rpBusy["open_"+t.id]||(t.status==="closed"?"Open":"Close")}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} disabled={!!rpBusy["max_"+t.id]} onClick={()=>cycleTaskRetake(t)}>{rpBusy["max_"+t.id]||("Max: "+(Number(t.retakeLimit??0)+1))}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(function(s){const st=myStudents.find(function(x){return responseBelongsToStudent(s,x);});const t=(data.readingTasks||[]).find(function(x){return x.id===s.taskId;});
       const rpAudioSrc=s.audioUrl||s.audioDataUrl||"";
+      const rpAudioSaved=rpHasAnyAudio(s);
       var statusBadge = s.status==="pending_review"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:"#b45309",background:"#fef9ec",border:"1px solid #fde68a",borderRadius:"999px",padding:"2px 8px"}}>⏳ Pending Review</span>
         : s.status==="approved"
@@ -5122,6 +5202,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           </div>
           <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
             {rpAudioSrc&&<audio controls src={rpAudioSrc} style={{height:"28px",maxWidth:"140px"}}/>}
+            {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
+            {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"approved",approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);setMsg("✅ Approved: "+(st?st.name:"student"));reload();}finally{clearRpButton(bid);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);setMsg("❌ Rejected: "+(st?st.name:"student"));reload();}finally{clearRpButton(bid);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
@@ -8185,7 +8267,7 @@ document.addEventListener("click", function(e){
     try{
       if(typeof fsAll!=="function") return [];
       const arr=await fsAll("readingSubmissions");
-      return (arr||[]).filter(r=>r && (r.source==="rp_shared_submission" || r.taskId===taskId() || r.audioDataUrl || r.audioUrl));
+      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && (r.source==="rp_shared_submission" || r.taskId===taskId() || r.audioDataUrl || r.audioUrl || (r.audioChunked&&r.audioChunkCount)));
     }catch(e){
       console.warn("RP cloud read failed", e);
       return [];
@@ -8430,8 +8512,9 @@ document.addEventListener("click", function(e){
       const item=await getAudio(r.audioId);
       if(item&&item.blob) return await transcribeBlob(item.blob,item.type||"audio/webm");
     }
-    if(r.audioDataUrl){
-      const blob=await (await fetch(r.audioDataUrl)).blob();
+    const chunkDataUrl=(typeof rpResolveAudioDataUrl==="function")?await rpResolveAudioDataUrl(r).catch(()=>""):"";
+    if(chunkDataUrl){
+      const blob=await (await fetch(chunkDataUrl)).blob();
       return await transcribeBlob(blob,r.audioType||blob.type||"audio/webm");
     }
     if(r.audioUrl){
@@ -8554,7 +8637,7 @@ document.addEventListener("click", function(e){
   async function analyzeOne(id,silent=false){
     const r=records().find(x=>x.id===id);
     if(!r) return alert("Submission not found.");
-    if(!r.audioId && !r.audioDataUrl && !r.audioUrl) return alert("No audio attached. Allow retake and ask student to record again.");
+    if(!hasAudioRecord(r)) return alert("No audio attached. Allow retake and ask student to record again.");
     await updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
     await renderCards();
     try{
@@ -8892,7 +8975,7 @@ document.addEventListener("click", function(e){
     const className=rpClassName(classId || r.className || "");
     return {u:u,sid:String(sid||""),name:name,classId:String(classId||""),className:className};
   }
-  function rpRecordVisible(r){
+  function rpRecordVisible(r){ if(r&&r.source==="rp_audio_chunk") return false;
     if(!r || isDeleted(r)) return false;
     const info=rpRecInfo(r);
     const sid=String(info.sid||"").trim();
@@ -9005,7 +9088,7 @@ document.addEventListener("click", function(e){
     const taskOpts=Array.from(taskLabelMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
     rpSetOptions(taskSel,taskOpts,"جميع المهام / الاختبارات");
   }
-  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl)); }
+  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl||(r.audioChunked&&r.audioChunkCount))); }
   function rpAnalysisState(r){ return String((r&&r.analysisStatus)||"").trim().toLowerCase(); }
   function isPendingAnalysisRecord(r){ const st=rpAnalysisState(r); return !st || st==="pending" || st.includes("analyzing") || st.includes("failed"); }
   function isAnalyzedRecord(r){
@@ -9089,7 +9172,11 @@ document.addEventListener("click", function(e){
     let out="";
     for(const r of shown){
       const item=r.audioId?await getAudio(r.audioId):null;
-      const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||"");
+      let chunkDataUrl="";
+      if(!item && !r.audioDataUrl && !r.audioUrl && r.audioChunked && r.audioChunkCount && typeof rpResolveAudioDataUrl==="function"){
+        try{ chunkDataUrl=await rpResolveAudioDataUrl(r); }catch(_e){}
+      }
+      const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||chunkDataUrl||"");
       const audioSize=item&&item.size?item.size:(r.audioSize||0);
       const audioType=item&&item.type?item.type:(r.audioType||"audio/webm");
       const acceptReady=canAcceptRecord(r);
@@ -9339,7 +9426,7 @@ document.addEventListener("click", function(e){
     }catch(e){ return false; }
   }
   function key(){ try{return String(localStorage.getItem(KEY)||localStorage.getItem('eq_aikey')||localStorage.getItem('openai_api_key')||localStorage.getItem('ai_key')||'').trim();}catch(e){return '';} }
-  function hasAudio(r){ return !!(r && (r.audioDataUrl || r.audioUrl)); }
+  function hasAudio(r){ return !!(r && (r.audioDataUrl || r.audioUrl || (r.audioChunked&&r.audioChunkCount))); }
   function analyzed(r){
     if(!r) return false;
     const st=String(r.analysisStatus||'').toLowerCase();
