@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- RP_AUDIO_SUBMIT_ATTEMPTS_FINAL_20260701 -->
 <!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
@@ -4520,8 +4521,10 @@ function ReadingProgressStudent({user,data,reload}){
     return out.filter(r=>{
       if(!r || r.deleted===true || r.status==="deleted") return false;
       const sameTask=String(r.taskId||"")===String(taskId||"");
-      const sid=String(r.studentId||r.studentNumber||"");
-      const sameStudent=sid===String(user.id||"") || sid===String(user.studentId||"");
+      const vals=[r.studentId,r.studentNumber,r.studentUserId,r.userId,r.uid,r.studentEmail].filter(Boolean).map(v=>String(v));
+      const myIds=[String(user.id||""),String(user.studentId||""),String(user.email||"")].filter(Boolean);
+      const myDigits=eqDigits(user.studentId||user.id||"");
+      const sameStudent=vals.some(v=>myIds.includes(v)) || (myDigits && vals.map(eqDigits).filter(Boolean).includes(myDigits));
       return sameTask && sameStudent && afterReset(r,taskId);
     });
   }
@@ -4581,7 +4584,7 @@ function ReadingProgressStudent({user,data,reload}){
     return attempts.some(a=>a && a.status==="retake_allowed");
   }
   function totalAllowedAttempts(t){
-    const retakes=Math.max(0,Math.min(10,Number(t.retakeLimit??0)||0));
+    const retakes=Math.max(0,Math.min(29,Number(t.retakeLimit??0)||0));
     return 1 + retakes;
   }
   function rpStudentScore(a){
@@ -4615,7 +4618,7 @@ function ReadingProgressStudent({user,data,reload}){
     const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):null;
     return {all,last,lastScore,best,avg,accepted:accepted.length,rejected,status:rpStudentStatusText(last)};
   }
-  const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
+  const [task,setTask]=useState(null); const [recentSubmit,setRecentSubmit]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
   useEffect(()=>{
     const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },10000);
@@ -4642,7 +4645,7 @@ function ReadingProgressStudent({user,data,reload}){
     if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
-    setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId("rec_"+Date.now()+"_"+Math.random().toString(36).slice(2));chunksRef.current=[];voiceRef.current=false;
+    setRecentSubmit(null); setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId("rec_"+Date.now()+"_"+Math.random().toString(36).slice(2));chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
@@ -4715,7 +4718,9 @@ function ReadingProgressStudent({user,data,reload}){
     try{
       await fsSet("readingSubmissions",id,submission);
       setLocalRpSubmissions(prev=>{ const clean=(prev||[]).filter(x=>x&&x.id!==id); return [...clean,submission]; });
+      setRecentSubmit(submission);
       saveStudentAttemptMarker(submission);
+      setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
       markRecordingSubmitted(recordingId);
       setSentBlobKey(key);
       if(analysis){
@@ -4755,6 +4760,16 @@ function ReadingProgressStudent({user,data,reload}){
       </div>
       <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",lineHeight:1.6}}>Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
     </Card>
+    {recentSubmit&&<Card style={{marginBottom:"10px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
+      <strong style={{fontSize:"13px",color:"#92400e"}}>📨 Submission Result</strong>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#fff7ed",color:"#9a3412",fontWeight:900}}>Status: Submitted</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Attempts: {attemptsForTask(tasks.find(x=>String(x.id)===String(recentSubmit.taskId))||{id:recentSubmit.taskId}).length}/{totalAllowedAttempts(tasks.find(x=>String(x.id)===String(recentSubmit.taskId))||{retakeLimit:0})}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#eff6ff",color:"#1d4ed8",fontWeight:900}}>Analysis: Pending</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Teacher review: Pending</span>
+      </div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>تم إرسال التسجيل للمعلم. لن تظهر درجة صفر قبل التحليل والاعتماد.</div>
+    </Card>}
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(function(t){
       const done=attemptsForTask(t);
       const last=done.slice().sort(function(a,b){return (Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0);})[done.length-1];
@@ -4787,7 +4802,7 @@ function ReadingProgressStudent({user,data,reload}){
             {!allowed && !isRejected && <div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}
             {teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}
           </div>
-          <Btn size="sm" color={(allowed||isRejected)?C.p:C.mu} disabled={!allowed&&!isRejected} onClick={function(){if(allowed||isRejected) setTask(t);}}>{done.length?"Try Again":"Start"}</Btn>
+          <Btn size="sm" color={(allowed||isRejected)?C.p:C.mu} disabled={!allowed&&!isRejected} onClick={function(){if(allowed||isRejected){ setRecentSubmit(null); setTask(t); }}}>{done.length?"Try Again":"Start"}</Btn>
         </div>
       </Card>;
     })}</div>;
@@ -4853,7 +4868,15 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   function play(){if(!text.trim())return; const u=new SpeechSynthesisUtterance(text); u.lang="en-US"; u.rate=level==="beginner"?0.82:level==="advanced"?0.98:0.9; speechSynthesis.cancel(); speechSynthesis.speak(u);}
   function resetTaskForm(){setEditingTaskId(null);setTitle("Reading Progress Task");setLevel("beginner");setWordCount(30);setRetakeLimit(0);setText("");setClassIds([]);setStudentIds([]);setAutoAnalysis(true);setOpenDate("");setCloseDate("");}
   function editTask(t){setEditingTaskId(t.id);setTitle(t.title||"Reading Progress Task");setLevel(t.level||"beginner");setWordCount(Number(t.wordCount||t.words||30));setRetakeLimit(Number(t.retakeLimit??0));setText(t.text||"");setClassIds(t.classIds||[]);setStudentIds(t.studentIds||[]);setAutoAnalysis(t.autoAnalysis!==false);setOpenDate(t.openDate||"");setCloseDate(t.closeDate||"");setMsg("Editing task: "+(t.title||"Reading Task"));}
-  async function cycleTaskRetake(t){const current=Math.max(0,Math.min(5,Number(t.retakeLimit??0)||0)); const n=(current+1)%6; await fsSet("readingTasks",t.id,{...t,retakeLimit:n,updatedAt:today()}); setMsg("✅ Retake limit set to "+n); await reload();}
+  async function cycleTaskRetake(t){
+    const currentMax=Math.max(1,Number(t.retakeLimit??0)+1);
+    const raw=window.prompt("Max attempts for students:", String(currentMax));
+    if(raw==null) return;
+    const max=Math.max(1,Math.min(30,Number(raw)||currentMax));
+    await fsSet("readingTasks",t.id,{...t,retakeLimit:max-1,updatedAt:today()});
+    setMsg("✅ Max attempts set to "+max);
+    await reload();
+  }
   async function toggleTaskOpen(t){
     const next=t.status==="closed"?"open":"closed";
     await fsSet("readingTasks",t.id,{...t,status:next,updatedAt:today()});
@@ -5034,14 +5057,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"6px",maxHeight:"130px",overflowY:"auto",padding:"4px",border:"1px solid "+C.br,borderRadius:"8px"}}>{targetStudents.length===0?<span style={{fontSize:"11px",color:C.mu}}>No students in selected classes.</span>:targetStudents.map(s=>{const on=studentIds.includes(s.id);const cls=myClasses.find(c=>c.id===s.classId);return <button key={s.id} onClick={()=>setStudentIds(on?studentIds.filter(x=>x!==s.id):[...studentIds,s.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.s:C.br),background:on?C.s:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"10px"}}>{s.name} · {s.studentId||s.id} · {cls?.name||""}</button>})}</div>
       <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate AI Text</Btn><Btn color={C.w} onClick={play}>🔊 Preview Audio</Btn><Btn color={C.s} onClick={saveTask}>{editingTaskId?"Update Task":"Save Task"}</Btn>{editingTaskId&&<Btn color={C.mu} onClick={resetTaskForm}>Cancel Edit</Btn>}</div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.w:C.d)}}>{msg}</p>}
     </Card>
-    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · retakes: {t.retakeLimit??0} · {t.autoAnalysis!==false?"🤖 Auto":"👨‍🏫 Manual"} · {(t.classIds||[]).length? (t.classIds||[]).map(function(id){var c=myClasses.find(function(c){return c.id===id;}); return c?c.name:"";}).filter(Boolean).join(", ") : "All classes"}{t.openDate?" · 📅 "+t.openDate.replace("T"," ").slice(0,16):""}{t.closeDate?" · 🔒 "+t.closeDate.replace("T"," ").slice(0,16):""}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} onClick={()=>toggleTaskOpen(t)}>{t.status==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Retakes: {t.retakeLimit??0}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
+    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · Max attempts: {Number(t.retakeLimit??0)+1} · {t.autoAnalysis!==false?"🤖 Auto":"👨‍🏫 Manual"} · {(t.classIds||[]).length? (t.classIds||[]).map(function(id){var c=myClasses.find(function(c){return c.id===id;}); return c?c.name:"";}).filter(Boolean).join(", ") : "All classes"}{t.openDate?" · 📅 "+t.openDate.replace("T"," ").slice(0,16):""}{t.closeDate?" · 🔒 "+t.closeDate.replace("T"," ").slice(0,16):""}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} onClick={()=>toggleTaskOpen(t)}>{t.status==="closed"?"Open":"Close"}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} onClick={()=>cycleTaskRetake(t)}>Max: {Number(t.retakeLimit??0)+1}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(function(s){const st=myStudents.find(function(x){return responseBelongsToStudent(s,x);});const t=(data.readingTasks||[]).find(function(x){return x.id===s.taskId;});
+      const rpAudioSrc=s.audioUrl||s.audioDataUrl||"";
       var statusBadge = s.status==="pending_review"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:"#b45309",background:"#fef9ec",border:"1px solid #fde68a",borderRadius:"999px",padding:"2px 8px"}}>⏳ Pending Review</span>
         : s.status==="approved"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:C.s,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"999px",padding:"2px 8px"}}>✅ Approved</span>
         : s.status==="rejected"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:C.d,background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"999px",padding:"2px 8px"}}>❌ Rejected</span>
+        : String(s.analysisStatus||"").includes("queued")
+        ? <span style={{fontSize:"10px",fontWeight:"800",color:"#b45309",background:"#fef9ec",border:"1px solid #fde68a",borderRadius:"999px",padding:"2px 8px"}}>⏳ Submitted / Analysis Pending</span>
         : <span style={{fontSize:"10px",color:C.mu}}>{s.status}</span>;
       return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
@@ -5051,7 +5077,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             <div style={{marginTop:"4px"}}>{statusBadge}</div>
           </div>
           <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-            {s.audioUrl&&<audio controls src={s.audioUrl} style={{height:"28px",maxWidth:"140px"}}/>}
+            {rpAudioSrc&&<audio controls src={rpAudioSrc} style={{height:"28px",maxWidth:"140px"}}/>}
             {!s.analysis&&<Btn size="sm" color={C.p} onClick={function(){analyze(s);}}>🔍 Analyze</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.s} onClick={async function(){await fsSet("readingSubmissions",s.id,{...s,status:"approved",approvedAt:new Date().toISOString()});await reload();setMsg("✅ Approved: "+(st?st.name:"student"));}}>✅ Approve</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");await fsSet("readingSubmissions",s.id,{...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||""});await reload();setMsg("❌ Rejected: "+(st?st.name:"student"));}}>❌ Reject</Btn>}
