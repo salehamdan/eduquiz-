@@ -33,6 +33,7 @@
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- RP114_WCPM_UNIFIED_TEACHER_AI_AUDIO_BUTTON_20260701 -->
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
+<!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
@@ -810,23 +811,45 @@ function rpComputedWcpmFromSubmission(s){
   return null;
 }
 
+function rpDatePick(t, kind){
+  if(!t) return "";
+  const startKeys=["openDate","startDate","availableFrom","publishDate","fromDate","startAt","openAt"];
+  const endKeys=["closeDate","endDate","dueDate","deadline","untilDate","endAt","closeAt"];
+  const keys=kind==="end"?endKeys:startKeys;
+  for(const k of keys){ if(t[k]) return String(t[k]); }
+  return "";
+}
+function rpParseDateValue(v, endOfDay){
+  if(!v) return null;
+  try{
+    const raw=String(v).trim();
+    const d=raw.length===10 ? new Date(raw+(endOfDay?'T23:59:59':'T00:00:00')) : new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }catch(e){return null;}
+}
+function rpFormatTaskDate(v){
+  if(!v) return "";
+  try{
+    const raw=String(v).trim();
+    if(raw.length===10) return raw;
+    const d=new Date(raw);
+    if(isNaN(d.getTime())) return raw;
+    const pad=n=>String(n).padStart(2,"0");
+    return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
+  }catch(e){return String(v||"");}
+}
+function rpTaskDateLabel(t){
+  const st=rpDatePick(t,"start"), en=rpDatePick(t,"end");
+  if(!st && !en) return "No date limit";
+  if(st && en) return "📅 "+rpFormatTaskDate(st)+" → "+rpFormatTaskDate(en);
+  if(st) return "📅 Starts: "+rpFormatTaskDate(st);
+  return "📅 Ends: "+rpFormatTaskDate(en);
+}
 function rpTaskDateVisible(t){
   try{
     const now=new Date();
-    function parseStart(v){
-      if(!v) return null;
-      const raw=String(v);
-      const d=raw.length===10 ? new Date(raw+'T00:00:00') : new Date(raw);
-      return isNaN(d.getTime()) ? null : d;
-    }
-    function parseEnd(v){
-      if(!v) return null;
-      const raw=String(v);
-      const d=raw.length===10 ? new Date(raw+'T23:59:59') : new Date(raw);
-      return isNaN(d.getTime()) ? null : d;
-    }
-    const o=parseStart(t&&t.openDate);
-    const c=parseEnd(t&&t.closeDate);
+    const o=rpParseDateValue(rpDatePick(t,"start"), false);
+    const c=rpParseDateValue(rpDatePick(t,"end"), true);
     if(o && now<o) return false;
     if(c && now>c) return false;
     return true;
@@ -4919,7 +4942,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   const [task,setTask]=useState(null); const [recentSubmit,setRecentSubmit]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [modelRate,setModelRate]=useState(0.85); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
   useEffect(()=>{
-    const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },10000);
+    const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },5000);
     return ()=>clearInterval(timer);
   },[reload,user&&user.id]);
   function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||"")+"_"+String(recordingId||""):"";}
@@ -5168,6 +5191,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
           <div style={{flex:1}}>
             <strong style={{fontSize:"13px",color:C.tx}}>{t.title}</strong>
             <div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||t.lines+" lines")} · attempts: {done.length}/{limit}</div>
+            <div style={{fontSize:"10px",color:C.mu,marginTop:"2px",fontWeight:700}}>{rpTaskDateLabel(t)}</div>
             {isRejected && <div style={{marginTop:"5px",padding:"6px 9px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"7px"}}>
               <div style={{fontSize:"11px",fontWeight:"800",color:C.d}}>❌ تم رفض إجابتك / Your submission was rejected</div>
               {last.rejectionReason && <div style={{fontSize:"10px",color:"#991b1b",marginTop:"2px"}}>السبب: {last.rejectionReason}</div>}
@@ -5321,7 +5345,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       else prompt("Copy share text:",txt);
     }catch(e){}
   }
-  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(29,Number(retakeLimit)||0)); const storedKey=localStorage.getItem("rp_openai_api_key")||""; if(autoAnalysis && !storedKey){setMsg("⚠️ Auto analysis requires an OpenAI key. Please enter it in the Auto Correction settings above.");return;} const oldTask=tasks.find(t=>t.id===editingTaskId); let savedAudio=modelAudioDataUrl||""; if(!savedAudio && oldTask && String(oldTask.text||"").trim()===text.trim()) savedAudio=oldTask.modelAudioDataUrl||oldTask.modelAudioUrl||""; const taskObj={id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),retakeLimit:safeLimit,autoAnalysis:autoAnalysis,openaiKey:autoAnalysis?storedKey:"",modelAudioDataUrl:savedAudio||"",openDate:openDate||"",closeDate:closeDate||"",lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.status||"open"):"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}; setLocalTeacherTasks(prev=>rpMergeById(prev,[taskObj])); setMsg("Updating... Saving task"); try{await fsSet("readingTasks",id,taskObj); setMsg((editingTaskId?"✅ Reading task updated.":"✅ Reading task created.")+(savedAudio?" AI audio saved for students.":" No saved AI audio: student will use device voice fallback.")); resetTaskForm(); reload();}catch(e){setMsg("⚠️ Save task failed.");}}
+  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(29,Number(retakeLimit)||0)); const storedKey=localStorage.getItem("rp_openai_api_key")||""; if(autoAnalysis && !storedKey){setMsg("⚠️ Auto analysis requires an OpenAI key. Please enter it in the Auto Correction settings above.");return;} const oldTask=tasks.find(t=>t.id===editingTaskId); let savedAudio=modelAudioDataUrl||""; if(!savedAudio && oldTask && String(oldTask.text||"").trim()===text.trim()) savedAudio=oldTask.modelAudioDataUrl||oldTask.modelAudioUrl||""; const taskObj={id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),retakeLimit:safeLimit,autoAnalysis:autoAnalysis,openaiKey:autoAnalysis?storedKey:"",modelAudioDataUrl:savedAudio||"",openDate:openDate||"",closeDate:closeDate||"",lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.status||"open"):"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}; setLocalTeacherTasks(prev=>rpMergeById(prev,[taskObj])); setMsg("Updating... Saving task"); try{await fsSet("readingTasks",id,taskObj); setMsg((editingTaskId?"✅ Reading task updated.":"✅ Reading task created.")+(savedAudio?" AI audio saved for students.":" No saved AI audio: student will use device voice fallback.")); resetTaskForm(); await reload(); setTimeout(function(){try{reload();}catch(e){}},1200); setTimeout(function(){try{reload();}catch(e){}},3500);}catch(e){setMsg("⚠️ Save task failed.");}}
   async function analyzeOne(sub){
     const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
     if(!task) throw new Error("Task not found");
@@ -5373,7 +5397,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
 
   useEffect(()=>{
     if(!teacherAuto) return;
-    const timer=setInterval(()=>{try{ if(typeof reload==="function") reload(); }catch(e){}},12000);
+    const timer=setInterval(()=>{try{ if(typeof reload==="function") reload(); }catch(e){}},5000);
     return ()=>clearInterval(timer);
   },[teacherAuto]);
   async function resetReadingAttempts(){
@@ -5497,7 +5521,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP114 WCPM Unified + Teacher AI Audio Button</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP116 Live Tasks + Date Visible</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -5595,7 +5619,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"6px",maxHeight:"130px",overflowY:"auto",padding:"4px",border:"1px solid "+C.br,borderRadius:"8px"}}>{targetStudents.length===0?<span style={{fontSize:"11px",color:C.mu}}>No students in selected classes.</span>:targetStudents.map(s=>{const on=studentIds.includes(s.id);const cls=myClasses.find(c=>c.id===s.classId);return <button key={s.id} onClick={()=>setStudentIds(on?studentIds.filter(x=>x!==s.id):[...studentIds,s.id])} style={{padding:"6px 10px",borderRadius:"999px",border:"1px solid "+(on?C.s:C.br),background:on?C.s:"#fff",color:on?"#fff":C.mu,fontWeight:700,fontSize:"10px"}}>{s.name} · {s.studentId||s.id} · {cls?.name||""}</button>})}</div>
       <div style={{display:"flex",gap:"8px",marginTop:"10px",flexWrap:"wrap"}}><Btn color={C.pu} onClick={gen}>✨ Generate AI Text</Btn><Btn color={C.p} onClick={generateTeacherAIModelAudio} disabled={aiVoiceBusy}>{aiVoiceBusy?"⏳ Generating AI Audio...":"🎧 Generate AI Model Audio"}</Btn><Btn color={C.w} onClick={play}>{modelAudioDataUrl?"▶️ Review AI Audio":"🔊 Device Preview"}</Btn><Btn color={C.s} onClick={saveTask}>{editingTaskId?"Update Task":"Save Task"}</Btn>{editingTaskId&&<Btn color={C.mu} onClick={resetTaskForm}>Cancel Edit</Btn>}</div>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.w:C.d)}}>{msg}</p>}
     </Card>
-    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · Max attempts: {Number(t.retakeLimit??0)+1} · {t.autoAnalysis!==false?"🤖 Auto":"👨‍🏫 Manual"} · {(t.classIds||[]).length? (t.classIds||[]).map(function(id){var c=myClasses.find(function(c){return c.id===id;}); return c?c.name:"";}).filter(Boolean).join(", ") : "All classes"}{t.openDate?" · 📅 "+t.openDate.replace("T"," ").slice(0,16):""}{t.closeDate?" · 🔒 "+t.closeDate.replace("T"," ").slice(0,16):""} · {(t.modelAudioDataUrl||t.modelAudioUrl)?"🎧 AI audio":"🔈 device fallback"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} disabled={!!rpBusy["open_"+t.id]} onClick={()=>toggleTaskOpen(t)}>{rpBusy["open_"+t.id]||(t.status==="closed"?"Open":"Close")}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} disabled={!!rpBusy["max_"+t.id]} onClick={()=>cycleTaskRetake(t)}>{rpBusy["max_"+t.id]||("Max: "+(Number(t.retakeLimit??0)+1))}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
+    <Card style={{marginBottom:"11px"}}><strong style={{fontSize:"13px"}}>Tasks</strong>{tasks.length===0?<p style={{fontSize:"12px",color:C.mu}}>No tasks yet.</p>:tasks.map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br}}><div><strong style={{fontSize:"12px"}}>{t.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{t.level} · {(t.wordCount||t.words||Math.max(1,(t.text||"").split(/\s+/).filter(Boolean).length))} words · Max attempts: {Number(t.retakeLimit??0)+1} · {t.autoAnalysis!==false?"🤖 Auto":"👨‍🏫 Manual"} · {(t.classIds||[]).length? (t.classIds||[]).map(function(id){var c=myClasses.find(function(c){return c.id===id;}); return c?c.name:"";}).filter(Boolean).join(", ") : "All classes"} · {rpTaskDateLabel(t)} · {(t.modelAudioDataUrl||t.modelAudioUrl)?"🎧 AI audio":"🔈 device fallback"}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>editTask(t)}>Edit</Btn><Btn size="sm" color={t.status==="closed"?C.s:C.mu} disabled={!!rpBusy["open_"+t.id]} onClick={()=>toggleTaskOpen(t)}>{rpBusy["open_"+t.id]||(t.status==="closed"?"Open":"Close")}</Btn><Btn size="sm" color={C.pu} onClick={()=>shareTask(t)}>Share</Btn><Btn size="sm" color={C.w} disabled={!!rpBusy["max_"+t.id]} onClick={()=>cycleTaskRetake(t)}>{rpBusy["max_"+t.id]||("Max: "+(Number(t.retakeLimit??0)+1))}</Btn><Btn size="sm" color={C.d} onClick={()=>delTask(t)}>🗑 Delete Task</Btn></div></div>)}</Card>
     <Card style={{marginTop:"11px"}}><strong style={{fontSize:"13px"}}>Pending / Recent Recordings</strong><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>Old deleted/orphan recordings are hidden and excluded from performance.</div>{subs.length===0?<p style={{fontSize:"12px",color:C.mu}}>No submissions yet.</p>:subs.slice().reverse().map(function(s){const st=myStudents.find(function(x){return responseBelongsToStudent(s,x);});const t=(data.readingTasks||[]).find(function(x){return x.id===s.taskId;});
       const rpAudioSrc=s.audioUrl||s.audioDataUrl||"";
       const rpAudioSaved=rpHasAnyAudio(s);
@@ -8479,6 +8503,22 @@ function App() {
       setLoading(false);
     })();
   },[]);
+
+  useEffect(()=>{
+    if(!user) return;
+    let busy=false;
+    const refresh=async()=>{
+      if(busy) return;
+      busy=true;
+      try{ await reload(); }catch(e){}
+      finally{ busy=false; }
+    };
+    const onVis=()=>{ if(document.visibilityState==="visible") refresh(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVis);
+    const timer=setInterval(refresh, 7000);
+    return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); clearInterval(timer); };
+  },[user&&user.id,user&&user.role]);
 
   function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
