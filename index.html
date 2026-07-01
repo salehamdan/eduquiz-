@@ -34,6 +34,7 @@
 <!-- RP114_WCPM_UNIFIED_TEACHER_AI_AUDIO_BUTTON_20260701 -->
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
+<!-- RP118_ONE_STATUS_SOURCE_PENDING_PREVIOUS_FAST_TABS_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
@@ -934,7 +935,7 @@ function rpBuildAcceptedSubmission(s, extra){
   const mistakes=rpMetricFromSubmission(s,"mistakes");
   return {
     ...(s||{}), ...(extra||{}),
-    status:"accepted", reviewStatus:"accepted", teacherReview:"accepted",
+    status:"accepted", reviewStatus:"accepted", teacherReview:"accepted", teacherReviewStatus:"accepted", studentStatus:"accepted",
     analysisStatus:"completed", visibleToStudent:true, scoreVisible:true,
     approvedAt:(s&&s.approvedAt)||now, acceptedAt:(s&&s.acceptedAt)||now, reviewedAt:now, updatedAt:now,
     teacherScore:score===""?(s&&s.teacherScore):score, finalScore:score===""?(s&&s.finalScore):score, score:score===""?(s&&s.score):score,
@@ -948,8 +949,33 @@ function rpBuildAcceptedSubmission(s, extra){
   };
 }
 function rpIsAcceptedSubmission(s){
-  const vals=[s&&s.status,s&&s.reviewStatus,s&&s.teacherReview];
+  const vals=[s&&s.status,s&&s.reviewStatus,s&&s.teacherReview,s&&s.teacherReviewStatus,s&&s.studentStatus];
   return vals.some(v=>String(v||"").toLowerCase()==="accepted" || String(v||"").toLowerCase()==="approved");
+}
+// RP118: one source of truth for Reading Progress state across student card, teacher RP, and RB drawer.
+function rpAttemptTimeMs(r){
+  const t=Date.parse((r&&(r.updatedAt||r.reviewedAt||r.acceptedAt||r.approvedAt||r.analyzedAt||r.submittedAt||r.createdAt||r.timestamp))||"");
+  return Number.isFinite(t)?t:0;
+}
+function rpAttemptState(r){
+  if(!r || r.deleted===true) return "deleted";
+  const vals=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus].map(v=>String(v||"").toLowerCase().trim());
+  if(vals.includes("deleted")) return "deleted";
+  if(vals.includes("accepted") || vals.includes("approved")) return "accepted";
+  if(vals.includes("rejected")) return "rejected";
+  if(vals.includes("retake_allowed") || vals.includes("retake") || vals.includes("returned")) return "retake";
+  if(vals.some(v=>["submitted","pending","pending_review","waiting","waiting_teacher","waiting_for_teacher"].includes(v))) return "pending";
+  const an=String((r.analysisStatus||r.analysis)||"").toLowerCase();
+  if(an.includes("queued") || an.includes("waiting") || an.includes("pending") || an.includes("completed") || r.audioUrl || r.audioDataUrl || r.audioChunked || r.transcript || r.analysis) return "pending";
+  return "none";
+}
+function rpIsPendingReviewSubmission(r){ return rpAttemptState(r)==="pending"; }
+function rpIsPreviousReviewSubmission(r){ const st=rpAttemptState(r); return st==="accepted" || st==="rejected" || st==="retake"; }
+function rpLatestEffectiveAttempt(list){
+  const arr=(list||[]).filter(r=>r && rpAttemptState(r)!=="deleted").sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
+  if(!arr.length) return null;
+  // Prefer the newest real state. If stale local pending records remain older than an accepted record, do not show two states.
+  return arr[arr.length-1];
 }
 
 function rpGenerateText(level, lines){
@@ -4915,14 +4941,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   }
   function rpStudentStatusText(last){
     if(!last) return "No submission yet";
-    const st=String(last.status||"").toLowerCase();
+    const state=rpAttemptState(last);
     const an=String(last.analysisStatus||"").toLowerCase();
-    if(rpIsAcceptedSubmission(last)) return "Accepted";
-    if(st==="rejected") return "Rejected / try again";
-    if(st==="retake_allowed") return "Retake allowed";
-    if(st==="pending_review" || an==="completed") return "Analyzed / waiting for teacher approval";
+    if(state==="accepted") return "Accepted";
+    if(state==="rejected") return "Rejected / try again";
+    if(state==="retake") return "Retake allowed";
+    if(an==="completed" || rpStudentIsAnalyzed(last)) return "Analyzed / waiting for teacher approval";
     if(an.includes("queued")) return "Submitted + Pending Review";
-    if(an.includes("waiting")) return "Submitted / waiting for teacher";
     if(an.includes("failed")) return "Pending / Re-analyze";
     return "Submitted / waiting for teacher";
   }
@@ -5174,14 +5199,15 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       const done=attemptsForTask(t);
       // RP117: placeholder counters are only for attempt count; never use them as latest status.
       const realDone=done.filter(function(a){return a && !String(a.id||"").startsWith("local_counter_");});
-      const sortedReal=realDone.slice().sort(function(a,b){return (Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0);});
-      const last=sortedReal.length?sortedReal[sortedReal.length-1]:null;
+      const sortedReal=realDone.slice().sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
+      const last=rpLatestEffectiveAttempt(sortedReal);
       const limit=totalAllowedAttempts(t);
       const teacherExtra=extraRetakeAllowed(done);
       const allowed=canAttemptTask(t);
-      const isRejected = last && last.status==="rejected";
-      const isPending = last && (last.status==="pending_review" || last.status==="submitted" || String(last.analysisStatus||"").toLowerCase().includes("queued") || (rpStudentIsAnalyzed(last) && !(last.status==="approved"||last.status==="accepted")));
-      const isApproved = last && rpIsAcceptedSubmission(last);
+      const lastState=rpAttemptState(last);
+      const isRejected = lastState==="rejected";
+      const isPending = lastState==="pending";
+      const isApproved = lastState==="accepted";
       const lastScoreVal=rpStudentScore(last);
       const lastAccVal=rpStudentMetric(last,"accuracy");
       const lastWcpmVal=rpStudentMetric(last,"wcpm");
@@ -5265,7 +5291,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(rpDeletedClasses.has(String(s.classId||""))||rpDeletedClasses.has(String(s.className||""))||rpDeletedClasses.has(cid)) return false;
     return true;
   }
-  const subs=rawSubs.filter(rpSubIsActive);
+  const subs=rawSubs.filter(rpSubIsActive).sort(function(a,b){return rpAttemptTimeMs(b)-rpAttemptTimeMs(a);});
   useEffect(()=>{
     const need=(data.readingSubmissions||[]).filter(s=>s && s.audioChunked && s.audioChunkCount && !s.audioDataUrl && (s.teacherId===user.id || taskIds.has(String(s.taskId)))).slice(0,25);
     if(!need.length) return;
@@ -5525,7 +5551,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP117 Live Sync + RB Fixed</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP118 One Status Source + Fast RP Tabs</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -5651,9 +5677,9 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
-            {(s.status==="pending_review"||String(s.status||"").toLowerCase()==="submitted")&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
-            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
-            {(s.status==="approved"||s.status==="accepted")&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
+            {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
         </div>
@@ -7762,7 +7788,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             <Stat icon="📋" label="Quizzes" value={myQuizzes.length} color={C.p}/><Stat icon="👥" label="Students" value={myStudents.length} color={C.pu}/><Stat icon="📝" label="Submissions" value={myResps.length} color={C.s}/><Stat icon="🚨" label="Need Help" value={flags.length} color={C.d}/>
           </div>
           {(function(){
-            var pending=(data.readingSubmissions||[]).filter(function(s){return s.status==="pending_review"&&(data.readingTasks||[]).some(function(t){return t.id===s.taskId&&t.teacherId===user.id;});});
+            var pending=(data.readingSubmissions||[]).filter(function(s){return rpIsPendingReviewSubmission(s)&&(data.readingTasks||[]).some(function(t){return t.id===s.taskId&&t.teacherId===user.id;});});
             if(!pending.length) return null;
             var visible=pendingExpanded?pending:pending.slice(0,2);
             var extra=pending.length-2;
@@ -8885,6 +8911,12 @@ document.addEventListener("click", function(e){
       if(updates && (updates.status || updates.teacherScore!==undefined || updates.teacherNotes!==undefined)){
         if(updates.status==="accepted"||updates.status==="approved"){
           Object.assign(m, rpBuildAcceptedSubmission(m, updates));
+        } else if(updates.status==="submitted" || updates.status==="pending" || updates.status==="pending_review"){
+          m.status="pending_review"; m.reviewStatus="pending"; m.teacherReview="pending"; m.teacherReviewStatus="pending"; m.studentStatus="pending"; m.visibleToStudent=true; m.scoreVisible=false;
+        } else if(updates.status==="rejected"){
+          m.reviewStatus="rejected"; m.teacherReview="rejected"; m.teacherReviewStatus="rejected"; m.studentStatus="rejected";
+        } else if(updates.status==="retake_allowed"){
+          m.reviewStatus="retake_allowed"; m.teacherReview="retake_allowed"; m.teacherReviewStatus="retake_allowed"; m.studentStatus="retake_allowed";
         }
         m.reviewedAt=m.updatedAt;
       }
@@ -9336,7 +9368,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP Drawer v20260630-real-clean-auto</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP118 one-status: Pending / Previous / All</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -9658,10 +9690,10 @@ document.addEventListener("click", function(e){
     if(Number.isFinite(manual)&&manual>0) return true;
     return false;
   }
-  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && !isAnalyzedRecord(r)); }
-  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && isAnalyzedRecord(r)); }
-  function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && r.status!=="accepted" && r.status!=="rejected" && r.status!=="retake_allowed" && r.status!=="deleted"); }
-  function isPreviousRp(r){ return !!(r && !isDeleted(r) && (rpIsAcceptedSubmission(r) || r.status==="rejected" || r.status==="retake_allowed")); }
+  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r) && !isAnalyzedRecord(r)); }
+  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r) && isAnalyzedRecord(r)); }
+  function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r)); }
+  function isPreviousRp(r){ return !!(r && !isDeleted(r) && rpIsPreviousReviewSubmission(r)); }
   function taskKey(r){
     const inferred=rpInferRealTask(r);
     if(inferred && inferred.id) return inferred.id;
@@ -9684,7 +9716,7 @@ document.addEventListener("click", function(e){
   }
   async function currentVisibleRecords(){
     rpRefreshRosters(false);
-    const arr=recordsFastWithBackgroundSync().filter(rpRecordVisible);
+    const arr=records().filter(rpRecordVisible);
     const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
     const stuVal=String(document.getElementById("rp-v11-student")?.value||"");
     const searchQ=rpNorm(document.getElementById("rp-v11-search")?.value||"");
@@ -9739,7 +9771,7 @@ document.addEventListener("click", function(e){
       const acceptReady=canAcceptRecord(r);
       const acceptBg=acceptReady?"#16a34a":"#94a3b8";
       const acceptLabel=acceptReady?"Accept":"Analyze first";
-      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${rpMetricValue(r,"accuracy")===""?"-":rpMetricValue(r,"accuracy")}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${rpMetricValue(r,"wcpm")===""?"-":rpMetricValue(r,"wcpm")}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${rpMetricValue(r,"fluency")===""?"-":rpMetricValue(r,"fluency")}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${rpMetricValue(r,"mistakes")===""?"-":rpMetricValue(r,"mistakes")}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${rpMetricValue(r,"correctWords")===""?"-":rpMetricValue(r,"correctWords")}/${rpMetricValue(r,"totalWords")===""?"-":rpMetricValue(r,"totalWords")}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+      out+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${rpAttemptState(r)} · <b>Raw:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<audio controls src="${url}" style="width:100%;margin-top:6px"></audio>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${rpMetricValue(r,"accuracy")===""?"-":rpMetricValue(r,"accuracy")}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${rpMetricValue(r,"wcpm")===""?"-":rpMetricValue(r,"wcpm")}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${rpMetricValue(r,"fluency")===""?"-":rpMetricValue(r,"fluency")}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${rpMetricValue(r,"mistakes")===""?"-":rpMetricValue(r,"mistakes")}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${rpMetricValue(r,"correctWords")===""?"-":rpMetricValue(r,"correctWords")}/${rpMetricValue(r,"totalWords")===""?"-":rpMetricValue(r,"totalWords")}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${r.transcript}</div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
     }
     cards.innerHTML=out;
   }
