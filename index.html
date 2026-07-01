@@ -689,6 +689,14 @@ async function loadAllData() {
 function saveSession(u) { try { localStorage.setItem("eq_session", JSON.stringify(u)); } catch(e){} }
 function loadSession() { try { return JSON.parse(localStorage.getItem("eq_session")||"null"); } catch(e){ return null; } }
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
+function eqHardCleanLoggedOutUI(){
+  try{
+    ["rp-v11-student-status","rp-floating-button-20260605","rp-v11-panel","w12fab","w12p"].forEach(function(id){var el=document.getElementById(id); if(el) el.remove();});
+    var badge=document.getElementById("rp-floating-count"); if(badge) badge.style.display="none";
+    try{ localStorage.removeItem("eq_session"); }catch(_e){}
+    try{ localStorage.removeItem("rp_student_active_view"); }catch(_e){}
+  }catch(e){}
+}
 
 const EQ_LOGIN_MEMORY_KEY = "eduquiz_login_memory_react_v1";
 function loadLoginMemory(){
@@ -1712,13 +1720,42 @@ function Landing({onLogin, prefillQuiz}) {
   const [fgId,setFgId] = useState(""),[fgFather,setFgFather] = useState(""),[fgNew,setFgNew] = useState(""),[fgMsg,setFgMsg] = useState("");
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
+  function activeLoginClassesFromData(d){
+    try{
+      d=d||{};
+      const allClasses=Array.isArray(d.classes)?d.classes:[];
+      const firebaseUsers=Array.isArray(d.firebaseUsers)?d.firebaseUsers:[];
+      const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
+      const delStu=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(d.users||[]);
+      const byId={}; allClasses.forEach(function(c){ if(c&&c.id) byId[String(c.id)]=c; });
+      const activeIds=[];
+      firebaseUsers.forEach(function(u){
+        if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,delStu)) return;
+        const cid=String(u.classId||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
+        if(!cid) return;
+        if(delCls.has(cid)||delCls.has(canon)) return;
+        if(!activeIds.includes(cid)) activeIds.push(cid);
+      });
+      return activeIds.map(function(cid){
+        const c=byId[cid] || allClasses.find(function(x){return x&&(sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid));});
+        return c || {id:cid,name:cid,grade:""};
+      });
+    }catch(e){ return []; }
+  }
   const upd = (k,v) => sf(x=>{
     const nx={...x,[k]:v};
     saveLoginMemory({mode,name:nx.name||"",classId:nx.classId||"",studentId:nx.email||nx.studentId||"",email:nx.email||"",password:nx.password||"",code:nx.code||"",fatherName:nx.fatherName||""});
     return nx;
   });
 
-  useEffect(()=>{ loadAllData().then(d=>setClasses(d.classes)); },[]);
+  useEffect(()=>{
+    eqHardCleanLoggedOutUI();
+    loadAllData().then(function(d){
+      const active=activeLoginClassesFromData(d);
+      setClasses(active);
+      if(f.classId && !active.some(function(c){return sameClassId(c.id,f.classId);})){ sf(x=>({...x,classId:""})); }
+    });
+  },[]);
 
   async function doResetPassword(){
     setFgMsg("");
@@ -7797,7 +7834,7 @@ function App() {
   },[]);
 
   function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
-  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} setUser(null);}
+  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -7809,7 +7846,7 @@ function App() {
         <div style={{fontSize:"42px",marginBottom:"10px"}}>🚫</div>
         <h2 style={{margin:"0 0 10px",color:"#0f172a"}}>Account removed</h2>
         <p style={{color:"#64748b",lineHeight:1.7}}>تم حذف حساب الطالب من المنصة أو لم يعد مرتبطًا بفصل نشط. لا يمكن عرض المهام أو إرسال التسجيلات. تواصل مع المعلم.</p>
-        <button onClick={()=>{clearSession();location.reload();}} style={{marginTop:"12px",border:"none",background:"#2563eb",color:"#fff",borderRadius:"12px",padding:"12px 18px",fontWeight:900}}>Back to login</button>
+        <button onClick={()=>{clearSession();try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} eqHardCleanLoggedOutUI();location.reload();}} style={{marginTop:"12px",border:"none",background:"#2563eb",color:"#fff",borderRadius:"12px",padding:"12px 18px",fontWeight:900}}>Back to login</button>
       </div>
     </div>;
   }
@@ -8879,6 +8916,7 @@ document.addEventListener("click", function(e){
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
+    try{ if(typeof window.rpRunTeacherAutoNowSilent==="function") await window.rpRunTeacherAutoNowSilent(); }catch(_e){}
     await rpRefreshRosters(false);
     const allLocalRaw=await syncCloudIntoLocal();
     const allLocal=allLocalRaw.filter(rpRecordVisible);
@@ -9257,6 +9295,7 @@ document.addEventListener("click", function(e){
     }finally{ busy=false; }
   }
   window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
+  window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
   setTimeout(()=>runOnce(2), 5000);
   setInterval(()=>runOnce(2), 15000);
 })();
@@ -9307,7 +9346,7 @@ async function aiMark(text,task,studentName,similarity){const local=localMark(te
 function box(a,stu){a=a||{};return'<div class="w12box" style="background:#f8fafc"><div class="w12grid"><div><b>Score</b><br><span style="font-size:24px;font-weight:900">'+esc(a.score!=null?a.score:"-")+' / '+esc(a.total||10)+'</span></div><div><b>Level / الوسام</b><br><span class="w12chip">'+esc(lvl(a.score).badge)+'</span></div><div><b>Sentences</b><br>'+esc(a.sentenceCount||0)+' / 6</div><div><b>Words</b><br>'+esc(a.wordCount||0)+'</div></div><div style="margin-top:10px"><b>Feedback:</b><br>'+esc(stu?(a.studentFeedback||a.feedback||""):(a.feedback||a.studentFeedback||""))+'</div>'+(!stu?'<div class="w12grid" style="margin-top:10px"><div><b>AI suspicion</b><br>'+esc(a.aiSuspicion||"Low")+'</div><div><b>Similarity</b><br>'+esc(a.similarity||0)+'%</div><div><b>Source</b><br>'+esc(a.source||"local")+'</div></div><div style="font-size:12px;color:#64748b;margin-top:8px">'+esc(a.teacherNote||"")+'</div>':'')+'</div>'}
 function panel(title){const old=document.getElementById("w12p");if(old)old.remove();const w=document.createElement("div");w.id="w12p";w.innerHTML='<div id="w12c"><div id="w12h"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — Sync Delete + Retake</div></div><button id="w12close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="w12b"></div></div>';document.body.appendChild(w);w.querySelector("#w12close").onclick=()=>w.remove();return w.querySelector("#w12b")}
 async function open(){if(teacher())return teacherPanel();if(student())return studentPanel();alert("Login first.")}
-function w12ShouldHideFab(){try{const txt=(document.getElementById("root")?.innerText||document.body.innerText||"");return /Question\s+\d+\s+of\s+\d+/i.test(txt)||txt.includes("Reading timer:")||txt.includes("Submit Quiz")||txt.includes("Create Quiz")||txt.includes("Take Quiz")||txt.includes("Listening Audio");}catch(e){return false}}
+function w12ShouldHideFab(){try{let sess=null;try{sess=JSON.parse(localStorage.getItem("eq_session")||"null")}catch(_e){};const txt=(document.getElementById("root")?.innerText||document.body.innerText||"");return !sess||txt.includes("EduQuiz")&&txt.includes("دخول")&&txt.includes("اختر فصلك")||/Question\s+\d+\s+of\s+\d+/i.test(txt)||txt.includes("Reading timer:")||txt.includes("Submit Quiz")||txt.includes("Create Quiz")||txt.includes("Take Quiz")||txt.includes("Listening Audio");}catch(e){return false}}
 function fab(){const ex=document.getElementById("w12fab");if(w12ShouldHideFab()){if(ex)ex.remove();return;}if(ex)return;if(!teacher()&&!student())return;const b=document.createElement("button");b.id="w12fab";b.innerHTML="✍️ Writing";b.style.cssText="position:fixed;right:14px;bottom:82px;z-index:2147482500;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:900;padding:12px 16px;box-shadow:0 10px 25px rgba(15,23,42,.30);font-family:system-ui";b.onclick=open;document.body.appendChild(b)}
 async function teacherPanel(){const body=panel("✍️ Writing — Teacher");body.innerHTML='<div class="w12box">Loading...</div>';await load();body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="w12btn" data-t="students">Advanced Students</button><button class="w12btn" data-t="tasks">Writing Tasks</button><button class="w12btn" data-t="subs">Submissions</button><button class="w12btn" data-t="eval">Writing Evaluation</button><button class="w12btn" data-t="scores">Writing Scores</button><button class="w12btn" data-t="ai">AI Settings</button></div><div id="w12content"></div>';body.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>draw(b.dataset.t));draw("eval")}
 function draw(t){const el=document.getElementById("w12content");try{if(t==="students")return tabStudents(el);if(t==="tasks")return tabTasks(el);if(t==="subs")return tabSubs(el);if(t==="eval")return tabEval(el);if(t==="scores")return tabScores(el);if(t==="ai")return tabAI(el)}catch(e){el.innerHTML='<div class="w12box" style="color:#dc2626"><b>Tab error:</b><br>'+esc(e.message||e)+'</div>'}}
