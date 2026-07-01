@@ -848,7 +848,9 @@ function rpBuildAcceptedSubmission(s, extra){
     wcpm:wcpm===null?(s&&s.wcpm):wcpm,
     fluency:fluency===null?(s&&s.fluency):fluency,
     mistakes:mistakes===null?(s&&s.mistakes):mistakes,
-    mistakeCount:mistakes===null?(s&&s.mistakeCount):mistakes
+    mistakeCount:mistakes===null?(s&&s.mistakeCount):mistakes,
+    correctWords:rpMetricFromSubmission(s,"correctWords"),
+    totalWords:rpMetricFromSubmission(s,"totalWords")
   };
 }
 function rpIsAcceptedSubmission(s){
@@ -4860,20 +4862,14 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   async function playModel(t){
     if(recording){setMsg("Stop recording before playing model audio.");return;}
     stopModelAudio();
+    // RP113: students must never generate OpenAI audio. The teacher generates it once when saving the task.
+    // Student side only plays the saved AI audio, or falls back to device speech if no saved audio exists.
     const readyAudio=String((t&&t.modelAudioDataUrl)||(t&&t.modelAudioUrl)||"");
     if(readyAudio){
-      const a=new Audio(readyAudio); modelRef.current=a; a.onended=()=>setModelPlaying(false); a.onerror=()=>setModelPlaying(false); setModelPlaying(true); try{await a.play();}catch(e){setModelPlaying(false);}
+      const a=new Audio(readyAudio); modelRef.current=a; a.onended=()=>setModelPlaying(false); a.onerror=()=>setModelPlaying(false); setModelPlaying(true); setMsg("Playing saved model audio."); try{await a.play();}catch(e){setModelPlaying(false);}
       return;
     }
-    const key=String((t&&t.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
-    if(key){
-      try{
-        setMsg("Generating AI model audio...");
-        const url=await rpOpenAITTSDataUrl(t.text,key,"alloy");
-        const a=new Audio(url); modelRef.current=a; a.onended=()=>setModelPlaying(false); a.onerror=()=>setModelPlaying(false); setModelPlaying(true); setMsg("AI model audio ready."); await a.play();
-        return;
-      }catch(e){ setMsg("AI audio failed; using device voice fallback."); }
-    }
+    setMsg("No saved AI audio for this task. Using device voice fallback.");
     const u=new SpeechSynthesisUtterance(t.text);
     modelRef.current=u;
     u.lang="en-US";
@@ -5067,6 +5063,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       const lastAccVal=rpStudentMetric(last,"accuracy");
       const lastWcpmVal=rpStudentMetric(last,"wcpm");
       const lastMistakesVal=rpStudentMetric(last,"mistakes");
+      const lastCorrectWordsVal=rpStudentMetric(last,"correctWords");
+      const lastTotalWordsVal=rpStudentMetric(last,"totalWords");
+      const lastWordsText=(lastCorrectWordsVal!=null&&lastTotalWordsVal!=null)?(lastCorrectWordsVal+"/"+lastTotalWordsVal):"-";
       return <Card key={t.id} style={{marginBottom:"8px",border:isRejected?"2px solid "+C.d:isPending?"2px solid #f59e0b":isApproved?"2px solid "+C.s:"none"}}>
         <div style={{display:"flex",gap:"10px",alignItems:"center"}}>
           <div style={{fontSize:"24px"}}>📘</div>
@@ -5081,13 +5080,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
             {isPending && <div style={{marginTop:"5px",padding:"6px 9px",background:"#fef9ec",border:"1px solid #fde68a",borderRadius:"7px"}}>
               <div style={{fontSize:"11px",fontWeight:"800",color:"#b45309"}}>⏳ {rpStudentIsAnalyzed(last)?"في انتظار اعتماد المعلم / Awaiting teacher approval":"تم التسليم / Waiting for teacher analysis"}</div>
               {lastScoreVal!=null && <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>Score: <b>{lastScoreVal}%</b> · Waiting for teacher approval</div>}
-              {(lastAccVal!=null||lastWcpmVal!=null||lastMistakesVal!=null) && <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>🎯 {lastAccVal==null?"-":lastAccVal+"%"} accuracy · ⚡ {lastWcpmVal==null?"-":lastWcpmVal} WCPM · ❌ {lastMistakesVal==null?"-":lastMistakesVal} mistakes</div>}
+              {(lastAccVal!=null||lastWcpmVal!=null||lastMistakesVal!=null) && <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>🎯 {lastAccVal==null?"-":lastAccVal+"%"} accuracy · ⚡ {lastWcpmVal==null?"-":lastWcpmVal} WCPM · 📖 {lastWordsText} words · ❌ {lastMistakesVal==null?"-":lastMistakesVal} mistakes</div>}
             </div>}
             {isApproved && <div style={{marginTop:"5px",padding:"6px 9px",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"7px"}}>
               <div style={{fontSize:"11px",fontWeight:"800",color:C.s}}>✅ تمت الموافقة / Approved by teacher</div>
-              <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>Score: <b>{lastScoreVal==null?"-":lastScoreVal+"%"}</b> · 🎯 {lastAccVal==null?"-":lastAccVal+"%"} accuracy · ⚡ {lastWcpmVal==null?"-":lastWcpmVal} WCPM · ❌ {lastMistakesVal==null?"-":lastMistakesVal} mistakes</div>
+              <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>Score: <b>{lastScoreVal==null?"-":lastScoreVal+"%"}</b> · 🎯 {lastAccVal==null?"-":lastAccVal+"%"} accuracy · ⚡ {lastWcpmVal==null?"-":lastWcpmVal} WCPM · 📖 {lastWordsText} words · ❌ {lastMistakesVal==null?"-":lastMistakesVal} mistakes</div>
             </div>}
-            {!isRejected && !isPending && !isApproved && lastScoreVal!=null && <div style={{fontSize:"11px",fontWeight:800,color:gc(lastScoreVal)}}>Last: {lastScoreVal}% · {lastWcpmVal==null?"-":lastWcpmVal} WCPM · Mistakes: {lastMistakesVal==null?"-":lastMistakesVal}</div>}
+            {!isRejected && !isPending && !isApproved && lastScoreVal!=null && <div style={{fontSize:"11px",fontWeight:800,color:gc(lastScoreVal)}}>Last: {lastScoreVal}% · {lastWcpmVal==null?"-":lastWcpmVal} WCPM · Words: {lastWordsText} · Mistakes: {lastMistakesVal==null?"-":lastMistakesVal}</div>}
             {!allowed && !isRejected && <div style={{fontSize:"10px",color:C.d,fontWeight:800}}>Attempt limit reached. Wait for teacher retake permission.</div>}
             {teacherExtra&&done.length>=limit&&<div style={{fontSize:"10px",color:C.s,fontWeight:800}}>Teacher allowed an extra retake.</div>}
           </div>
@@ -5382,7 +5381,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Metrics Unified v112</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Metrics Unified v112 / RP113 Words + Teacher Audio Once</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -5509,7 +5508,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
         </div>
-        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}
+        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}
       </div>;
     })}</Card>
   </div>;
