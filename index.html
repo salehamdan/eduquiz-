@@ -33,6 +33,7 @@
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- RP114_WCPM_UNIFIED_TEACHER_AI_AUDIO_BUTTON_20260701 -->
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
+<!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
@@ -5171,7 +5172,10 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     </Card>}
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(function(t){
       const done=attemptsForTask(t);
-      const last=done.slice().sort(function(a,b){return (Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0);})[done.length-1];
+      // RP117: placeholder counters are only for attempt count; never use them as latest status.
+      const realDone=done.filter(function(a){return a && !String(a.id||"").startsWith("local_counter_");});
+      const sortedReal=realDone.slice().sort(function(a,b){return (Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0);});
+      const last=sortedReal.length?sortedReal[sortedReal.length-1]:null;
       const limit=totalAllowedAttempts(t);
       const teacherExtra=extraRetakeAllowed(done);
       const allowed=canAttemptTask(t);
@@ -5521,7 +5525,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP116 Live Tasks + Date Visible</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP117 Live Sync + RB Fixed</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -8470,7 +8474,7 @@ function App() {
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
 
-  async function reload(){const d=await loadAllData();setData(d);return d;}
+  async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);if(typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   function viewAsStudent(studentUser){ setParkedTeacher(user); setUser(studentUser); reload(); }
@@ -8520,7 +8524,35 @@ function App() {
     return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); clearInterval(timer); };
   },[user&&user.id,user&&user.role]);
 
-  function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
+  useEffect(()=>{
+    if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
+    let unsubs=[];
+    function applyCollection(col, arr){
+      try{
+        if(col==="readingSubmissions" && typeof window.rpV11MergeCloudRecords==="function"){
+          window.rpV11MergeCloudRecords(arr);
+          if(typeof window.rpV11RenderNow==="function") setTimeout(()=>window.rpV11RenderNow(),60);
+        }
+      }catch(e){}
+      setData(prev=>{
+        if(!prev) return prev;
+        try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
+        return {...prev, [col]: arr};
+      });
+    }
+    ["readingSubmissions","readingTasks"].forEach(col=>{
+      try{
+        const unsub=db.collection(col).onSnapshot(snap=>{
+          const arr=[]; snap.forEach(doc=>arr.push({id:doc.id, ...(doc.data?doc.data():{})}));
+          applyCollection(col, arr);
+        }, err=>console.warn("RP117 live sync unavailable", col, err&&err.message));
+        unsubs.push(unsub);
+      }catch(e){}
+    });
+    return ()=>{unsubs.forEach(u=>{try{u&&u();}catch(e){}});};
+  },[user&&user.id,user&&user.role]);
+
+    function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
@@ -8645,6 +8677,19 @@ document.addEventListener("click", function(e){
     return [];
   }
   function saveRecords(a){ writeJSON(RP_KEY,a); }
+  // RP117: allow the React/Firebase live listener to push fresh cloud records into the RP drawer instantly.
+  window.rpV11MergeCloudRecords=function(remote){
+    try{
+      const clean=(remote||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_"));
+      const merged=mergeRecords(records(), clean);
+      saveRecords(merged);
+      try{ __rpLastCloudSyncAt=Date.now(); }catch(_e){}
+      return merged;
+    }catch(e){ return records(); }
+  };
+  window.rpV11ForceRefresh=function(){
+    try{ syncCloudIntoLocal().then(function(){ try{ if(typeof renderCards==="function") renderCards(); }catch(_e){} }); }catch(e){}
+  };
 
   function openDB(){
     return new Promise((resolve,reject)=>{
@@ -8726,7 +8771,9 @@ document.addEventListener("click", function(e){
     try{
       if(typeof fsAll!=="function") return [];
       const arr=await fsAll("readingSubmissions");
-      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && (r.source==="rp_shared_submission" || r.taskId===taskId() || r.audioDataUrl || r.audioUrl || (r.audioChunked&&r.audioChunkCount)));
+      // RP117: RB/float drawer must not filter by the old fixed task id.
+      // Load every real Reading Progress submission, excluding only audio chunks.
+      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_"));
     }catch(e){
       console.warn("RP cloud read failed", e);
       return [];
@@ -8754,7 +8801,7 @@ document.addEventListener("click", function(e){
   }
   function recordsFastWithBackgroundSync(){
     const now=Date.now();
-    if(now-__rpLastCloudSyncAt>7000){
+    if(now-__rpLastCloudSyncAt>2500){
       __rpLastCloudSyncAt=now;
       syncCloudIntoLocal().then(function(){try{ if(document.getElementById("rp-v11-panel")?.style.display==="block") renderCards(); }catch(e){}});
     }
@@ -9263,7 +9310,24 @@ document.addEventListener("click", function(e){
       (uniqueSources.length?"المصدر: "+uniqueSources.slice(0,5).join(", "):"لم أجد تسجيلات قديمة في هذا الجهاز."));
   }
 
-  function teacherPanel(){
+  function rpStartRealtimeDrawerSync(){
+    try{
+      if(window.__rp117DrawerLiveStarted) return;
+      if(!(typeof db!=="undefined" && db && db.collection)) return;
+      window.__rp117DrawerLiveStarted=true;
+      db.collection("readingSubmissions").onSnapshot(function(snap){
+        try{
+          const remote=[];
+          snap.forEach(function(doc){ remote.push({id:doc.id, ...(doc.data?doc.data():{})}); });
+          if(typeof window.rpV11MergeCloudRecords==="function") window.rpV11MergeCloudRecords(remote);
+          if(typeof renderCards==="function") renderCards();
+          window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions"}}));
+        }catch(e){ console.warn("RP117 drawer live snapshot failed", e); }
+      }, function(err){ console.warn("RP117 drawer live unavailable", err&&err.message); window.__rp117DrawerLiveStarted=false; });
+    }catch(e){ window.__rp117DrawerLiveStarted=false; }
+  }
+
+    function teacherPanel(){
     if(!isTeacher()||panelMade) return;
     panelMade=true;
     const panel=document.createElement("div");
@@ -9679,6 +9743,8 @@ document.addEventListener("click", function(e){
     }
     cards.innerHTML=out;
   }
+
+  try{ window.rpV11RenderNow=renderCards; }catch(_e){}
 
   async function studentStatus(){
     const currentUserRole = String(user().role||"").toLowerCase();
@@ -10104,7 +10170,7 @@ function studentForSub(s){return users().find(u=>{const al=aliases(u);return al.
 function tabEval(el){const cs=classes(),tasks=DATA.tasks||[],subs=visibleSubs().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">حسب الطالب أو الفصل. الافتراضي آخر 10 تقييمات فقط.</div><div class="w12grid" style="margin-top:10px"><select id="evClass" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Classes</option>'+cs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select><input id="evStudent" placeholder="Student name / number" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="evTask" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Tasks</option>'+tasks.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title||"Writing Task")+'</option>').join("")+'</select><select id="evStatus" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Status</option><option value="pending_review">pending_review</option><option value="accepted">accepted</option><option value="retake_requested">retake_requested</option><option value="retaken">retaken</option><option value="cancelled">cancelled</option></select><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="w12btn evLim" data-lim="10">Latest 10</button><button class="w12btn evLim" data-lim="20">Latest 20</button><button class="w12btn evLim" data-lim="all">All</button></div></div></div><div id="evSummary"></div><div id="evList"></div>';let limit="10";const cls=el.querySelector("#evClass"),stu=el.querySelector("#evStudent"),tsk=el.querySelector("#evTask"),st=el.querySelector("#evStatus"),sum=el.querySelector("#evSummary"),list=el.querySelector("#evList");function red(){let arr=subs.map(s=>Object.assign({},s,{_u:studentForSub(s)}));const q=norm(stu.value);if(cls.value)arr=arr.filter(s=>String(s._u.classId)===String(cls.value));if(q)arr=arr.filter(s=>norm((s.studentName||"")+" "+(s.studentId||"")+" "+name(s._u)+" "+num(s._u)).includes(q));if(tsk.value)arr=arr.filter(s=>String(s.taskId)===String(tsk.value));if(st.value)arr=arr.filter(s=>String(s.status||"pending_review")===String(st.value));const total=arr.length,reviewed=arr.filter(s=>s.status==="accepted").length,retakes=(DATA.retakeRequests||[]).filter(r=>!r.cleared).length,scores=arr.map(x=>Number((x.finalScore!=null?x.finalScore:(x.auto&&x.auto.score))||0)).filter(x=>isFinite(x)),avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10):0;let top='<div class="w12grid"><div class="w12box"><b>Total Attempts</b><br><span style="font-size:26px;font-weight:900">'+total+'</span></div><div class="w12box"><b>Reviewed</b><br><span style="font-size:26px;font-weight:900">'+reviewed+'</span></div><div class="w12box"><b>Average %</b><br><span style="font-size:26px;font-weight:900">'+avg+'%</span></div><div class="w12box"><b>Retake Requests</b><br><span style="font-size:26px;font-weight:900">'+retakes+'</span></div></div>';const groups=new Map();arr.forEach(s=>{const k=String(s.studentId||s.studentName||"student");if(!groups.has(k))groups.set(k,[]);groups.get(k).push(s)});sum.innerHTML=top+Array.from(groups.values()).map(ss=>{const s=ss[0],u=s._u,sc=ss.map(x=>Number((x.finalScore!=null?x.finalScore:(x.auto&&x.auto.score))||0)).filter(x=>isFinite(x)),av=sc.length?Math.round(sc.reduce((a,b)=>a+b,0)/sc.length*10):0,best=sc.length?Math.round(Math.max(...sc)*10):0,latest=sc.length?Math.round(sc[0]*10):0;return'<div class="w12box"><b>'+esc(name(u)||s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(num(u)||s.studentId||"")+' — '+esc(cname(u.classId)||"")+'</div><div class="w12grid" style="margin-top:10px"><div><b>Attempts</b><br>'+ss.length+'</div><div><b>Average %</b><br>'+av+'%</div><div><b>Best %</b><br>'+best+'%</div><div><b>Latest %</b><br>'+latest+'%</div></div><div style="margin-top:8px"><span class="w12chip">'+esc(lvl(latest/10).badge)+'</span> <span class="w12chip">'+esc(s.status||"pending_review")+'</span></div></div>'}).join("");let shown=limit==="all"?arr:arr.slice(0,Number(limit||10));list.innerHTML='<div class="w12box"><b>Attempts</b><div style="font-size:12px;color:#64748b">Showing '+shown.length+' of '+arr.length+'</div></div>'+shown.map(attemptCard).join("");bindActions(list,()=>tabEval(el))} [cls,stu,tsk,st].forEach(x=>x.oninput=red);el.querySelectorAll(".evLim").forEach(b=>b.onclick=()=>{limit=b.dataset.lim;red()});red()}
 function tabScores(el){const us=users().filter(u=>selected(u));el.innerHTML='<div class="w12box"><b>Writing Scores</b><table class="w12table"><thead><tr><th>Student</th><th>No.</th><th>Score</th><th>Level</th><th>Status</th></tr></thead><tbody>'+us.map(u=>{const al=aliases(u),ss=visibleSubs().filter(s=>subStudentIds(s).some(x=>al.has(x))),s=ss[0],score=s?(s.finalScore!=null?s.finalScore:(s.auto&&s.auto.score)||"-"):"-";return'<tr><td>'+esc(name(u))+'</td><td>'+esc(num(u))+'</td><td><b>'+esc(score)+'</b></td><td>'+esc(s?lvl(score).badge:"-")+'</td><td>'+esc(s?s.status||"pending_review":"No submission")+'</td></tr>'}).join("")+'</tbody></table></div>'}
 async function studentPanel(){const body=panel("✍️ Writing — Student");body.innerHTML='<div class="w12box">Loading...</div>';await load();const u=sess();if(!selected(u)){body.innerHTML='<div class="w12box"><b>تأكيد رقم الطالب</b><input id="snum" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="show" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button></div>';body.querySelector("#show").onclick=async()=>{const v=body.querySelector("#snum").value.trim();if(!v)return;["eqWritingStudentNumber_v12","eqWritingStudentNumber_v11","eqWritingStudentNumber_v10","eqWritingStudentNumber_v8"].forEach(k=>localStorage.setItem(k,v));await load();studentPanel()};return}const al=aliases(u);body.innerHTML=DATA.tasks.map(t=>{const mine=visibleSubs().filter(s=>String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));const req=(DATA.retakeRequests||[]).find(r=>requestMatches(r,al,t.id)&&!r.cleared);const old=mine[0],can=!!req||(old&&old.status==="retake_requested");if(old&&!can){const a=Object.assign({},old.auto||localMark(old.text,t,0));if(old.finalScore!=null){a.score=old.finalScore;a.total=a.total||10;a.level=lvl(old.finalScore);a.source=old.teacherOverride?"teacher-override":(a.source||"final")}return'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div>'+box(a,true)+'<div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Status: <b>'+esc(old.status||"pending_review")+'</b></div></div>'}return'<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div>'+(can?'<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;padding:10px;margin-top:8px;font-weight:900">Retake requested — أعد المحاولة واكتب من جديد.</div>':'')+'<textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">'+(can?"Submit Retake":"Submit Writing")+'</button></div>'}).join("")||'<div class="w12box">لا توجد مهام كتابة.</div>';body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{const t=DATA.tasks.find(x=>x.id===btn.dataset.submit),text=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]').value.trim();if(!text)return alert("Write your paragraph first.");btn.disabled=true;btn.textContent="Scoring...";const saved=localStorage.getItem("eqWritingStudentNumber_v12")||localStorage.getItem("eqWritingStudentNumber_v11")||localStorage.getItem("eqWritingStudentNumber_v10")||localStorage.getItem("eqWritingStudentNumber_v8")||"",sid=saved?(/^\d+$/.test(saved)?"student_"+saved:saved):(Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al)[0]||"student");DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>requestMatches(r,al,t.id)?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString()}):r);visibleSubs().forEach(s=>{if(String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))&&s.status==="retake_requested")s.status="retaken"});const mx=Math.max(0,...visibleSubs().filter(s=>String(s.taskId)===String(t.id)).map(s=>sim(text,s.text)));const a=await aiMark(text,t,u.name||hi()||"Student",mx);const mode=String(t.mode||"ai_teacher");const st=mode==="ai"?"accepted":"pending_review";DATA.submissions.push({id:uid("sub"),taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||hi()||"Student",text,auto:a,status:st,finalScore:mode==="ai"?a.score:null,createdAt:new Date().toISOString()});await save();alert("Writing submitted and scored.");studentPanel()})}
-setInterval(fab,1200);setTimeout(fab,1500);
+setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
 })();
 </script>
 <!-- END_WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_20260627 -->
