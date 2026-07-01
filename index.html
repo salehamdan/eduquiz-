@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
@@ -936,6 +937,7 @@ function rpBuildAcceptedSubmission(s, extra){
   return {
     ...(s||{}), ...(extra||{}),
     status:"accepted", reviewStatus:"accepted", teacherReview:"accepted", teacherReviewStatus:"accepted", studentStatus:"accepted",
+    accepted:true, approved:true, teacherAccepted:true, teacherApproved:true, pending:false,
     analysisStatus:"completed", visibleToStudent:true, scoreVisible:true,
     approvedAt:(s&&s.approvedAt)||now, acceptedAt:(s&&s.acceptedAt)||now, reviewedAt:now, updatedAt:now,
     teacherScore:score===""?(s&&s.teacherScore):score, finalScore:score===""?(s&&s.finalScore):score, score:score===""?(s&&s.score):score,
@@ -8783,7 +8785,7 @@ document.addEventListener("click", function(e){
   }
 
   function recordTime(r){
-    const t=Date.parse((r&&(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt))||"");
+    const t=Date.parse((r&&(r.updatedAt||r.reviewedAt||r.acceptedAt||r.approvedAt||r.analyzedAt||r.submittedAt||r.createdAt||r.timestamp))||"");
     return Number.isFinite(t)?t:0;
   }
   function mergeRecords(local, remote){
@@ -8931,8 +8933,9 @@ document.addEventListener("click", function(e){
       }
       a[i]=m;
       saveRecords(a);
-      // RP105: keep RP buttons instant. Cloud save runs in background.
-      try{ cloudSaveRecord(m); }catch(_e){}
+      // RP120: Accept must persist before refreshing, otherwise Firebase old pending can reappear.
+      try{ await cloudSaveRecord(m); }catch(_e){}
+      try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:m.id,status:m.status}})); }catch(_e){}
       return m;
     }
     return null;
@@ -9397,7 +9400,7 @@ document.addEventListener("click", function(e){
           <button id="rp-v11-refresh" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">تحديث</button>
           <button id="rp-v11-restore-old" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#0f766e;color:white;font-weight:900">استعادة تسجيلات قديمة</button>
           <button id="rp-v11-analyze-class" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">تحليل المنتظر الظاهر</button>
-          <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول المحلل الظاهر</button>
+          <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول كل المنتظر المحلل</button>
         </div>
       </div>
       <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
@@ -9448,8 +9451,14 @@ document.addEventListener("click", function(e){
         const ready=arr.filter(canAcceptRecord);
         if(!ready.length)return alert("لا توجد تسجيلات محللة جاهزة للقبول في هذا العرض.");
         if(!confirm("قبول "+ready.length+" تسجيل محلل ظاهر؟"))return;
-        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        Promise.allSettled(ready.map(r=>updateRecord(r.id,{status:"accepted"}))).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        const old=e.target.textContent; e.target.textContent="جاري القبول..."; e.target.disabled=true;
+        Promise.allSettled(ready.map(function(r){return acceptRecordFull(r.id);})).then(async function(res){
+          const ok=res.filter(function(x){return x.status==="fulfilled";}).length;
+          const bad=res.length-ok;
+          if(bad) alert("تم قبول "+ok+" محاولة، وفشل قبول "+bad+" محاولة. جرّب تحديث RP ثم أعد القبول.");
+          try{ await syncCloudIntoLocal(); }catch(_e){}
+          return renderCards();
+        }).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       const del=e.target.getAttribute("data-delete");
@@ -9461,12 +9470,13 @@ document.addEventListener("click", function(e){
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
       const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){
-        const rec=records().find(x=>x.id===rid);
+        const rec=recordsLive().find(x=>x.id===rid) || records().find(x=>x.id===rid);
         if(st==="accepted" && !canAcceptRecord(rec)) return alert("حلّل التسجيل أولًا قبل القبول.");
         if(st==="retake_allowed"&&!confirm("السماح للطالب بالتسجيل مرة أخرى؟"))return;
         if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        updateRecord(rid,{status:st,deleted:false}).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        const action=(st==="accepted") ? acceptRecordFull(rid) : updateRecord(rid,{status:st,deleted:false});
+        action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
     panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid)a[i].teacherScore=e.target.value; if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
@@ -9705,8 +9715,28 @@ document.addEventListener("click", function(e){
     return false;
   }
   function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r) && !isAnalyzedRecord(r)); }
-  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r) && isAnalyzedRecord(r)); }
-  function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r)); }
+  function rpHasAcceptableResult(r){
+    if(!r) return false;
+    if(isAnalyzedRecord(r)) return true;
+    if(r.analysis && typeof r.analysis === "object") return true;
+    const vals=[r.teacherScore,r.finalScore,r.aiScore,r.score,r.accuracy,r.wcpm,r.fluency,r.analysis&&r.analysis.finalScore,r.analysis&&r.analysis.score,r.analysis&&r.analysis.accuracy];
+    return vals.some(function(v){ const n=Number(v); return Number.isFinite(n) && n>=0; });
+  }
+  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && rpIsPendingReviewSubmission(r) && rpHasAcceptableResult(r)); }
+  async function acceptRecordFull(id){
+    const rec=recordsLive().find(function(x){return x && x.id===id;}) || records().find(function(x){return x && x.id===id;});
+    if(!rec) return null;
+    if(!canAcceptRecord(rec)) throw new Error("حلّل التسجيل أولًا قبل القبول.");
+    const accepted=rpBuildAcceptedSubmission(rec,{status:"accepted",deleted:false});
+    const local=records();
+    const i=local.findIndex(function(x){return x && x.id===id;});
+    if(i>=0) local[i]={...local[i],...accepted}; else local.push(accepted);
+    saveRecords(local);
+    await cloudSaveRecord(accepted);
+    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:id,status:"accepted"}})); }catch(_e){}
+    return accepted;
+  }
+  function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && rpIsPendingReviewSubmission(r)); }
   function isPreviousRp(r){ return !!(r && !isDeleted(r) && rpIsPreviousReviewSubmission(r)); }
   function taskKey(r){
     const inferred=rpInferRealTask(r);
