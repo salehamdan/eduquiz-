@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
@@ -1728,14 +1729,21 @@ function Landing({onLogin, prefillQuiz}) {
       const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
       const delStu=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(d.users||[]);
       const byId={}; allClasses.forEach(function(c){ if(c&&c.id) byId[String(c.id)]=c; });
-      const activeIds=[];
-      firebaseUsers.forEach(function(u){
-        if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,delStu)) return;
+      const activeUsers=firebaseUsers.filter(function(u){
+        if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,delStu)) return false;
         const cid=String(u.classId||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
-        if(!cid) return;
-        if(delCls.has(cid)||delCls.has(canon)) return;
-        if(!activeIds.includes(cid)) activeIds.push(cid);
+        return !!cid && !delCls.has(cid) && !delCls.has(canon);
       });
+      // Prefer real Firebase class rows. Fall back to active users only if no class rows are available.
+      const realClasses=(Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).filter(function(c){
+        if(!c) return false;
+        const cid=String(c.id||c.classId||c.name||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
+        if(!cid || delCls.has(cid)||delCls.has(canon)) return false;
+        return activeUsers.some(function(u){return sameClassId(u.classId,c.id)||sameClassId(u.classId,c.grade)||sameClassId(u.classId,c.name);});
+      });
+      if(realClasses.length) return realClasses.map(function(c){return {id:c.id||c.classId||c.name,name:c.name||c.grade||c.id,grade:c.grade||""};});
+      const activeIds=[];
+      activeUsers.forEach(function(u){ const cid=String(u.classId||""); if(cid && !activeIds.includes(cid)) activeIds.push(cid); });
       return activeIds.map(function(cid){
         const c=byId[cid] || allClasses.find(function(x){return x&&(sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid));});
         return c || {id:cid,name:cid,grade:""};
@@ -4565,6 +4573,37 @@ function ReadingProgressStudent({user,data,reload}){
     const retakes=Math.max(0,Math.min(10,Number(t.retakeLimit??0)||0));
     return 1 + retakes;
   }
+  function rpStudentScore(a){
+    const v=(a&&a.teacherScore!=null&&a.teacherScore!=="")?a.teacherScore:(a&&a.finalScore!=null?a.finalScore:(a&&a.analysis&&(a.analysis.finalScore!=null?a.analysis.finalScore:a.analysis.accuracy)));
+    const n=Number(v); return Number.isFinite(n)?Math.round(n):null;
+  }
+  function rpStudentStatusText(last){
+    if(!last) return "No submission yet";
+    const st=String(last.status||"").toLowerCase();
+    const an=String(last.analysisStatus||"").toLowerCase();
+    if(st==="accepted") return "Accepted";
+    if(st==="rejected") return "Rejected / try again";
+    if(st==="retake_allowed") return "Retake allowed";
+    if(st==="pending_review" || an==="completed") return "Analyzed / waiting for teacher";
+    if(an.includes("queued")) return "Submitted / queued for analysis";
+    if(an.includes("waiting")) return "Submitted / waiting for teacher";
+    if(an.includes("failed")) return "Submitted / waiting for teacher";
+    return "Submitted / waiting for teacher";
+  }
+  function rpStudentSummary(){
+    let all=[];
+    try{ tasks.forEach(t=>{ attemptsForTask(t).forEach(a=>{ if(a) all.push({...a,_taskTitle:t.title}); }); }); }catch(e){}
+    all=all.filter(a=>a && a.status!=="deleted" && a.deleted!==true && !String(a.id||"").startsWith("local_counter_"));
+    all.sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0));
+    const last=all.length?all[all.length-1]:null;
+    const accepted=all.filter(a=>String(a.status||"").toLowerCase()==="accepted");
+    const rejected=all.filter(a=>String(a.status||"").toLowerCase()==="rejected").length;
+    const scores=accepted.map(rpStudentScore).filter(x=>x!==null);
+    const lastScore=last?rpStudentScore(last):null;
+    const best=scores.length?Math.max(...scores):null;
+    const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):null;
+    return {all,last,lastScore,best,avg,accepted:accepted.length,rejected,status:rpStudentStatusText(last)};
+  }
   const [task,setTask]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
   function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||"")+"_"+String(recordingId||""):"";}
@@ -4650,14 +4689,14 @@ function ReadingProgressStudent({user,data,reload}){
     setMsg("Uploading…");
     const id=uid(); const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     let url=""; let audioDataUrl="";
-    try{ if(blob.size < 900000) audioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
+    try{ if(blob.size < 4500000) audioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
     try{url=await rpUploadAudio(blob,path);}
     catch(e){ if(!audioDataUrl){setAttemptCounter(task.id,beforeCount);setSubmitting(false);setMsg("Upload failed. Check Firebase Storage permissions.");return;} }
     // الطالب يرسل الصوت فقط. التحليل التلقائي يتم من لوحة المعلم باستخدام مفتاح المعلم/المفتاح المشترك.
     var analysis=null;
     var tx=String(transcript||"").trim();
     const newStatus = "submitted";
-    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,audioDataUrl:audioDataUrl,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),status:newStatus,analysis:null,analysisStatus:"Waiting for teacher auto analysis",analyzedAt:null};
+    const submission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentNumber:user.studentId,classId:user.classId,className:user.className,teacherId:task.teacherId,audioUrl:url,audioDataUrl:audioDataUrl,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),status:newStatus,analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null};
     try{
       await fsSet("readingSubmissions",id,submission);
       saveStudentAttemptMarker(submission);
@@ -4685,7 +4724,21 @@ function ReadingProgressStudent({user,data,reload}){
       {blob&&<Btn color={C.w} onClick={discardDraft} disabled={submitting||recording} style={{width:"100%",marginTop:"10px"}}>🔁 إعادة التسجيل</Btn>}
       <Btn color={C.p} disabled={!blob||submitting||(sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)} onClick={submit} style={{width:"100%",marginTop:"10px"}}>{submitting?"Uploading…":((sentBlobKey&&sentBlobKey===currentBlobKey())||isRecordingSubmitted(recordingId)?"Submitted":"Submit to Teacher")}</Btn>{msg&&<p style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d}}>{msg}</p>}
     </Card></div>;
+  const rpSum=rpStudentSummary();
   return <div><Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Listen, read aloud, and submit your recording.</p></Card>
+    <Card style={{marginBottom:"10px",border:"1px solid #dbeafe"}}>
+      <strong style={{fontSize:"13px",color:C.tx}}>📊 Reading Progress Performance</strong>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#eff6ff",color:"#1d4ed8",fontWeight:900}}>Status: {rpSum.status}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#ecfdf5",color:"#166534",fontWeight:900}}>Last: {rpSum.lastScore==null?"-":rpSum.lastScore+"%"}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#fff7ed",color:"#9a3412",fontWeight:900}}>Best: {rpSum.best==null?"-":rpSum.best+"%"}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Average: {rpSum.avg==null?"-":rpSum.avg+"%"}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Attempts: {rpSum.all.length}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#ecfdf5",color:"#166534",fontWeight:900}}>Accepted: {rpSum.accepted}</span>
+        <span style={{padding:"7px 10px",borderRadius:"12px",background:"#fef2f2",color:"#991b1b",fontWeight:900}}>Rejected excluded: {rpSum.rejected}</span>
+      </div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",lineHeight:1.6}}>Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
+    </Card>
     {tasks.length===0?<Card><p style={{textAlign:"center",color:C.mu}}>No Reading Progress tasks yet.</p></Card>:tasks.map(function(t){
       const done=attemptsForTask(t);
       const last=done.slice().sort(function(a,b){return (Date.parse(a.createdAt||a.submittedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||"")||0);})[done.length-1];
@@ -7834,7 +7887,7 @@ function App() {
   },[]);
 
   function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
-  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
+  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
@@ -8951,6 +9004,10 @@ document.addEventListener("click", function(e){
   async function studentStatus(){
     const currentUserRole = String(user().role||"").toLowerCase();
     if(currentUserRole.includes("teacher")) return;
+    // RP_STUDENT_UI_AUDIO_SAVE_FINAL: the student performance card now lives inside the Reading tab.
+    // Remove the old injected top-of-page card so login/student pages never split into two sections.
+    try{ const old=document.getElementById("rp-v11-student-status"); if(old) old.remove(); }catch(e){}
+    return;
     if(!(document.body.innerText||"").includes("Reading Progress")) return;
 
     let all=[];
