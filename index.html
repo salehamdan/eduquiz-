@@ -25,6 +25,7 @@
 <!-- RP106_DIRECT_AUDIO_DELIVERY_FAST_DRAWER_20260701 -->
 <!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
 <!-- RP_108_STUDENT_BACK_SYNC_ACCEPTED_FIX_20260701 -->
+<!-- RP_110_CLEAN_DELETE_ATTEMPTS_SINGLE_SOURCE_20260701 -->
 <!-- RP_109_OVERVIEW_WCPM_ACCEPT_STUDENT_SYNC_FIX_20260701 -->
 <!-- RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701 -->
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
@@ -4995,6 +4996,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [retakeLimit,setRetakeLimit]=useState(0); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null); const [autoAnalysis,setAutoAnalysis]=useState(true); const [openDate,setOpenDate]=useState(""); const [closeDate,setCloseDate]=useState("");
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
   const [resetTaskId,setResetTaskId]=useState(""); const [resetTargetType,setResetTargetType]=useState("student"); const [resetStudentId,setResetStudentId]=useState(""); const [resetClassId,setResetClassId]=useState("");
+  const [deleteTaskId,setDeleteTaskId]=useState("all"); const [deleteTargetType,setDeleteTargetType]=useState("student"); const [deleteStudentId,setDeleteStudentId]=useState(""); const [deleteClassId,setDeleteClassId]=useState(""); const [selectedAttemptIds,setSelectedAttemptIds]=useState({});
   const [teacherAuto,setTeacherAuto]=useState(()=>true); const [teacherKey,setTeacherKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||""); const autoBusyRef=useRef(false);
   const [rpBusy,setRpBusy]=useState({}); const [localTeacherSubs,setLocalTeacherSubs]=useState([]); const [localTeacherTasks,setLocalTeacherTasks]=useState([]);
   function setRpButton(id,label){setRpBusy(prev=>({...prev,[id]:label||"Updating..."}));}
@@ -5182,6 +5184,76 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     setResetTaskId(""); setResetStudentId(""); setResetClassId(""); setResetTargetType("student");
     await reload();
   }
+  function rpCleanupTargetLabel(type, studentId, classId){
+    if(type==="selected") return "المحاولات المحددة / Selected attempts";
+    if(type==="student"){
+      const st=(myStudents||[]).find(s=>String(s.id)===String(studentId));
+      return st ? (st.name+" (#"+(st.studentId||st.id)+")") : "الطالب المختار";
+    }
+    if(type==="class"){
+      const cls=(myClasses||[]).find(c=>String(c.id)===String(classId));
+      return cls ? cls.name : "الفصل المختار";
+    }
+    return "جميع الطلاب / All students";
+  }
+  function rpAttemptMatchesCleanup(s){
+    if(!s || rpOldDeleted(s)) return false;
+    if(deleteTaskId && deleteTaskId!=="all" && String(s.taskId)!==String(deleteTaskId)) return false;
+    if(deleteTargetType==="selected") return !!selectedAttemptIds[s.id];
+    if(deleteTargetType==="student"){
+      if(!deleteStudentId) return false;
+      const st=(myStudents||[]).find(x=>String(x.id)===String(deleteStudentId));
+      if(!st) return false;
+      return responseBelongsToStudent(s,st);
+    }
+    if(deleteTargetType==="class"){
+      if(!deleteClassId) return false;
+      const clsId=String(deleteClassId||"");
+      const clsCanon=canonicalClassId(clsId);
+      const sCls=String(s.classId||s.className||"");
+      const sCanon=canonicalClassId(sCls);
+      return sCls===clsId || sCanon===clsCanon;
+    }
+    return true;
+  }
+  async function deleteReadingAttemptsBulk(){
+    if(deleteTargetType==="student" && !deleteStudentId){setMsg("⚠️ اختر الطالب أولاً. / Choose student first.");return;}
+    if(deleteTargetType==="class" && !deleteClassId){setMsg("⚠️ اختر الفصل أولاً. / Choose class first.");return;}
+    const matches=subs.filter(rpAttemptMatchesCleanup);
+    if(!matches.length){setMsg("⚠️ لا توجد محاولات مطابقة للحذف. / No matching attempts.");return;}
+    const taskLabel=deleteTaskId==="all"?"كل المهام / All tasks":((tasks.find(t=>String(t.id)===String(deleteTaskId))||{}).title||"المهمة المختارة");
+    const targetLabel=rpCleanupTargetLabel(deleteTargetType,deleteStudentId,deleteClassId);
+    const txt="سيتم إخفاء/حذف "+matches.length+" محاولة من النتائج وحساب الطالب.\n\nالمهمة: "+taskLabel+"\nالهدف: "+targetLabel+"\n\nاكتب DELETE للتأكيد.";
+    const ok=window.prompt(txt,"");
+    if(String(ok||"").trim().toUpperCase()!=="DELETE") return;
+    setRpButton("delete_attempts_bulk","Deleting..."); setMsg("Deleting selected Reading Progress attempts...");
+    let done=0, fail=0;
+    for(const r of matches){
+      try{
+        const upd={...r,status:"deleted",deleted:true,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
+        setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
+        await fsSet("readingSubmissions",r.id,upd);
+        done++;
+      }catch(e){fail++; console.warn("delete reading attempt failed",r&&r.id,e);}
+    }
+    clearRpButton("delete_attempts_bulk");
+    setSelectedAttemptIds({});
+    setMsg((done?"✅ تم حذف/إخفاء "+done+" محاولة. ":"")+(fail?"⚠️ فشل "+fail:""));
+    try{await reload();}catch(e){}
+  }
+  async function deleteSingleReadingAttempt(s){
+    if(!s||!s.id) return;
+    const st=myStudents.find(x=>responseBelongsToStudent(s,x));
+    const t=(data.readingTasks||[]).find(x=>String(x.id)===String(s.taskId));
+    const ok=window.confirm("Delete this attempt from teacher and student results?\n\nStudent: "+(st?st.name:"Student")+"\nTask: "+(t?t.title:"Task")+"\n\nThis will make it excluded from student performance.");
+    if(!ok) return;
+    const bid="del_one_"+s.id; setRpButton(bid,"Deleting...");
+    const upd={...s,status:"deleted",deleted:true,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
+    setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
+    try{await fsSet("readingSubmissions",s.id,upd); setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
+    finally{setTimeout(()=>clearRpButton(bid),250);}
+  }
+
   async function delTask(t){
     const related=(data.readingSubmissions||[]).filter(s=>s.taskId===t.id && s.deleted!==true && s.status!=="deleted").length;
     const msg="Delete this Reading Progress task?\n\nTask: "+(t.title||"Reading Task")+"\nStudent recordings/results linked to this task will be kept, but the task will no longer appear for students."+ (related?"\n\nLinked submissions kept: "+related:"");
@@ -5205,7 +5277,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Student Return + Pending Score + Linked Metrics v107</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Cleanup/Delete + Single Evaluation Source v110</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -5227,6 +5299,29 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           {(myClasses||[]).map(function(c){return <option key={c.id} value={c.id}>{c.name}</option>;})}
         </select>}
         <Btn color={C.w} disabled={!!rpBusy["reset_attempts"]} onClick={resetReadingAttempts}>{rpBusy["reset_attempts"]||"🔄 Reset Attempts"}</Btn>
+      </div>
+    </Card>
+    <Card style={{marginBottom:"11px",border:"2px solid "+C.d}}>
+      <strong style={{fontSize:"13px",color:C.tx}}>🗑️ Delete / Clean Reading Attempts</strong>
+      <p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تنظيف آمن: يحذف المحاولات من حساب الطالب والنتائج، ويخفيها من اللوحة الأساسية والزر العائم. اكتب DELETE للتأكيد.</p>
+      <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+        <select value={deleteTaskId} onChange={function(e){setDeleteTaskId(e.target.value);}} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"13px"}}>
+          <option value="all">📚 كل المهام / All tasks</option>
+          {tasks.map(function(t){return <option key={t.id} value={t.id}>{t.title}</option>;})}
+        </select>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+          {["selected","student","class","all"].map(function(type){return <button key={type} onClick={function(){setDeleteTargetType(type);setDeleteStudentId("");setDeleteClassId("");}} style={{flex:"1 1 80px",padding:"8px 4px",borderRadius:"8px",border:"2px solid "+(deleteTargetType===type?C.d:C.br),background:deleteTargetType===type?"#fef2f2":"#fff",color:deleteTargetType===type?C.d:C.mu,fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>{type==="selected"?"☑️ محدد":type==="student"?"👤 طالب":type==="class"?"🏫 فصل":"🌐 الكل"}</button>;})}
+        </div>
+        {deleteTargetType==="student" && <select value={deleteStudentId} onChange={function(e){setDeleteStudentId(e.target.value);}} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"13px"}}>
+          <option value="">👤 اختر الطالب / Choose student</option>
+          {(myStudents||[]).sort(function(a,b){return (a.name||"").localeCompare(b.name||"");}).map(function(s){return <option key={s.id} value={s.id}>{s.name} — #{s.studentId||s.id}</option>;})}
+        </select>}
+        {deleteTargetType==="class" && <select value={deleteClassId} onChange={function(e){setDeleteClassId(e.target.value);}} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"13px"}}>
+          <option value="">🏫 اختر الفصل / Choose class</option>
+          {(myClasses||[]).map(function(c){return <option key={c.id} value={c.id}>{c.name}</option>;})}
+        </select>}
+        <div style={{fontSize:"11px",fontWeight:900,color:C.mu}}>Matching attempts now: {subs.filter(rpAttemptMatchesCleanup).length} {deleteTargetType==="selected"?"/ selected":""}</div>
+        <Btn color={C.d} disabled={!!rpBusy["delete_attempts_bulk"]} onClick={deleteReadingAttemptsBulk}>{rpBusy["delete_attempts_bulk"]||"🗑️ Delete matching attempts"}</Btn>
       </div>
     </Card>
     <Card style={{marginBottom:"11px"}}>
@@ -5290,10 +5385,13 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         : <span style={{fontSize:"10px",color:C.mu}}>{s.status}</span>;
       return <div key={s.id} style={{padding:"9px 0",borderBottom:"1px solid "+C.br}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
-          <div>
+          <div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}>
+            <input type="checkbox" checked={!!selectedAttemptIds[s.id]} onChange={function(e){const on=e.target.checked;setSelectedAttemptIds(prev=>{const n={...prev}; if(on)n[s.id]=true; else delete n[s.id]; return n;});}} style={{marginTop:"2px",transform:"scale(1.15)"}}/>
+            <div>
             <strong style={{fontSize:"12px"}}>{st?st.name:"Student"}</strong>
             <div style={{fontSize:"10px",color:C.mu,marginTop:"2px"}}>{t?t.title:"Task"} · {s.createdAt} · {s.seconds||0}s</div>
             <div style={{marginTop:"4px"}}>{statusBadge}</div>
+            </div>
           </div>
           <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
             {rpAudioSrc&&<audio controls src={rpAudioSrc} style={{height:"28px",maxWidth:"140px"}}/>}
@@ -5303,6 +5401,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {(s.status==="pending_review"||String(s.status||"").toLowerCase()==="submitted")&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {(s.status==="approved"||s.status==="accepted")&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
+            <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
         </div>
         {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={rpWcpmForDashboard(s)??"-"} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}
