@@ -272,8 +272,11 @@ function activeStudentInData(user,data){
   const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
   if(!cid || delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
 
-  const classList = Array.isArray(data&&data.firebaseClasses) ? data.firebaseClasses : (FIREBASE_OK ? [] : ((data&&data.classes)||[]));
-  if(classList.length && !classList.some(function(c){ return c && !c.deleted && c.status!=="deleted" && canonicalClassId(c.id||c.name||c.grade||c.classId||c.className)===cid; })) return false;
+  // ACTIVE_STUDENT_CLASS_FIX_20260701
+  // Do NOT block an active Firebase student just because the class row is missing from Firebase.
+  // Many official/preloaded classes may not have a Firebase class document after cleanup.
+  // The class check here should only block explicitly deleted/archived classes.
+  // Login already checks the selected class against the student's classId.
   return true;
 }
 function adminClassAliases(c){
