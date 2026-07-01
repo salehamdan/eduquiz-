@@ -32,6 +32,7 @@
 <!-- RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701 -->
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- RP114_WCPM_UNIFIED_TEACHER_AI_AUDIO_BUTTON_20260701 -->
+<!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
@@ -808,6 +809,53 @@ function rpComputedWcpmFromSubmission(s){
   }
   return null;
 }
+
+function rpTaskDateVisible(t){
+  try{
+    const now=new Date();
+    function parseStart(v){
+      if(!v) return null;
+      const raw=String(v);
+      const d=raw.length===10 ? new Date(raw+'T00:00:00') : new Date(raw);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    function parseEnd(v){
+      if(!v) return null;
+      const raw=String(v);
+      const d=raw.length===10 ? new Date(raw+'T23:59:59') : new Date(raw);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const o=parseStart(t&&t.openDate);
+    const c=parseEnd(t&&t.closeDate);
+    if(o && now<o) return false;
+    if(c && now>c) return false;
+    return true;
+  }catch(e){return true;}
+}
+function rpGetBlobDurationSeconds(blob){
+  return new Promise(function(resolve){
+    try{
+      if(!blob){resolve(0);return;}
+      const u=URL.createObjectURL(blob);
+      const a=document.createElement('audio');
+      let done=false;
+      function finish(v){if(done)return;done=true;try{URL.revokeObjectURL(u);}catch(e){} resolve(Math.max(0,Math.round(Number(v)||0)));}
+      a.preload='metadata';
+      a.onloadedmetadata=function(){
+        let d=a.duration;
+        if(!isFinite(d) || d===Infinity){
+          try{a.currentTime=1e101;}catch(e){}
+          a.ontimeupdate=function(){finish(a.duration||0);};
+          setTimeout(function(){finish(a.duration||0);},1200);
+        }else finish(d);
+      };
+      a.onerror=function(){finish(0);};
+      setTimeout(function(){finish(0);},2500);
+      a.src=u;
+    }catch(e){resolve(0);}
+  });
+}
+
 function rpMetricFromSubmission(s,k){
   if(!s) return null;
   if(k==="score") {
@@ -4702,7 +4750,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const classOk=!t.classIds||t.classIds.length===0||t.classIds.map(canonicalClassId).includes(userCid)||t.classIds.includes(user.classId);
     const studentOk=!t.studentIds||t.studentIds.length===0||t.studentIds.includes(user.id)||t.studentIds.includes(user.studentId);
     const now=new Date();
-    const timeOk=(!t.openDate||new Date(t.openDate)<=now)&&(!t.closeDate||new Date(t.closeDate)>=now);
+    const timeOk=rpTaskDateVisible(t);
     return classOk && studentOk && timeOk;
   });
   const [localRpSubmissions,setLocalRpSubmissions]=useState([]);
@@ -4869,7 +4917,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return {all,last,lastScore,best,avg,accepted:accepted.length,rejected,status:rpStudentStatusText(last)};
   }
   const [task,setTask]=useState(null); const [recentSubmit,setRecentSubmit]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [modelRate,setModelRate]=useState(0.85); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
   useEffect(()=>{
     const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },10000);
     return ()=>clearInterval(timer);
@@ -4879,6 +4927,18 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   function markRecordingSubmitted(id){try{localStorage.setItem("rp_submitted_recording_ids",JSON.stringify([...new Set([...submittedRecordingIds(),id])]))}catch(e){}}
   function isRecordingSubmitted(id){return !!id && submittedRecordingIds().includes(id);}
   function stopModelAudio(){try{window.speechSynthesis.cancel();}catch(e){} try{ if(modelRef.current&&modelRef.current.pause) modelRef.current.pause(); }catch(e){} setModelPlaying(false);}
+  function rpModelAudioSrc(t){return String((t&&t.modelAudioDataUrl)||(t&&t.modelAudioUrl)||"");}
+  function modelAudioRateChanged(v){
+    const r=Math.max(0.5,Math.min(1.25,Number(v)||0.85));
+    setModelRate(r);
+    try{ if(modelRef.current&&modelRef.current.playbackRate!==undefined) modelRef.current.playbackRate=r; }catch(e){}
+  }
+  function seekModelAudio(delta){
+    try{ const a=modelRef.current; if(a&&a.currentTime!==undefined){a.currentTime=Math.max(0,Math.min((a.duration||9999),a.currentTime+delta));} }catch(e){}
+  }
+  function restartModelAudio(){
+    try{ const a=modelRef.current; if(a&&a.currentTime!==undefined){a.currentTime=0; a.playbackRate=modelRate; a.play(); setModelPlaying(true);} }catch(e){}
+  }
   function rpGoReading(){stopModelAudio();setTask(null);try{if(typeof onReading==="function")onReading();}catch(e){}}
   function rpGoHome(){stopModelAudio();setTask(null);try{if(typeof onHome==="function")onHome();}catch(e){}}
   async function playModel(t){
@@ -4888,14 +4948,14 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     // Student side only plays the saved AI audio, or falls back to device speech if no saved audio exists.
     const readyAudio=String((t&&t.modelAudioDataUrl)||(t&&t.modelAudioUrl)||"");
     if(readyAudio){
-      const a=new Audio(readyAudio); modelRef.current=a; a.onended=()=>setModelPlaying(false); a.onerror=()=>setModelPlaying(false); setModelPlaying(true); setMsg("Playing saved model audio."); try{await a.play();}catch(e){setModelPlaying(false);}
+      const a=(modelRef.current && modelRef.current.play && modelRef.current.tagName==="AUDIO")?modelRef.current:new Audio(readyAudio); if(!a.src||a.src!==readyAudio) a.src=readyAudio; modelRef.current=a; a.playbackRate=modelRate; a.onended=()=>setModelPlaying(false); a.onerror=()=>setModelPlaying(false); setModelPlaying(true); setMsg("Playing saved model audio."); try{await a.play();}catch(e){setModelPlaying(false);}
       return;
     }
     setMsg("No saved AI audio for this task. Using device voice fallback.");
     const u=new SpeechSynthesisUtterance(t.text);
     modelRef.current=u;
     u.lang="en-US";
-    u.rate=t.level==="beginner"?0.82:t.level==="advanced"?0.98:0.9;
+    u.rate=modelRate;
     u.onend=()=>setModelPlaying(false);
     u.onerror=()=>setModelPlaying(false);
     setModelPlaying(true);
@@ -4967,11 +5027,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const id=uid();
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     var tx=String(transcript||"").trim();
+    const measuredSeconds=Math.max(Number(seconds)||0, await rpGetBlobDurationSeconds(blob));
     let fullAudioDataUrl="";
     try{ fullAudioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
     let audioDataUrl=rpSafeAudioDataUrlAllowed(blob)?fullAudioDataUrl:"";
 
-    const baseSubmission={id,source:"rp_shared_submission",deliveryVersion:"rp105_base_first",taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:audioDataUrl?"firestore_audio_saved":"uploading"};
+    const baseSubmission={id,source:"rp_shared_submission",deliveryVersion:"rp105_base_first",taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds:measuredSeconds,durationSeconds:measuredSeconds,recordingSeconds:measuredSeconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:audioDataUrl?"firestore_audio_saved":"uploading"};
 
     // الطالب يرى التسليم فوراً بدون تحديث الصفحة، حتى قبل انتهاء رفع الصوت.
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
@@ -5039,7 +5100,20 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       <div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>تم إرسال التسجيل للمعلم. لن تظهر درجة صفر قبل التحليل والاعتماد.</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"8px"}}><Btn size="sm" color={C.p} onClick={rpGoReading}>← Reading</Btn><Btn size="sm" color={C.mu} onClick={rpGoHome}>⇐ Home</Btn></div>
     </Card>}
-    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}<Btn color={C.mu} onClick={rpGoReading}>Show all tasks</Btn></div></Card>
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+        <Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Play</Btn>
+        <Btn color={C.w} onClick={()=>seekModelAudio(-5)} disabled={recording||!rpModelAudioSrc(task)}>⏪ -5s</Btn>
+        <Btn color={C.w} onClick={()=>seekModelAudio(5)} disabled={recording||!rpModelAudioSrc(task)}>+5s ⏩</Btn>
+        <Btn color={C.mu} onClick={restartModelAudio} disabled={recording||!rpModelAudioSrc(task)}>↻ Restart</Btn>
+        {modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏸ Stop</Btn>}
+        <select value={modelRate} onChange={e=>modelAudioRateChanged(e.target.value)} style={{padding:"9px",border:"1px solid "+C.br,borderRadius:"9px",fontWeight:800}}>
+          <option value={0.5}>0.5x Slow</option><option value={0.75}>0.75x</option><option value={0.85}>0.85x</option><option value={1}>1x Normal</option><option value={1.15}>1.15x</option>
+        </select>
+        <Btn color={C.mu} onClick={rpGoReading}>Show all tasks</Btn>
+      </div>
+      {rpModelAudioSrc(task)?<audio ref={modelRef} src={rpModelAudioSrc(task)} controls preload="metadata" onPlay={()=>{try{modelRef.current.playbackRate=modelRate;}catch(e){} setModelPlaying(true);}} onPause={()=>setModelPlaying(false)} onEnded={()=>setModelPlaying(false)} style={{width:"100%",marginTop:"9px"}}/>:<div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>No saved AI audio yet. The play button uses device voice fallback.</div>}
+    </Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ تسجيل القراءة</strong><p style={{fontSize:"11px",color:C.mu}}>استخدم مايكروفون الجوال. بعد الإيقاف استمع للتسجيل، ثم أرسله للمعلم أو أعد التسجيل.</p>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>بدء التسجيل</Btn>:<Btn color={C.d} onClick={stopRec}>إيقاف</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={rpGoReading}>Back to Reading</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>أوقف صوت النموذج قبل التسجيل.</div>}
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
