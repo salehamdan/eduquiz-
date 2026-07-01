@@ -24,6 +24,7 @@
 <!-- RP_AUDIO_SUBMIT_ATTEMPTS_FINAL_20260701 -->
 <!-- RP106_DIRECT_AUDIO_DELIVERY_FAST_DRAWER_20260701 -->
 <!-- RP_STUDENT_UI_AUDIO_SAVE_FINAL_20260701 -->
+<!-- RP_108_STUDENT_BACK_SYNC_ACCEPTED_FIX_20260701 -->
 <!-- RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701 -->
 <!-- RP_AUDIO_CHUNK_HYDRATE_TEACHER_FAST_BUTTONS_FIX_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
@@ -3593,7 +3594,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
           })}
         </div>}
 
-        {tab==="reading" && <ReadingProgressStudent user={user} data={data} reload={reload}/>}
+        {tab==="reading" && <ReadingProgressStudent user={user} data={data} reload={reload} onHome={()=>setTab("home")} onReading={()=>setTab("reading")}/>}
         {tab==="readingTheory" && <ReadingTheoryStudent user={user} data={data} reload={reload}/>}
         {tab==="projects" && <StudentProjects user={user} data={data} reload={reload}/>}
 
@@ -4528,7 +4529,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 
 // ── TEACHER APP ───────────────────────────────────────────────
 
-function ReadingProgressStudent({user,data,reload}){
+function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   if(!activeStudentInData(user,data)){
     try{ clearSession(); localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); localStorage.removeItem("rp_attempt_records_v11"); }catch(e){}
     return <Card><strong style={{fontSize:"14px",color:C.d}}>🚫 Account removed</strong><p style={{fontSize:"12px",color:C.mu,lineHeight:1.7}}>تم حذف حسابك أو لم يعد مرتبطًا بفصل نشط. لا يمكن عرض مهام Reading Progress أو إرسال تسجيلات. تواصل مع المعلم.</p></Card>;
@@ -4695,7 +4696,7 @@ function ReadingProgressStudent({user,data,reload}){
     all=all.filter(a=>a && a.status!=="deleted" && a.deleted!==true && !String(a.id||"").startsWith("local_counter_"));
     all.sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0));
     const last=all.length?all[all.length-1]:null;
-    const accepted=all.filter(a=>String(a.status||"").toLowerCase()==="accepted");
+    const accepted=all.filter(a=>{const st=String(a.status||"").toLowerCase(); return st==="accepted"||st==="approved";});
     const rejected=all.filter(a=>String(a.status||"").toLowerCase()==="rejected").length;
     const scores=accepted.map(rpStudentScore).filter(x=>x!==null);
     const lastScore=last?rpStudentScore(last):null;
@@ -4714,6 +4715,8 @@ function ReadingProgressStudent({user,data,reload}){
   function markRecordingSubmitted(id){try{localStorage.setItem("rp_submitted_recording_ids",JSON.stringify([...new Set([...submittedRecordingIds(),id])]))}catch(e){}}
   function isRecordingSubmitted(id){return !!id && submittedRecordingIds().includes(id);}
   function stopModelAudio(){try{window.speechSynthesis.cancel();}catch(e){} setModelPlaying(false);}
+  function rpGoReading(){stopModelAudio();setTask(null);try{if(typeof onReading==="function")onReading();}catch(e){}}
+  function rpGoHome(){stopModelAudio();setTask(null);try{if(typeof onHome==="function")onHome();}catch(e){}}
   function playModel(t){
     if(recording){setMsg("Stop recording before playing model audio.");return;}
     stopModelAudio();
@@ -4831,6 +4834,9 @@ function ReadingProgressStudent({user,data,reload}){
         setLocalRpSubmissions(prev=>(prev||[]).map(x=>x&&x.id===id?finalSubmission:x));
         try{ await rpSetReadingSubmissionStrict(id,finalSubmission); }catch(_e){}
         setMsg("⚠️ Submitted to teacher, but audio save failed. Please press Try Again and record once more.");
+        stopModelAudio();
+        setTask(null);
+        try{reload();}catch(_e){}
         return;
       }
       finalSubmission={...baseSubmission,audioUrl:url||"",audioDataUrl:audioDataUrl||"",audioChunked:(!audioDataUrl && chunkInfo.ok),audioChunkCount:chunkInfo.count||0,uploadStatus:url?"storage_url_saved":(audioDataUrl?"firestore_audio_saved":"firestore_audio_chunks_saved"),analysisStatus:"queued_for_analysis",updatedAt:new Date().toISOString()};
@@ -4849,7 +4855,7 @@ function ReadingProgressStudent({user,data,reload}){
     }
   }
   if(task)return <div>
-    <Btn size="sm" color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}} style={{marginBottom:"10px",width:"100%",padding:"12px",fontSize:"14px",fontWeight:900}}>← Back to Reading main page / الرجوع لقائمة Reading</Btn>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Btn size="sm" color={C.p} onClick={rpGoReading} style={{padding:"12px",fontSize:"13px",fontWeight:900}}>← Reading / الرجوع للقراءة</Btn><Btn size="sm" color={C.mu} onClick={rpGoHome} style={{padding:"12px",fontSize:"13px",fontWeight:900}}>⇐ Home / اللوحة الرئيسية</Btn></div>
     {recentSubmit&&String(recentSubmit.taskId)===String(task.id)&&<Card style={{marginBottom:"10px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
       <strong style={{fontSize:"13px",color:"#92400e"}}>📨 Submission Result</strong>
       <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
@@ -4859,11 +4865,11 @@ function ReadingProgressStudent({user,data,reload}){
         <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Teacher review: Pending</span>
       </div>
       <div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>تم إرسال التسجيل للمعلم. لن تظهر درجة صفر قبل التحليل والاعتماد.</div>
-      <Btn size="sm" color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}} style={{marginTop:"8px"}}>← Back to Reading list</Btn>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"8px"}}><Btn size="sm" color={C.p} onClick={rpGoReading}>← Reading</Btn><Btn size="sm" color={C.mu} onClick={rpGoHome}>⇐ Home</Btn></div>
     </Card>}
-    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}<Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Show all tasks</Btn></div></Card>
+    <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}<Btn color={C.mu} onClick={rpGoReading}>Show all tasks</Btn></div></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ تسجيل القراءة</strong><p style={{fontSize:"11px",color:C.mu}}>استخدم مايكروفون الجوال. بعد الإيقاف استمع للتسجيل، ثم أرسله للمعلم أو أعد التسجيل.</p>
-      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>بدء التسجيل</Btn>:<Btn color={C.d} onClick={stopRec}>إيقاف</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Back</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>أوقف صوت النموذج قبل التسجيل.</div>}
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>{!recording?<Btn color={C.s} onClick={startRec} disabled={modelPlaying}>بدء التسجيل</Btn>:<Btn color={C.d} onClick={stopRec}>إيقاف</Btn>}<span style={{fontWeight:800,color:recording?C.d:C.mu}}>{seconds}s</span><Btn color={C.mu} onClick={rpGoReading}>Back to Reading</Btn></div>{modelPlaying&&<div style={{fontSize:"11px",color:C.d,fontWeight:800,marginTop:"6px"}}>أوقف صوت النموذج قبل التسجيل.</div>}
       {audioUrl&&<audio controls src={audioUrl} style={{width:"100%",marginTop:"10px"}}/>}
       {transcript&&<div style={{fontSize:"11px",color:C.mu,marginTop:"8px",background:"#f8fafc",padding:"8px",borderRadius:"8px"}}>Live transcript: {transcript}</div>}
       {blob&&<Btn color={C.w} onClick={discardDraft} disabled={submitting||recording} style={{width:"100%",marginTop:"10px"}}>🔁 إعادة التسجيل</Btn>}
@@ -5229,7 +5235,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       const rpAudioSaved=rpHasAnyAudio(s);
       var statusBadge = s.status==="pending_review"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:"#b45309",background:"#fef9ec",border:"1px solid #fde68a",borderRadius:"999px",padding:"2px 8px"}}>⏳ Pending Review</span>
-        : s.status==="approved"
+        : (s.status==="approved"||s.status==="accepted")
         ? <span style={{fontSize:"10px",fontWeight:"800",color:C.s,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"999px",padding:"2px 8px"}}>✅ Approved</span>
         : s.status==="rejected"
         ? <span style={{fontSize:"10px",fontWeight:"800",color:C.d,background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"999px",padding:"2px 8px"}}>❌ Rejected</span>
@@ -5248,9 +5254,9 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
-            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"approved",approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
+            {(s.status==="pending_review"||String(s.status||"").toLowerCase()==="submitted")&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const approvedScore=(s.teacherScore!==undefined&&s.teacherScore!==""?Number(s.teacherScore):(s.finalScore!==undefined&&s.finalScore!==""?Number(s.finalScore):(s.analysis&&Number.isFinite(Number(s.analysis.accuracy))?Number(s.analysis.accuracy):"")));const upd={...s,status:"accepted",approvedAt:new Date().toISOString(),acceptedAt:new Date().toISOString(),teacherScore:approvedScore===""?s.teacherScore:Math.round(approvedScore),finalScore:approvedScore===""?s.finalScore:Math.round(approvedScore),accuracy:(s.accuracy!==undefined?s.accuracy:(s.analysis&&s.analysis.accuracy)),wcpm:(s.wcpm!==undefined?s.wcpm:(s.analysis&&s.analysis.wcpm)),fluency:(s.fluency!==undefined?s.fluency:(s.analysis&&s.analysis.fluency)),mistakes:(s.mistakes!==undefined?s.mistakes:(s.analysis&&(s.analysis.mistakeCount??s.analysis.mistakes))),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
-            {s.status==="approved"&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
+            {(s.status==="approved"||s.status==="accepted")&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
           </div>
         </div>
         {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}
@@ -5324,7 +5330,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   }
   function isDeleted(r){return !!(r&&(r.deleted===true||r.status==="deleted"));}
   function isRejected(r){return !!(r&&r.status==="rejected");}
-  function isApproved(r){const t=Number(r&&r.teacherScore);return !!(r&&!isDeleted(r)&&!isRejected(r)&&(r.status==="accepted"||(!Number.isNaN(t)&&t>0)));}
+  function isApproved(r){const t=Number(r&&r.teacherScore);return !!(r&&!isDeleted(r)&&!isRejected(r)&&((r.status==="accepted"||r.status==="approved")||(!Number.isNaN(t)&&t>0)));}
   function score(r){const t=Number(r&&r.teacherScore); if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t))); const f=Number(r&&r.finalScore); if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f))); const ai=Number(r&&r.aiScore); if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai))); const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(Math.max(0,Math.min(100,a))); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return null;}
   function accuracy(r){const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(a); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return score(r);}
   function wcpm(r){if(Number.isFinite(Number(r&&r.wcpm)))return Math.round(Number(r.wcpm)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.wcpm)))return Math.round(Number(r.analysis.wcpm)); return null;}
@@ -7376,7 +7382,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.taskTitle||"Reading Task"} · {s.createdAt}</div>
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
-                  <button onClick={async function(){await fsSet("readingSubmissions",s.id,{...s,status:"approved",approvedAt:new Date().toISOString()});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
+                  <button onClick={async function(){var approvedScore=(s.teacherScore!==undefined&&s.teacherScore!==""?Number(s.teacherScore):(s.finalScore!==undefined&&s.finalScore!==""?Number(s.finalScore):(s.analysis&&Number.isFinite(Number(s.analysis.accuracy))?Number(s.analysis.accuracy):"")));await fsSet("readingSubmissions",s.id,{...s,status:"accepted",approvedAt:new Date().toISOString(),acceptedAt:new Date().toISOString(),teacherScore:approvedScore===""?s.teacherScore:Math.round(approvedScore),finalScore:approvedScore===""?s.finalScore:Math.round(approvedScore),accuracy:(s.accuracy!==undefined?s.accuracy:(s.analysis&&s.analysis.accuracy)),wcpm:(s.wcpm!==undefined?s.wcpm:(s.analysis&&s.analysis.wcpm)),fluency:(s.fluency!==undefined?s.fluency:(s.analysis&&s.analysis.fluency)),mistakes:(s.mistakes!==undefined?s.mistakes:(s.analysis&&(s.analysis.mistakeCount??s.analysis.mistakes)))});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
                   <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,{...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||""});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
@@ -8404,7 +8410,7 @@ document.addEventListener("click", function(e){
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
   function isTeacherApproved(r){
     const manual=Number(r&&r.teacherScore);
-    return !!(r && (r.status==="accepted" || (!Number.isNaN(manual) && manual>0)));
+    return !!(r && ((r.status==="accepted"||r.status==="approved") || (!Number.isNaN(manual) && manual>0)));
   }
   function isCountableAttempt(r){
     // لا تدخل المحاولة في لوحة الأداء إلا بعد اعتماد المعلم أو وضع درجة يدوية.
@@ -8425,6 +8431,10 @@ document.addEventListener("click", function(e){
         m.analyzedAt=m.updatedAt;
       }
       if(updates && (updates.status || updates.teacherScore!==undefined || updates.teacherNotes!==undefined)){
+        if(updates.status==="accepted"||updates.status==="approved"){
+          const fs=finalScore(m);
+          if(fs!==""){ m.status="accepted"; m.teacherScore=m.teacherScore||fs; m.finalScore=fs; }
+        }
         m.reviewedAt=m.updatedAt;
       }
       a[i]=m;
@@ -8916,7 +8926,7 @@ document.addEventListener("click", function(e){
         const ids=withAudio.filter(needsAnalysisRecord).map(r=>r.id);
         if(!ids.length){
           const done=withAudio.filter(isAnalyzedRecord).length;
-          const accepted=arr.filter(r=>r.status==="accepted").length;
+          const accepted=arr.filter(r=>r.status==="accepted"||r.status==="approved").length;
           return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nمحلل فعلًا: "+done+"\nمقبول سابقًا: "+accepted);
         }
         if(!confirm("تحليل "+ids.length+" تسجيل ظاهر فقط؟")) return;
@@ -9282,13 +9292,13 @@ document.addEventListener("click", function(e){
     const mine=all.filter(r=>r && responseBelongsToStudent(r,u) && r.taskId===taskId() && !isDeleted(r));
     const counted=mine.filter(isCountableAttempt);
     const rejectedCount=mine.filter(isRejected).length;
-    const acceptedCount=mine.filter(r=>r.status==="accepted").length;
+    const acceptedCount=mine.filter(r=>r.status==="accepted"||r.status==="approved").length;
     const last=mine.length?mine.slice().sort((a,b)=>recordTime(a)-recordTime(b))[mine.length-1]:null;
     const best=counted.length?Math.max(...counted.map(r=>Number(finalScore(r)||0))):"";
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)||0),0)/counted.length):"";
     const lastScore=last&&finalScore(last)!==""?finalScore(last):"";
     const statusText=!last?"No submission yet":
-      last.status==="accepted"?"Accepted":
+      (last.status==="accepted"||last.status==="approved")?"Accepted":
       last.status==="rejected"?"Rejected":
       last.status==="retake_allowed"?"Retake allowed":
       last.analysisStatus==="Completed"?"Analyzed / waiting for teacher":
