@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- LOGIN_CURRENT_CLASS_ONLY_MEMORY_KEEP_20260701 -->
 <!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- RP121_STUDENT_FLUENCY_VISIBLE_20260701 -->
@@ -723,6 +724,25 @@ function saveLoginMemory(patch){
   try{ localStorage.setItem(EQ_LOGIN_MEMORY_KEY, JSON.stringify({...loadLoginMemory(), ...patch, updatedAt:Date.now()})); }catch(e){}
 }
 function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
+
+// LOGIN_CURRENT_CLASS_ONLY_MEMORY_KEEP_20260701
+// The live platform currently uses Third Second only. Do not let the old
+// hard-coded PRELOADED_CLASSES revive deleted classes in the student login menu.
+const EQ_LOGIN_ALLOWED_CLASS_IDS = ["class_3_2"];
+function eqLoginClassIdOf(c){
+  try{ return canonicalClassId((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
+}
+function eqFilterLoginClasses(list){
+  try{
+    const allowed = new Set(EQ_LOGIN_ALLOWED_CLASS_IDS.map(eqLoginClassIdOf).filter(Boolean));
+    const src = Array.isArray(list) ? list : [];
+    const out = src.filter(c => allowed.has(eqLoginClassIdOf(c)));
+    if(out.length) return out;
+    // fallback: keep Third Second available even if Firebase class rows are stale/empty
+    const c = (typeof officialClassRow === "function") ? officialClassRow("class_3_2") : {id:"class_3_2",name:"ثالث ثاني",grade:"3-2"};
+    return c ? [c] : [];
+  }catch(e){ return Array.isArray(list) ? list : []; }
+}
 
 
 // ── READING PROGRESS STORAGE & ANALYSIS ───────────────────────
@@ -2085,9 +2105,13 @@ function Landing({onLogin, prefillQuiz}) {
   useEffect(()=>{
     eqHardCleanLoggedOutUI();
     loadAllData().then(function(d){
-      const active=activeLoginClassesFromData(d);
+      const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
       setClasses(active);
-      if(f.classId && !active.some(function(c){return sameClassId(c.id,f.classId);})){ sf(x=>({...x,classId:""})); }
+      if(f.classId && !active.some(function(c){return sameClassId(c.id,f.classId);})){
+        const fallback=(active[0]&&active[0].id)||"";
+        sf(x=>({...x,classId:fallback}));
+        if(fallback) saveLoginMemory({classId:fallback});
+      }
     });
   },[]);
 
@@ -2352,7 +2376,7 @@ function Landing({onLogin, prefillQuiz}) {
             <input type="password" value={f.password} onChange={e=>upd("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder={T.password} style={iS}/>
             <button onClick={doLogin} disabled={loading} style={{width:"100%",padding:"12px",background:C.p,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.loggingIn:T.loginBtn}</button>
             <button onClick={()=>{setForgotOpen(true);setFgMsg("");}} style={{width:"100%",background:"none",border:"none",color:C.p,fontSize:"12px",fontWeight:"600",cursor:"pointer",marginTop:"9px",fontFamily:F,textDecoration:"underline"}}>{T.forgot}</button>
-            <div style={{fontSize:"11px",color:C.mu,textAlign:"center",marginTop:"8px",fontWeight:"700",fontFamily:F}}>✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز</div>
+            <div style={{fontSize:"11px",color:C.mu,textAlign:"center",marginTop:"8px",fontWeight:"700",fontFamily:F}}>✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز حتى بعد Logout</div>
             <button onClick={()=>{clearLoginMemory();sf({name:"",email:"",password:"",studentId:"",classId:"",code:"",fatherName:""});setErr("Saved login data cleared from this device.");}} style={{width:"100%",background:"none",border:"none",color:C.mu,fontSize:"11px",fontWeight:"700",cursor:"pointer",marginTop:"6px",fontFamily:F,textDecoration:"underline"}}>Clear saved login</button>
             {FIREBASE_OK && oauthBtns}
           </>}
@@ -8583,7 +8607,7 @@ function App() {
   },[user&&user.id,user&&user.role]);
 
     function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
-  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
+  function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} /* keep EQ_LOGIN_MEMORY_KEY so the student does not rewrite name/class/id/password each time */ try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
