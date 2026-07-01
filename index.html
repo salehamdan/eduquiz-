@@ -21,6 +21,7 @@
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
 <!-- RESPONSE_STUDENT_LINK_FIX_20260610 -->
 <!-- AI_QUESTION_QUALITY_GATE_20260627 -->
+<!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
 <!-- CLEANUP_SELECTED_STUDENTS_PROGRESS_SAFE_20260630 -->
@@ -255,14 +256,24 @@ function activeStudentInData(user,data){
   if(studentMatchesDeletedSet(user,set)) return false;
   const sid=eqDigits(user.studentId||user.id||"");
   if(sid && (set.has(sid)||set.has("student_"+sid))) return false;
-  const list=(data&&data.users)||[];
-  const found=list.find(u=>u && u.role==="student" && !isStudentTombstone(u) && !studentMatchesDeletedSet(u,set) && (String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid)));
+
+  // ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701
+  // A student is active only if the student exists in the raw Firebase users collection.
+  // PRELOADED_USERS is no longer allowed to revive deleted/old students or saved logins.
+  const rawList = Array.isArray(data&&data.firebaseUsers) ? data.firebaseUsers : (FIREBASE_OK ? [] : ((data&&data.users)||[]));
+  const found=rawList.find(function(u){
+    if(!u || String(u.role||"")!=="student") return false;
+    if(isStudentTombstone(u) || studentMatchesDeletedSet(u,set)) return false;
+    return String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid);
+  });
   if(!found) return false;
+
   const cid=canonicalClassId(found.classId||user.classId||"");
   const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
   if(!cid || delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
-  const classes=(data&&data.classes)||[];
-  if(classes.length && !classes.some(c=>!c.deleted && c.status!=="deleted" && canonicalClassId(c.id||c.name||c.grade)===cid)) return false;
+
+  const classList = Array.isArray(data&&data.firebaseClasses) ? data.firebaseClasses : (FIREBASE_OK ? [] : ((data&&data.classes)||[]));
+  if(classList.length && !classList.some(function(c){ return c && !c.deleted && c.status!=="deleted" && canonicalClassId(c.id||c.name||c.grade||c.classId||c.className)===cid; })) return false;
   return true;
 }
 function adminClassAliases(c){
@@ -661,7 +672,12 @@ async function loadAllData() {
   // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
   const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  const allData = {users,classes,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses};
+  // ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701
+  // Keep the raw Firebase roster separate from PRELOADED_USERS/classes.
+  // Student login must be allowed only when the student currently exists as an active Firebase user.
+  const firebaseUsers = (usersRaw||[]).filter(function(u){ return u && !isStudentTombstone(u); });
+  const firebaseClasses = (classesRaw||[]).filter(function(c){ return c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted; });
+  const allData = {users,classes,firebaseUsers,firebaseClasses,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses};
   eqSaveFastDataCache(allData);
   return allData;
 }
@@ -1717,6 +1733,7 @@ function Landing({onLogin, prefillQuiz}) {
     setLoading(true); setErr("");
     const d = await loadAllData();
     const users = d.users;
+    const firebaseUsers = Array.isArray(d.firebaseUsers) ? d.firebaseUsers : (FIREBASE_OK ? [] : users);
     const id = f.email.trim().toLowerCase();
     // Teachers log in by email + password
     const teacher = users.find(u=>u.role==="teacher" && (u.email||"").toLowerCase()===id && u.password===f.password);
@@ -1733,8 +1750,9 @@ function Landing({onLogin, prefillQuiz}) {
     if((idDigits && (deletedSet.has(idDigits)||deletedSet.has("student_"+idDigits))) || deletedSet.has(id)){
       setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher.");setLoading(false);return;
     }
-    const u = users.find(u=>u.role==="student" && !isStudentTombstone(u) && !studentMatchesDeletedSet(u,deletedSet) && (u.studentId||"").toLowerCase()===id);
-    if(!u){setErr("Student ID not found or account removed. Check with your teacher.");setLoading(false);return;}
+    // Student login is allowed only for active Firebase students, not PRELOADED_USERS.
+    const u = firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && !studentMatchesDeletedSet(u,deletedSet) && (u.studentId||"").toLowerCase()===id);
+    if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
     const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
     const cid=canonicalClassId(u.classId||"");
     if(delCls.has(cid)||delCls.has(String(u.classId||""))){setErr("تم أرشفة هذا الفصل أو حذف حساب الطالب. تواصل مع المعلم.\nThis class/account is archived. Contact your teacher.");setLoading(false);return;}
@@ -1750,11 +1768,13 @@ function Landing({onLogin, prefillQuiz}) {
     setLoading(true); setErr("");
     const allD = await loadAllData();
     const users = allD.users||[];
+    const firebaseUsersReg = Array.isArray(allD.firebaseUsers) ? allD.firebaseUsers : (FIREBASE_OK ? [] : users);
     const enteredId = f.studentId.trim().replace(/\s/g,"");
-    // ── Exact ID match only — no suggestions ──
-    const preloaded = PRELOADED_USERS.find(function(u){ return String(u.studentId) === enteredId; });
+    // ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701
+    // Registration/self-linking can only use a currently active Firebase student row.
+    const preloaded = firebaseUsersReg.find(function(u){ return u && u.role==="student" && !isStudentTombstone(u) && String(u.studentId||"") === enteredId; });
     if (!preloaded) {
-      setErr("رقم الطالب غير موجود في قوائم الفصل. تأكد من الرقم أو تواصل مع معلمك.\nStudent ID not found. Please check the number or contact your teacher.");
+      setErr("حساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.\nThis student account is not active. Please contact your teacher.");
       setLoading(false); return;
     }
     // ── Block deleted/archived student IDs ──
@@ -7756,14 +7776,14 @@ function App() {
         try{
           setData(cached);
           if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase());if(cq)setDirectQuiz(cq);}
-          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cached))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));}
+          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cached))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));else if(sess.role==="student"){ try{clearSession();localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} }}
           setLoading(false);
         }catch(e){}
       }
       const d=await loadAllData();setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
-      if(sess){const u=d.users.find(x=>x.id===sess.id);if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
+      if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
       else if(FIREBASE_OK && auth && auth.currentUser){
         const au=auth.currentUser;
         const linked=d.users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(au.uid));
