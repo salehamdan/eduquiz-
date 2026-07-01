@@ -4773,7 +4773,7 @@ function ReadingProgressStudent({user,data,reload}){
     try{ fullAudioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
     let audioDataUrl=rpSafeAudioDataUrlAllowed(blob)?fullAudioDataUrl:"";
 
-    const baseSubmission={id,taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:"uploading"};
+    const baseSubmission={id,source:"rp_shared_submission",deliveryVersion:"rp105_base_first",taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:audioDataUrl?"firestore_audio_saved":"uploading"};
 
     // الطالب يرى التسليم فوراً بدون تحديث الصفحة، حتى قبل انتهاء رفع الصوت.
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
@@ -4782,8 +4782,18 @@ function ReadingProgressStudent({user,data,reload}){
     saveStudentAttemptMarker(baseSubmission);
     markRecordingSubmitted(recordingId);
     setSentBlobKey(key);
-    setMsg("✅ Submitted + Pending Review. Uploading audio…");
+    setMsg("✅ Submitted + Pending Review. Saving for teacher…");
     setBlob(null); setAudioUrl("");
+
+    // RP105: save the real submission document FIRST, before Storage/chunk upload.
+    // This prevents the teacher side from seeing nothing when audio upload is slow or fails.
+    try{
+      await rpSetReadingSubmissionStrict(id, baseSubmission);
+      setMsg(audioDataUrl?"✅ Submitted + Pending Review. Audio attached for teacher.":"✅ Submitted + Pending Review. Audio still uploading…");
+    }catch(firstSaveErr){
+      console.warn("RP base submit cloud save failed", firstSaveErr);
+      try{ await fsSet("readingSubmissions", id, baseSubmission); }catch(_e){}
+    }
 
     let finalSubmission={...baseSubmission};
     try{
@@ -4794,9 +4804,10 @@ function ReadingProgressStudent({user,data,reload}){
         try{ chunkInfo=await rpSaveAudioChunks(id, fullAudioDataUrl); }catch(chunkErr){ console.warn("RP audio chunk save failed", chunkErr); }
       }
       if(!url && !audioDataUrl && !chunkInfo.ok){
-        finalSubmission={...baseSubmission,uploadStatus:"audio_upload_failed",analysisStatus:"audio_upload_failed"};
+        finalSubmission={...baseSubmission,uploadStatus:"audio_upload_failed",analysisStatus:"audio_upload_failed",updatedAt:new Date().toISOString()};
         setLocalRpSubmissions(prev=>(prev||[]).map(x=>x&&x.id===id?finalSubmission:x));
-        setMsg("⚠️ Submitted, but audio save failed. Please record again now.");
+        try{ await rpSetReadingSubmissionStrict(id,finalSubmission); }catch(_e){}
+        setMsg("⚠️ Submitted to teacher, but audio save failed. Please press Try Again and record once more.");
         return;
       }
       finalSubmission={...baseSubmission,audioUrl:url||"",audioDataUrl:audioDataUrl||"",audioChunked:(!audioDataUrl && chunkInfo.ok),audioChunkCount:chunkInfo.count||0,uploadStatus:url?"storage_url_saved":(audioDataUrl?"firestore_audio_saved":"firestore_audio_chunks_saved"),analysisStatus:"queued_for_analysis",updatedAt:new Date().toISOString()};
@@ -4822,6 +4833,7 @@ function ReadingProgressStudent({user,data,reload}){
         <span style={{padding:"7px 10px",borderRadius:"12px",background:"#f8fafc",color:C.tx,fontWeight:900}}>Teacher review: Pending</span>
       </div>
       <div style={{fontSize:"11px",color:C.mu,marginTop:"7px"}}>تم إرسال التسجيل للمعلم. لن تظهر درجة صفر قبل التحليل والاعتماد.</div>
+      <Btn size="sm" color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}} style={{marginTop:"8px"}}>← Back to Reading list</Btn>
     </Card>}
     <Card style={{marginBottom:"10px",border:"2px solid "+C.p}}><strong style={{fontSize:"14px",color:C.tx}}>📖 {task.title}</strong><p style={{fontSize:"13px",lineHeight:1.7,color:C.tx,background:"#f8fafc",padding:"10px",borderRadius:"8px"}}>{task.text}</p><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}><Btn color={C.p} onClick={()=>playModel(task)} disabled={recording}>🔊 Listen to model audio</Btn>{modelPlaying&&<Btn color={C.d} onClick={stopModelAudio}>⏹ Stop Model Audio</Btn>}<Btn color={C.mu} onClick={()=>{stopModelAudio();setTask(null);}}>Show all tasks</Btn></div></Card>
     <Card><strong style={{fontSize:"13px"}}>🎙️ تسجيل القراءة</strong><p style={{fontSize:"11px",color:C.mu}}>استخدم مايكروفون الجوال. بعد الإيقاف استمع للتسجيل، ثم أرسله للمعلم أو أعد التسجيل.</p>
@@ -5110,7 +5122,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return {st,ss,avg,w,f};
   });
   return <div>
-    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Fast Audio Pending Fix v102</div></Card>
+    <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><strong style={{color:"#fff",fontSize:"14px"}}>📖 Reading Progress AI</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Create text, let students record, then analyze accuracy, speed, mistakes and growth.</p><div style={{marginTop:"8px",fontSize:"11px",fontWeight:900,color:"#fff",background:"rgba(255,255,255,.12)",padding:"6px 8px",borderRadius:"8px",display:"inline-block"}}>RP Fast Audio Delivery Fix v105</div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.p}}><strong style={{fontSize:"13px",color:C.tx}}>⚙️ Teacher-side Auto Correction</strong><p style={{fontSize:"11px",color:C.mu,margin:"5px 0 8px"}}>تصحيح تلقائي من جهاز المعلم فقط عندما تكون لوحة المعلم مفتوحة. الطلاب لا يحتاجون مفتاح OpenAI.</p><label style={{display:"flex",alignItems:"center",gap:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={teacherAuto} onChange={e=>setTeacherAuto(e.target.checked)}/> Auto analyze waiting/new submissions while teacher dashboard is open</label><div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"8px"}}><input type="password" value={teacherKey} onChange={e=>{setTeacherKey(e.target.value);localStorage.setItem("rp_openai_api_key",e.target.value.trim());}} placeholder="OpenAI API Key on teacher device" style={{flex:1,minWidth:"220px",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><Btn size="sm" color={C.s} onClick={()=>analyzeWaitingNow(false)}>Analyze Waiting Now</Btn><span style={{fontSize:"10px",fontWeight:900,color:teacherKey?C.s:C.d,alignSelf:"center"}}>{teacherKey?"Key saved":"Key missing"}</span></div></Card>
     <Card style={{marginBottom:"11px",border:"2px solid "+C.w}}>
       <strong style={{fontSize:"13px",color:C.tx}}>🔄 Reset Reading Progress Attempts</strong>
@@ -5205,9 +5217,9 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
-            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"approved",approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);setMsg("✅ Approved: "+(st?st.name:"student"));reload();}finally{clearRpButton(bid);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
-            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);setMsg("❌ Rejected: "+(st?st.name:"student"));reload();}finally{clearRpButton(bid);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
-            {s.status==="approved"&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{await fsSet("readingSubmissions",s.id,upd);reload();}finally{clearRpButton(bid);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
+            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"approved",approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
+            {s.status==="pending_review"&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",rejectedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
+            {s.status==="approved"&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
           </div>
         </div>
         {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={s.analysis.accuracy+"%"} color={gc(s.analysis.accuracy)}/><Stat icon="⚡" label="WCPM" value={s.analysis.wcpm} color={C.p}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={s.analysis.mistakeCount} color={C.d}/></div>}
@@ -8363,7 +8375,8 @@ document.addEventListener("click", function(e){
       }
       a[i]=m;
       saveRecords(a);
-      await cloudSaveRecord(m);
+      // RP105: keep RP buttons instant. Cloud save runs in background.
+      try{ cloudSaveRecord(m); }catch(_e){}
       return m;
     }
     return null;
@@ -8840,8 +8853,8 @@ document.addEventListener("click", function(e){
           return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nمحلل فعلًا: "+done+"\nمقبول سابقًا: "+accepted);
         }
         if(!confirm("تحليل "+ids.length+" تسجيل ظاهر فقط؟")) return;
-        for(const x of ids)await analyzeOne(x,true);
-        await renderCards();
+        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
+        Promise.allSettled(ids.map(x=>analyzeOne(x,true))).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       if(id==="rp-v11-accept-visible"){
@@ -8849,26 +8862,25 @@ document.addEventListener("click", function(e){
         const ready=arr.filter(canAcceptRecord);
         if(!ready.length)return alert("لا توجد تسجيلات محللة جاهزة للقبول في هذا العرض.");
         if(!confirm("قبول "+ready.length+" تسجيل محلل ظاهر؟"))return;
-        for(const r of ready){ await updateRecord(r.id,{status:"accepted"}); }
-        await renderCards();
+        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
+        Promise.allSettled(ready.map(r=>updateRecord(r.id,{status:"accepted"}))).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       const del=e.target.getAttribute("data-delete");
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        await updateRecord(del,{deleted:true,status:"deleted"});
-        await renderCards();
+        updateRecord(del,{deleted:true,status:"deleted"}).then(()=>renderCards());
         return;
       }
-      const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;try{await analyzeOne(an,false);await renderCards();}finally{e.target.textContent=old;e.target.disabled=false;}return;}
+      const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
       const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){
         const rec=records().find(x=>x.id===rid);
         if(st==="accepted" && !canAcceptRecord(rec)) return alert("حلّل التسجيل أولًا قبل القبول.");
         if(st==="retake_allowed"&&!confirm("السماح للطالب بالتسجيل مرة أخرى؟"))return;
         if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        await updateRecord(rid,{status:st,deleted:false}); await renderCards();
+        updateRecord(rid,{status:st,deleted:false}).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
     panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid)a[i].teacherScore=e.target.value; if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
