@@ -35,11 +35,12 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
-<!-- LOGIN_CURRENT_CLASS_ONLY_MEMORY_KEEP_20260701 -->
+<!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
 <!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- RP121_STUDENT_FLUENCY_VISIBLE_20260701 -->
 <!-- ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701 -->
+<!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
 <!-- RP_CLEANUP_AUTO_ANALYZE_FIX_20260630 -->
 <!-- RP_REAL_CLEAN_AUTO_ANALYZE_20260630 -->
 <!-- CLEANUP_SELECTED_STUDENTS_PROGRESS_SAFE_20260630 -->
@@ -488,7 +489,10 @@ function ensureProtectedStudents(rows){
     const tombstone=matches.find(u=>u && u.deleted && (u.hidePreloaded||u.permanentDeleted||u.cleanupDeletedAt||u.adminDeletedAt));
     if(tombstone){ matches.forEach(u=>{used[u.id]=true;}); return; }
     const base=matches.reduce((a,u)=>({...a,...u}),{});
-    out.push({...base,id:"student_"+sp.sid,role:"student",name:sp.name,shortName:sp.name.split(/\s+/).slice(0,3).join(" "),studentId:sp.sid,classId:"class_3_1",password:sp.sid,deleted:false,hiddenDuplicate:false,preloaded:true,protectedOfficial:true});
+    const liveClassId = canonicalClassId(base.classId || base.className || base.class || "class_3_1");
+    // Do not force protected students back to class_3_1. If the teacher moves/adds the same student
+    // in Firebase, the live Firebase class must win so the student appears in the correct class/overview.
+    out.push({...base,id:"student_"+sp.sid,role:"student",name:base.name||sp.name,shortName:base.shortName||(base.name||sp.name).split(/\s+/).slice(0,3).join(" "),studentId:base.studentId||sp.sid,classId:liveClassId,password:base.password||sp.sid,deleted:false,hiddenDuplicate:false,preloaded:base.preloaded===true,protectedOfficial:true});
     matches.forEach(u=>{used[u.id]=true;});
   });
   (rows||[]).forEach(u=>{
@@ -725,22 +729,27 @@ function saveLoginMemory(patch){
 }
 function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
 
-// LOGIN_CURRENT_CLASS_ONLY_MEMORY_KEEP_20260701
-// The live platform currently uses Third Second only. Do not let the old
-// hard-coded PRELOADED_CLASSES revive deleted classes in the student login menu.
-const EQ_LOGIN_ALLOWED_CLASS_IDS = ["class_3_2"];
+// LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702
+// Login classes must come from the live Firebase classes/students, not a hard-coded single class.
+// This keeps newly-created classes visible while still preventing old PRELOADED_CLASSES from reviving deleted classes.
 function eqLoginClassIdOf(c){
   try{ return canonicalClassId((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
 }
 function eqFilterLoginClasses(list){
   try{
-    const allowed = new Set(EQ_LOGIN_ALLOWED_CLASS_IDS.map(eqLoginClassIdOf).filter(Boolean));
     const src = Array.isArray(list) ? list : [];
-    const out = src.filter(c => allowed.has(eqLoginClassIdOf(c)));
-    if(out.length) return out;
-    // fallback: keep Third Second available even if Firebase class rows are stale/empty
-    const c = (typeof officialClassRow === "function") ? officialClassRow("class_3_2") : {id:"class_3_2",name:"ثالث ثاني",grade:"3-2"};
-    return c ? [c] : [];
+    const seen = new Set();
+    return src.filter(function(c){
+      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return false;
+      const id = eqLoginClassIdOf(c);
+      if(!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }).map(function(c){
+      const id = eqLoginClassIdOf(c) || c.id || c.classId || c.name;
+      const official = (typeof officialClassRow === "function") ? officialClassRow(id) : null;
+      return {...(official||{}), ...c, id:id, name:c.name || (official&&official.name) || c.grade || id, grade:c.grade || (official&&official.grade) || ""};
+    });
   }catch(e){ return Array.isArray(list) ? list : []; }
 }
 
@@ -2080,20 +2089,24 @@ function Landing({onLogin, prefillQuiz}) {
         const cid=String(u.classId||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
         return !!cid && !delCls.has(cid) && !delCls.has(canon);
       });
-      // Prefer real Firebase class rows. Fall back to active users only if no class rows are available.
-      const realClasses=(Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).filter(function(c){
-        if(!c) return false;
-        const cid=String(c.id||c.classId||c.name||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
-        if(!cid || delCls.has(cid)||delCls.has(canon)) return false;
-        return activeUsers.some(function(u){return sameClassId(u.classId,c.id)||sameClassId(u.classId,c.grade)||sameClassId(u.classId,c.name);});
-      });
-      if(realClasses.length) return realClasses.map(function(c){return {id:c.id||c.classId||c.name,name:c.name||c.grade||c.id,grade:c.grade||""};});
-      const activeIds=[];
-      activeUsers.forEach(function(u){ const cid=String(u.classId||""); if(cid && !activeIds.includes(cid)) activeIds.push(cid); });
-      return activeIds.map(function(cid){
+      // Prefer real Firebase class rows even before students are added. This makes newly-created classes
+      // appear immediately in the login class list. Fall back to active Firebase student classIds.
+      const out=[]; const seen={};
+      function addClassRow(c){
+        if(!c) return;
+        const raw=String(c.id||c.classId||c.grade||c.name||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(raw):raw;
+        if(!raw || delCls.has(raw)||delCls.has(canon) || seen[canon]) return;
+        const official=(typeof officialClassRow==="function")?officialClassRow(canon):null;
+        out.push({...(official||{}),...c,id:canon,name:c.name||(official&&official.name)||c.grade||canon,grade:c.grade||(official&&official.grade)||""});
+        seen[canon]=true;
+      }
+      (Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).forEach(addClassRow);
+      activeUsers.forEach(function(u){
+        const cid=canonicalClassId(u.classId||"");
         const c=byId[cid] || allClasses.find(function(x){return x&&(sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid));});
-        return c || {id:cid,name:cid,grade:""};
+        addClassRow(c || officialClassRow(cid) || {id:cid,name:cid,grade:""});
       });
+      return out;
     }catch(e){ return []; }
   }
   const upd = (k,v) => sf(x=>{
