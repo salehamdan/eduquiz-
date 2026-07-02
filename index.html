@@ -7472,6 +7472,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [viewAsOpen,setViewAsOpen]=useState(false);
   const [editingQuiz,setEditingQuiz]=useState(null);
   const [importMsg,setImportMsg]=useState("");
+  const [localStudentPatch,setLocalStudentPatch]=useState([]);
   const [importTargetClass,setImportTargetClass]=useState("excel");
   const [moveFromId,setMoveFromId]=useState("3401"),[moveToId,setMoveToId]=useState("3435"),[moveTargetClass,setMoveTargetClass]=useState("");
   const [editStu,setEditStu]=useState(null);
@@ -7502,7 +7503,21 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const realClasses=eqRealActiveClassesFromData(data);
   const myClasses=realClasses.filter(c=>c && c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || !c.teacherIds.length || c.source==="from-students"));
   useEffect(()=>{ try{ eqStoreVisibleLoginClasses(myClasses); }catch(e){} }, [JSON.stringify(myClasses.map(c=>({id:c.id,name:c.name,grade:c.grade,deleted:c.deleted,status:c.status})))]);
-  const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
+  const eqAllUsersForTeacher = (()=>{
+    const map=new Map();
+    const add=function(u){
+      if(!u) return;
+      const sid=eqDigits(u.studentId||u.id||u._id||"");
+      const key=String((sid?"student_"+sid:(u.id||u._id||uid())));
+      const clean={...u,id:String(u.id||key)};
+      delete clean._id;
+      map.set(key,{...(map.get(key)||{}),...clean});
+    };
+    (Array.isArray(data.users)?data.users:[]).forEach(add);
+    (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
+    return Array.from(map.values());
+  })();
+  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -7822,13 +7837,21 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function mergeWrittenUsersIntoLocal(rows){
     try{
       if(!Array.isArray(rows)) return;
+      const cleanedRows=rows.map(function(r){ if(!r) return null; const sid=eqDigits(r.studentId||r.id||r._id||""); const id=String(r.id|| (sid?"student_"+sid:uid())); const clean={...r,id:id}; delete clean._id; Object.keys(clean).forEach(function(k){ if(clean[k]===undefined) delete clean[k]; }); return clean; }).filter(Boolean);
+      try{
+        setLocalStudentPatch(function(prev){
+          const map=new Map();
+          (Array.isArray(prev)?prev:[]).forEach(function(u){ const sid=eqDigits(u.studentId||u.id||""); map.set(sid?"student_"+sid:String(u.id||uid()), u); });
+          cleanedRows.forEach(function(u){ const sid=eqDigits(u.studentId||u.id||""); map.set(sid?"student_"+sid:String(u.id||uid()), {...(map.get(sid?"student_"+sid:String(u.id||""))||{}),...u}); });
+          return Array.from(map.values());
+        });
+      }catch(_stateErr){}
       if(data && Array.isArray(data.users)){
         const byId=new Map(data.users.map((u,i)=>[String(u.id||u._id||""),i]));
-        rows.forEach(function(r){
-          if(!r) return;
-          const id=String(r.id||r._id||"");
+        cleanedRows.forEach(function(clean){
+          if(!clean) return;
+          const id=String(clean.id||"");
           if(!id) return;
-          const clean={...r,id:id}; delete clean._id;
           const idx=byId.get(id);
           if(idx!==undefined) data.users[idx]={...(data.users[idx]||{}),...clean};
           else { data.users.push(clean); byId.set(id,data.users.length-1); }
@@ -7838,7 +7861,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const arr=JSON.parse(localStorage.getItem("eq_users")||"[]");
         const byId=new Map((Array.isArray(arr)?arr:[]).map((u,i)=>[String(u.id||u._id||""),i]));
         const out=Array.isArray(arr)?arr:[];
-        rows.forEach(function(r){ const id=String(r.id||r._id||""); if(!id)return; const clean={...r,id:id}; delete clean._id; const idx=byId.get(id); if(idx!==undefined) out[idx]={...(out[idx]||{}),...clean}; else {out.push(clean); byId.set(id,out.length-1);} });
+        cleanedRows.forEach(function(clean){ const id=String(clean.id||""); if(!id)return; const idx=byId.get(id); if(idx!==undefined) out[idx]={...(out[idx]||{}),...clean}; else {out.push(clean); byId.set(id,out.length-1);} });
         localStorage.setItem("eq_users", JSON.stringify(out));
       }catch(_e){}
     }catch(e){ console.warn("merge local users failed", e); }
@@ -7906,7 +7929,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       setImportTargetClass(writeRows[0].classId);
       setMoveTargetClass(writeRows[0].classId);
       setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+".");
-      setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after import failed", err); }); }, 150);
+      // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
     }catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
     try{ e.target.value=""; }catch(_e){}
   }
@@ -7947,7 +7970,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       setImportTargetClass(targetClassId);
       setMoveTargetClass(targetClassId);
       setImportMsg("✅ Moved "+rows.length+" students to "+cls.name+". No results were deleted.");
-      setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after move failed", err); }); }, 150);
+      // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
     }catch(err){
       setImportMsg("❌ Move failed: "+(err.message||err));
     }
