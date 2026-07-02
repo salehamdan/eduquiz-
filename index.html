@@ -41,6 +41,7 @@
 <!-- CLASS_DELETE_IMPORT_NO_STALE_UI_20260702 -->
 <!-- CLASS_DATA_CLEAN_DELETE_FAST_20260702 -->
 <!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
+<!-- LOGIN_MATCHES_VISIBLE_CLASSES_FIX_20260702 -->
 <!-- LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702 -->
 <!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
@@ -929,18 +930,45 @@ function eqRealActiveClassesFromData(d){
 
 function eqStoreVisibleLoginClasses(list){
   try{
-    EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS.forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
-    const out=eqActualOfficialClasses();
-    localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out.map(c=>({id:c.id,name:c.name,grade:c.grade||"",updatedAt:Date.now()}))));
+    EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS.forEach(function(k){try{localStorage.removeItem(k);}catch(_){} });
+    const seen=new Set();
+    const out=[];
+    (Array.isArray(list)?list:[]).forEach(function(c){
+      if(!c) return;
+      const canon=canonicalClassId(c.id||c.classId||c.grade||c.name||c.className||c.class||'');
+      if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return;
+      if(c.deleted===true || c.status==='deleted' || c.hidePreloaded || c.permanentDeleted) return;
+      if(seen.has(canon)) return;
+      const off=officialClassRow(canon)||{};
+      seen.add(canon);
+      out.push({id:canon,name:off.name||c.name||canon,grade:off.grade||c.grade||'',updatedAt:Date.now()});
+    });
+    localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out));
   }catch(e){}
 }
 
 function eqReadVisibleLoginClasses(){
-  return eqActualOfficialClasses();
+  try{
+    const arr=JSON.parse(localStorage.getItem(EQ_ACTIVE_LOGIN_CLASSES_KEY)||'[]');
+    return eqFilterLoginClasses(Array.isArray(arr)?arr:[]);
+  }catch(e){ return []; }
 }
 
 function eqFilterLoginClasses(list){
-  return eqActualOfficialClasses();
+  const seen=new Set();
+  return (Array.isArray(list)?list:[]).filter(function(c){
+    if(!c) return false;
+    const canon=canonicalClassId(c.id||c.classId||c.grade||c.name||c.className||c.class||'');
+    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return false;
+    if(c.deleted===true || c.status==='deleted' || c.hidePreloaded || c.permanentDeleted) return false;
+    if(seen.has(canon)) return false;
+    seen.add(canon);
+    return true;
+  }).map(function(c){
+    const canon=canonicalClassId(c.id||c.classId||c.grade||c.name||'');
+    const off=officialClassRow(canon)||{};
+    return {...c,id:canon,name:off.name||c.name||canon,grade:off.grade||c.grade||''};
+  });
 }
 
 
@@ -2296,7 +2324,8 @@ function Landing({onLogin, prefillQuiz}) {
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
   function activeLoginClassesFromData(d){
-    const live = eqActualOfficialClasses();
+    // Login must match the visible Classes tab, not the hard-coded official class list.
+    const live = eqRealActiveClassesFromData(d||{});
     try{ eqStoreVisibleLoginClasses(live); }catch(e){}
     return live;
   }
@@ -7627,7 +7656,7 @@ async function adminCleanOldClassData(currentData, currentUser){
     await adminBatchDelete("classes", adminUniqueRows(classDocs));
     try{ await adminBatchDelete("deletedClasses", adminUniqueRows(classDocs)); }catch(_e){}
   }
-  try{ eqStoreVisibleLoginClasses(eqActualOfficialClasses()); }catch(e){}
+  try{ eqStoreVisibleLoginClasses(eqRealActiveClassesFromData({classes:cloudClasses||[], firebaseClasses:cloudClasses||[], deletedClasses:[]})); }catch(e){}
   return {oldClasses:invalidClassRows.length, oldStudents:invalidUsers.length, deleted};
 }
 
@@ -8415,8 +8444,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
         cleanRows.forEach(function(r){ const id=String(r.id||""); const idx=byId.get(id); if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r}; else {data.classes.push(r); byId.set(id,data.classes.length-1);} });
       }
-      try{ localStorage.setItem("eq_classes", JSON.stringify(eqActualOfficialClasses())); }catch(_e){}
-      try{ eqStoreVisibleLoginClasses(eqActualOfficialClasses()); }catch(_e){}
+      try{ localStorage.setItem("eq_classes", JSON.stringify(data&&data.classes?data.classes:[])); }catch(_e){}
+      try{ eqStoreVisibleLoginClasses(data&&data.classes?data.classes:[]); }catch(_e){}
     }catch(e){ console.warn("merge local classes failed", e); }
   }
 
@@ -8611,7 +8640,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false};
     await fsSetStrict("classes",id,row);
     mergeWrittenClassesIntoLocal([row]);
-    eqStoreVisibleLoginClasses(eqActualOfficialClasses());
+    eqStoreVisibleLoginClasses([...(myClasses||[]), row]);
     await reload();setClsModal(false);setNewCls({name:"",grade:""});
   }
 
