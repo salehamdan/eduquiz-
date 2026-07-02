@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- CLASS_READD_EMPTY_HARD_DELETE_20260702 -->
 <!-- CLASS_DELETE_FAST_TARGETED_QUERY_20260702 -->
 <!-- CLASS_HARD_DELETE_PROGRESS_SELECTED_RESET_20260702 -->
 <!-- CLASS_IMPORT_PERSISTENT_HARD_RESET_20260702 -->
@@ -779,7 +780,7 @@ async function fsDel(col, id) {
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
-const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v16_deleted_classes_respected";
+const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v17_empty_readd_hard_delete";
 function eqSaveFastDataCache(d){
   try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
 }
@@ -7431,7 +7432,6 @@ async function adminPurgeStudentsAndAllDataFast(students, opts){
   });
   const deleted={students:0,responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,notes:0,writing:0,deletedStudentMarks:0};
   const emit=function(stage,done,total){ if(progress) progress({stage:stage,done:done||0,total:total||0}); };
-  if(!sidSet.size && !userDocs.length){ emit("Nothing to delete",1,1); return deleted; }
 
   function chunkArray(arr,n){ const out=[]; for(let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
   function classTokenSetFromOpts(){
@@ -7445,6 +7445,7 @@ async function adminPurgeStudentsAndAllDataFast(students, opts){
     return set;
   }
   const classTokens=classTokenSetFromOpts();
+  if(!sidSet.size && !userDocs.length && !classTokens.size){ emit("Nothing to delete",1,1); return deleted; }
   function recordMatchesClassTokens(rec){
     if(!rec || !classTokens.size) return false;
     const fields=["classId","className","class","grade","targetClassId","courseClassId","studentClassId"];
@@ -7591,24 +7592,48 @@ async function adminPurgeClassStudentsExceptDocIdsFast(classId, keepDocIdSet, op
   del.duplicateDocs=remove.length;
   return del;
 }
+function adminIsStudentLikeRow(u){
+  if(!u) return false;
+  const role=String(u.role||"").toLowerCase();
+  if(role==="student") return true;
+  return !!(u.studentId || u.studentNumber || /^student_/i.test(String(u.id||u._id||"")));
+}
+function adminClassValueMatchesAliases(value, aliasSet){
+  if(value===undefined || value===null) return false;
+  const raw=String(value).trim();
+  if(!raw) return false;
+  if(aliasSet.has(raw) || aliasSet.has(canonicalClassId(raw))) return true;
+  const parts=raw.split(/[|,;/]+/).map(x=>x.trim()).filter(Boolean);
+  return parts.some(function(x){ return aliasSet.has(x) || aliasSet.has(canonicalClassId(x)); });
+}
+function adminStudentMatchesClassAliases(u, aliasSet){
+  if(!u || !aliasSet || !aliasSet.size) return false;
+  const fields=["classId","className","class","grade","classCode","section","sectionId","studentClassId","targetClassId"];
+  for(const f of fields){ if(adminClassValueMatchesAliases(u[f], aliasSet)) return true; }
+  try{
+    if(u.student && typeof u.student==="object"){
+      for(const f of fields){ if(adminClassValueMatchesAliases(u.student[f], aliasSet)) return true; }
+    }
+  }catch(_e){}
+  return false;
+}
 async function adminFastClassStudents(cls, fallbackStudents){
   const aliases=adminClassAliases(cls);
-  const aliasSet=new Set(aliases.map(canonicalClassId));
+  const aliasSet=new Set();
+  aliases.forEach(function(a){ if(a!==undefined&&a!==null&&String(a).trim()) aliasSet.add(String(a).trim()); const c=canonicalClassId(a); if(c) aliasSet.add(c); });
   const tasks=[];
   aliases.forEach(function(a){
-    tasks.push(adminFastQuery("users","classId",a));
-    tasks.push(adminFastQuery("users","className",a));
-    tasks.push(adminFastQuery("users","class",a));
+    ["classId","className","class","grade","section","studentClassId"].forEach(function(f){ tasks.push(adminFastQuery("users",f,a)); });
   });
   let queried=[];
   try{ queried=adminUniqueRows([].concat(...(await Promise.all(tasks)))); }catch(_e){ queried=[]; }
   let scanned=[];
   try{
     const all=await fsAll("users");
-    scanned=(all||[]).filter(function(u){ return u&&String(u.role||"")==="student"&&!isStudentTombstone(u)&&aliasSet.has(canonicalClassId(u.classId||u.className||u.class||u.grade||"")); });
+    scanned=(all||[]).filter(function(u){ return adminIsStudentLikeRow(u) && adminStudentMatchesClassAliases(u, aliasSet); });
   }catch(_e){ scanned=[]; }
-  const fb=(fallbackStudents||[]).filter(function(u){ return u&&u.role==="student"&&!isStudentTombstone(u)&&aliasSet.has(canonicalClassId(u.classId||u.className||u.class||u.grade||"")); });
-  return adminUniqueRows([].concat(queried, scanned, fb)).filter(function(u){return u&&u.role==="student"&&!isStudentTombstone(u)&&aliasSet.has(canonicalClassId(u.classId||u.className||u.class||u.grade||""));});
+  const fb=(fallbackStudents||[]).filter(function(u){ return adminIsStudentLikeRow(u) && adminStudentMatchesClassAliases(u, aliasSet); });
+  return adminUniqueRows([].concat(queried, scanned, fb)).filter(function(u){return adminIsStudentLikeRow(u) && adminStudentMatchesClassAliases(u, aliasSet);});
 }
 
 async function adminDeleteClass(cls, students, mode){
@@ -8666,18 +8691,29 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني، ثالث رابع، ثالث سادس."); return; }
     const official=officialClassRow(canon);
     const id=official.id;
+    const existingActive=(myClasses||[]).find(function(c){ return canonicalClassId(c&& (c.id||c.classId||c.grade||c.name))===id; });
+    if(existingActive){ alert("الفصل موجود مسبقًا في المنصة."); return; }
     const aliases=Array.from(new Set([id, canon, rawName, rawGrade, official.name, official.grade].filter(Boolean)));
-    // Re-adding a class must remove every old tombstone/hidden flag for that class,
-    // locally and remotely. This fixes: class is created but does not appear in Classes/login.
+    // Re-adding a class must create a NEW EMPTY class. Old students/results from a previous year
+    // are hard-deleted first; they must not reappear just because the class name was created again.
+    setAdminBusy("⏳ Cleaning old data for "+official.name+" before creating the new empty class…");
+    try{
+      await adminResetClassBeforeImport(id, [], {onProgress:function(p){
+        const total=p.total||0, done=p.done||0;
+        const pct=total?Math.min(100,Math.round(done*100/total)):0;
+        setAdminBusy("⏳ "+(p.stage||"Cleaning old class data")+" — "+done+" / "+total+(total?" ("+pct+"%)":""));
+      }});
+    }catch(e){ console.warn("old class purge before add failed", e&&e.message); }
+    hardClearClassFromScreen(id);
     adminForgetDeletedClassIds(aliases);
     try{ await adminBatchDelete("deletedClasses", aliases.map(function(a){return {id:String(a)};})); }catch(e){ try{ await fsDel("deletedClasses", id); }catch(_e){} }
     try{ await fsDel("deletedClasses", canon); }catch(e){}
-    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null};
+    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,classResetAt:new Date().toISOString()};
     await fsSetStrict("classes",id,row);
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
     eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>canonicalClassId(c&& (c.id||c.grade||c.name))!==id), row]);
-    await reload();setClsModal(false);setNewCls({name:"",grade:""});
+    await reload();setAdminBusy("✅ New empty class created: "+official.name); setTimeout(()=>setAdminBusy(""),3500); setClsModal(false);setNewCls({name:"",grade:""});
   }
 
   async function editClass(cls){
