@@ -728,7 +728,7 @@ function loadSession() { try { return JSON.parse(localStorage.getItem("eq_sessio
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 function eqHardCleanLoggedOutUI(){
   try{
-    ["eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+    ["eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
     ["rp-v11-student-status","rp-floating-button-20260605","rp-v11-panel","w12fab","w12p"].forEach(function(id){var el=document.getElementById(id); if(el) el.remove();});
     var badge=document.getElementById("rp-floating-count"); if(badge) badge.style.display="none";
     try{ localStorage.removeItem("eq_session"); }catch(_e){}
@@ -749,8 +749,8 @@ function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); 
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v7";
-const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v10";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
@@ -783,6 +783,9 @@ function eqCleanClassRow(c){
 function eqIsDeletedClass(c, deletedSet){
   if(!c) return true;
   const id=eqLoginClassIdOf(c), canon=(typeof canonicalClassId==="function")?canonicalClassId(id):id;
+  // A newly created/imported active class must override old tombstones so the teacher can recreate Third Second/Fourth/etc.
+  const activeReal=(c.active===true || c.source==="teacher-created" || c.source==="excel-import") && c.deleted!==true && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;
+  if(activeReal) return false;
   return !!(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || (deletedSet&&(deletedSet.has(id)||deletedSet.has(canon))));
 }
 function eqIsRealVisibleClass(c){
@@ -2195,7 +2198,21 @@ function Landing({onLogin, prefillQuiz}) {
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
   function activeLoginClassesFromData(d){
-    return eqRealActiveClassesFromData(d);
+    // Login page must not rebuild classes from PRELOADED_CLASSES or old student rows.
+    // It uses the teacher-visible cache first; if missing, only active class documents are allowed.
+    try{
+      const cached = eqReadVisibleLoginClasses();
+      if(cached && cached.length) return cached;
+      const out=[], seen=new Set(), deletedSet=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
+      const rows=[].concat((d&&d.firebaseClasses)||[], (d&&d.classes)||[]);
+      rows.forEach(function(c){
+        if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return;
+        // Ignore old hard-coded/preloaded rows. If the teacher creates the same name again, it will not be preloaded.
+        if(c.preloaded===true && !(c.source==="teacher-created" || c.source==="excel-import" || c.active===true)) return;
+        eqPushUniqueClass(out, seen, c, deletedSet);
+      });
+      return out;
+    }catch(e){ return []; }
   }
   const upd = (k,v) => sf(x=>{
     const nx={...x,[k]:v};
@@ -2206,12 +2223,9 @@ function Landing({onLogin, prefillQuiz}) {
   useEffect(()=>{
     eqHardCleanLoggedOutUI();
     loadAllData().then(function(d){
-      const live=eqFilterLoginClasses(activeLoginClassesFromData(d));
-      // Use the teacher-visible class list first. Do not revive all Firebase/old classes on the login page.
-      const cached=eqReadVisibleLoginClasses();
-      const active=cached.length ? cached : live;
+      const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
       setClasses(active);
-      if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
+      if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){ 
         const fallback=(active[0]&&active[0].id)||"";
         sf(x=>({...x,classId:fallback}));
         if(fallback) saveLoginMemory({classId:fallback});
@@ -7190,9 +7204,11 @@ async function adminDeleteClass(cls, students, mode){
     return {class:"deleted", studentsMoved:studs.length};
   }
   if(mode==="classStudentsData"){
-    for(const st of studs){
-      const d=await adminDeleteStudent(st,"hard");
-      Object.keys(d).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0));
+    // FAST_CLASS_DELETE_20260702: delete student records in small parallel chunks instead of one-by-one.
+    for(let i=0;i<studs.length;i+=8){
+      const chunk=studs.slice(i,i+8);
+      const results=await Promise.all(chunk.map(st=>adminDeleteStudent(st,"hard")));
+      results.forEach(d=>Object.keys(d||{}).forEach(k=>deleted[k]=(deleted[k]||0)+(typeof d[k]==="number"?d[k]:0)));
     }
   } else {
     studs.forEach(st=>adminRememberDeletedStudent(st));
@@ -7762,10 +7778,15 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!target || !target.id) return "";
     const found=(classList||[]).find(function(c){return sameClassId(c.id,target.id)||sameClassId(c.name,target.id)||sameClassId(c.grade,target.id);});
     if(found) return found.id;
-    const row={id:target.id, name:target.name||target.id, grade:target.grade||"", teacherIds:[user.id], createdAt:today(), active:true, source:"excel-import"};
+    const row={id:target.id, name:target.name||target.id, grade:target.grade||"", teacherIds:[user.id], createdAt:today(), updatedAt:today(), active:true, source:"excel-import", preloaded:false, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false};
+    try{ await fsDel("deletedClasses", row.id); }catch(e){}
     await fsSetStrict("classes", row.id, row);
     classList.push(row);
     return row.id;
+  }
+  function studentDocIdForWrite(u, sid){
+    const clean=eqDigits(sid || (u&&u.studentId) || (u&&u.id) || "");
+    return String((u&&(u._id||u.id)) || (clean?"student_"+clean:uid()));
   }
   async function importStudents(e){
     const file=e.target.files[0]; if(e.target)e.target.value="";
@@ -7788,11 +7809,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       if(!hasHeader){ci={name:0,id:1,cls:2,email:-1};}
       const dataRows=rows.slice(hasHeader?1:0);
       const existing=await fsAll("users");
-      const existingBySid={};
-      (existing||[]).forEach(function(u){ const sid=eqDigits(u&&u.studentId); if(sid && !isStudentTombstone(u)) existingBySid[sid]=u; });
+      const bySid={};
+      (existing||[]).forEach(function(u){ const sid=eqDigits(u&&u.studentId); if(sid){ (bySid[sid]=bySid[sid]||[]).push(u); } });
       let classList=(await fsAll("classes")||[]).filter(c=>c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted);
       let added=0,updated=0,skipped=0,createdClasses=0;
-      const beforeClassCount=classList.length;
+      const writeMap={};
+      function queue(row){ if(row && row.id) writeMap[String(row.id)]={...row,id:String(row.id)}; }
       for(const r of dataRows){
         const name=String(r[ci.name]||"").trim();
         const sidRaw=String(r[ci.id]||"").trim();
@@ -7800,7 +7822,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         if(!name||!sid){skipped++;continue;}
         let classId="";
         if(importTargetClass && importTargetClass!=="excel"){
-          classId=importTargetClass;
+          const selected=myClasses.find(c=>sameClassId(c.id,importTargetClass));
+          classId=(selected&&selected.id)||importTargetClass;
         } else if(ci.cls>=0){
           const target=importClassTargetFromCell(r[ci.cls], classList);
           if(target){
@@ -7810,21 +7833,20 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           }
         }
         const email=ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():"";
-        const old=existingBySid[eqDigits(sid)];
-        if(old){
-          const nu={...old,role:"student",name,shortName:(old.shortName||name.split(/\s+/).slice(0,2).join(" ")),studentId:String(sid),classId:classId||old.classId||"",email:email||old.email||"",password:old.password||String(sid),deleted:false,status:"active",updatedAt:today()};
-          await fsSetStrict("users", old.id||("student_"+sid), nu);
-          existingBySid[eqDigits(sid)]=nu;
-          updated++;
-        }else{
-          const nu={id:"student_"+sid,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:String(sid),classId,email,password:String(sid),createdAt:today(),status:"active"};
-          await fsSetStrict("users",nu.id,nu);
-          existingBySid[eqDigits(sid)]=nu;
-          added++;
-        }
+        const matches=bySid[eqDigits(sid)]||[];
+        const base=matches.find(x=>!isStudentTombstone(x)) || matches[0] || null;
+        const cleanSid=String(sid);
+        const merged={...(base||{}),role:"student",name,shortName:((base&&base.shortName)||name.split(/\s+/).slice(0,2).join(" ")),studentId:cleanSid,classId:classId||((base&&base.classId)||""),email:email||((base&&base.email)||""),password:((base&&base.password)||cleanSid),deleted:false,status:"active",updatedAt:today(),createdAt:(base&&base.createdAt)||today()};
+        const ids=new Set(["student_"+eqDigits(cleanSid)]);
+        matches.forEach(m=>ids.add(studentDocIdForWrite(m,cleanSid)));
+        ids.forEach(id=>queue({...merged,id,_id:undefined}));
+        if(matches.length) updated++; else added++;
       }
-      await reload();
-      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+(createdClasses?" · Created classes "+createdClasses:"")+".");
+      const rowsToWrite=Object.values(writeMap);
+      if(rowsToWrite.length) await adminBatchSet("users", rowsToWrite);
+      const d=await reload();
+      setFilterCls(importTargetClass && importTargetClass!=="excel" ? importTargetClass : filterCls);
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+(createdClasses?" · Created classes "+createdClasses:"")+". Saved rows: "+rowsToWrite.length+".");
     } catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
   }
 
@@ -7836,25 +7858,35 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!from||!to||from>to){setImportMsg("Enter a valid ID range, for example 3401 to 3435.");return;}
     if(!cls){setImportMsg("Choose the target class first.");return;}
     const liveUsers=await fsAll("users");
-    const candidates=(liveUsers||data.users||[]).filter(function(u){
-      if(!u || u.role!=="student" || u.deleted===true || u.status==="deleted") return false;
-      const n=Number(eqDigits(u.studentId||u.id||""));
-      return n>=from && n<=to;
+    const groups={};
+    (liveUsers||[]).forEach(function(u){
+      if(!u || String(u.role||"student")!=="student") return;
+      const sid=eqDigits(u.studentId||u.id||"");
+      const n=Number(sid);
+      if(n>=from && n<=to){ (groups[sid]=groups[sid]||[]).push(u); }
     });
-    if(!candidates.length){setImportMsg("No students found in this ID range.");return;}
-    if(!window.confirm("Move "+candidates.length+" students ("+from+"-"+to+") to "+cls.name+"?\nNo students or results will be deleted.")) return;
-    setImportMsg("Moving "+candidates.length+" students to "+cls.name+"…");
-    let moved=0;
-    for(const st of candidates){
-      await fsSetStrict("users", st.id||("student_"+eqDigits(st.studentId)), {...st, id:st.id||("student_"+eqDigits(st.studentId)), classId:cls.id, deleted:false, status:"active", updatedAt:today()});
-      moved++;
-      if(moved%10===0) setImportMsg("Moving… "+moved+" / "+candidates.length);
-    }
+    const sids=Object.keys(groups).sort((a,b)=>Number(a)-Number(b));
+    if(!sids.length){setImportMsg("No students found in this ID range.");return;}
+    if(!window.confirm("Move "+sids.length+" students ("+from+"-"+to+") to "+cls.name+"?\nNo students or results will be deleted.")) return;
+    setImportMsg("Moving "+sids.length+" students to "+cls.name+"…");
+    const writeMap={};
+    sids.forEach(function(sid){
+      const matches=groups[sid]||[];
+      const base=matches.find(x=>!isStudentTombstone(x)) || matches[0] || {studentId:sid,id:"student_"+sid};
+      const row={...base,role:"student",studentId:String(sid),classId:cls.id,deleted:false,status:"active",updatedAt:today()};
+      const ids=new Set(["student_"+sid]);
+      matches.forEach(m=>ids.add(studentDocIdForWrite(m,sid)));
+      ids.forEach(id=>writeMap[String(id)]={...row,id:String(id),_id:undefined});
+    });
+    const rows=Object.values(writeMap);
+    await adminBatchSet("users", rows);
     await reload();
     setFilterCls(cls.id);
     setImportTargetClass(cls.id);
-    setImportMsg("✅ Moved "+moved+" students to "+cls.name+". No results were deleted.");
+    setMoveTargetClass(cls.id);
+    setImportMsg("✅ Moved "+sids.length+" students to "+cls.name+". Saved rows: "+rows.length+". No results were deleted.");
   }
+
 
   // ── EXPORT GRADEBOOK (grid: students x quizzes) ──
   function exportGradebook(){
@@ -7911,7 +7943,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setEsMsg("✅ Saved!");
     setTimeout(()=>setEditStu(null),700);
   }
-  async function createCls(){if(!newCls.name.trim())return;const id=uid();await fsSet("classes",id,{id,name:newCls.name.trim(),grade:newCls.grade.trim(),teacherIds:[user.id],createdAt:today()});await reload();setClsModal(false);setNewCls({name:"",grade:""});}
+  async function createCls(){
+    if(!newCls.name.trim())return;
+    const rawName=newCls.name.trim(), rawGrade=newCls.grade.trim();
+    const canon=canonicalClassId(rawName||rawGrade);
+    const official=officialClassRow(canon);
+    const id=official?official.id:uid();
+    try{ await fsDel("deletedClasses", id); }catch(e){}
+    await fsSetStrict("classes",id,{id,name:official?official.name:rawName,grade:official?(official.grade||rawGrade):rawGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false});
+    await reload();setClsModal(false);setNewCls({name:"",grade:""});
+  }
   async function editClass(cls){
     const name = prompt("Edit class name:", cls.name||"");
     if(name===null || !name.trim()) return;
