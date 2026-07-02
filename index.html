@@ -720,7 +720,7 @@ function loadSession() { try { return JSON.parse(localStorage.getItem("eq_sessio
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 function eqHardCleanLoggedOutUI(){
   try{
-    ["eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+    ["eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
     ["rp-v11-student-status","rp-floating-button-20260605","rp-v11-panel","w12fab","w12p"].forEach(function(id){var el=document.getElementById(id); if(el) el.remove();});
     var badge=document.getElementById("rp-floating-count"); if(badge) badge.style.display="none";
     try{ localStorage.removeItem("eq_session"); }catch(_e){}
@@ -741,8 +741,8 @@ function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); 
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v4";
-const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v6";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
@@ -773,6 +773,10 @@ function eqIsDeletedClass(c, deletedSet){
 function eqPushUniqueClass(out, seen, c, deletedSet){
   const row=eqCleanClassRow(c);
   if(!row || eqIsDeletedClass(row, deletedSet)) return;
+  // Remove legacy/fake cached English 3-5 rows unless the teacher later creates a real Arabic ثالث خامس row.
+  const rowCanon=(typeof canonicalClassId==="function")?canonicalClassId(row.id||row.grade||row.name):String(row.id||row.grade||row.name||"");
+  const rowNameNorm=normalizeNameText(row.name||"");
+  if(rowCanon==="class_3_5" && /third/i.test(String(row.name||row.grade||"")) && !/ثالث\s*خامس/.test(row.name||"")) return;
   const key=eqClassDisplayKey(row) || row.id;
   if(!key || seen.has(key)) return;
   seen.add(key); out.push(row);
@@ -792,9 +796,20 @@ function eqRealActiveClassesFromData(d){
       if(c && !c.preloaded) eqPushUniqueClass(out,seen,c,deletedSet);
     });
 
-    // 2) Do NOT derive login classes from student classId alone.
-    // That was the cause of fake/old classes such as 3-5 — Third returning.
-    // Import will create a missing real class document when needed.
+    // 2) Restore real in-use classes from active students when the class document is missing.
+    // This protects existing classes such as ثالث ثاني from disappearing after a display/filter update.
+    // Do not revive the known fake legacy class 3-5 / Third from old login cache.
+    (Array.isArray(d.users)?d.users:[]).forEach(function(u){
+      if(!u || u.role!=="student" || u.deleted===true || u.status==="deleted") return;
+      const rawCid = u.classId || u.className || u.class || "";
+      const canon = (typeof canonicalClassId === "function") ? canonicalClassId(rawCid) : String(rawCid||"");
+      if(!canon) return;
+      if(String(canon)==="class_3_5" || /(^|[^0-9])3\s*[-/]\s*5([^0-9]|$)/i.test(String(rawCid||""))) return;
+      if(deletedSet && (deletedSet.has(canon) || deletedSet.has(rawCid))) return;
+      const official = (typeof officialClassRow === "function") ? officialClassRow(canon) : null;
+      const row = official || { id: canon, name: String(rawCid||canon), grade: "" };
+      eqPushUniqueClass(out, seen, { ...row, id: canon }, deletedSet);
+    });
 
     return out.sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""),"ar"); });
   }catch(e){ return []; }
@@ -7370,6 +7385,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [viewAsOpen,setViewAsOpen]=useState(false);
   const [editingQuiz,setEditingQuiz]=useState(null);
   const [importMsg,setImportMsg]=useState("");
+  const [importTargetClass,setImportTargetClass]=useState("excel");
+  const [moveFromId,setMoveFromId]=useState("3401"),[moveToId,setMoveToId]=useState("3435"),[moveTargetClass,setMoveTargetClass]=useState("");
   const [editStu,setEditStu]=useState(null);
   const [gbClass,setGbClass]=useState("all");
   const [esForm,setEsForm]=useState({name:"",shortName:"",studentId:"",classId:"",email:"",password:"",fatherName:""});
@@ -7749,7 +7766,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const sid=eqDigits(sidRaw)||sidRaw;
         if(!name||!sid){skipped++;continue;}
         let classId="";
-        if(ci.cls>=0){
+        if(importTargetClass && importTargetClass!=="excel"){
+          classId=importTargetClass;
+        } else if(ci.cls>=0){
           const target=importClassTargetFromCell(r[ci.cls], classList);
           if(target){
             const oldLen=classList.length;
@@ -7774,6 +7793,33 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       await reload();
       setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+(createdClasses?" · Created classes "+createdClasses:"")+".");
     } catch(err){ setImportMsg("Error: "+(err.message||err)); }
+  }
+
+
+  async function moveImportedStudentsToClass(){
+    const from=Number(eqDigits(moveFromId));
+    const to=Number(eqDigits(moveToId));
+    const cls=myClasses.find(c=>sameClassId(c.id,moveTargetClass));
+    if(!from||!to||from>to){setImportMsg("Enter a valid ID range, for example 3401 to 3435.");return;}
+    if(!cls){setImportMsg("Choose the target class first.");return;}
+    const candidates=(data.users||[]).filter(function(u){
+      if(!u || u.role!=="student" || u.deleted===true || u.status==="deleted") return false;
+      const n=Number(eqDigits(u.studentId||u.id||""));
+      return n>=from && n<=to;
+    });
+    if(!candidates.length){setImportMsg("No students found in this ID range.");return;}
+    if(!window.confirm("Move "+candidates.length+" students ("+from+"-"+to+") to "+cls.name+"?\nNo students or results will be deleted.")) return;
+    setImportMsg("Moving "+candidates.length+" students to "+cls.name+"…");
+    let moved=0;
+    for(const st of candidates){
+      await fsSet("users", st.id||("student_"+eqDigits(st.studentId)), {...st, id:st.id||("student_"+eqDigits(st.studentId)), classId:cls.id, deleted:false, status:"active", updatedAt:today()});
+      moved++;
+      if(moved%10===0) setImportMsg("Moving… "+moved+" / "+candidates.length);
+    }
+    await reload();
+    setFilterCls(cls.id);
+    setImportTargetClass(cls.id);
+    setImportMsg("✅ Moved "+moved+" students to "+cls.name+". No results were deleted.");
   }
 
   // ── EXPORT GRADEBOOK (grid: students x quizzes) ──
@@ -8279,9 +8325,31 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         </div>}
 
         {tab==="students" && <div>
+          <div style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"9px"}}>
+            <div style={{fontSize:"11px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>📥 Import students into</div>
+            <div style={{display:"flex",gap:"7px",flexWrap:"wrap",alignItems:"center"}}>
+              <select value={importTargetClass} onChange={e=>setImportTargetClass(e.target.value)} style={{flex:1,minWidth:"170px",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh,color:C.tx}}>
+                <option value="excel">حسب ملف Excel / Excel class column</option>
+                {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
+              </select>
+              <label htmlFor="stuImport" style={{flex:1,minWidth:"150px",padding:"10px",background:C.s,color:"#fff",borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,boxSizing:"border-box"}}>📥 Import Students (Excel)</label>
+              <input id="stuImport" type="file" accept=".xlsx,.xls,.csv" ref={stuFileRef} onChange={importStudents} style={{display:"none"}}/>
+            </div>
+            <div style={{fontSize:"10px",color:C.mu,marginTop:"6px",fontFamily:F}}>إذا اخترت فصلًا قائمًا هنا، سيتم ربط كل الطلاب بهذا الفصل حتى لو كان عمود class في Excel مختلفًا.</div>
+          </div>
+          <div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"9px"}}>
+            <div style={{fontSize:"11px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🔁 Move existing imported students to class</div>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}>
+              <input value={moveFromId} onChange={e=>setMoveFromId(e.target.value)} placeholder="From ID" style={{width:"90px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F}}/>
+              <input value={moveToId} onChange={e=>setMoveToId(e.target.value)} placeholder="To ID" style={{width:"90px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F}}/>
+              <select value={moveTargetClass} onChange={e=>setMoveTargetClass(e.target.value)} style={{flex:1,minWidth:"140px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
+                <option value="">اختر الفصل الهدف</option>
+                {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
+              </select>
+              <Btn color={C.p} onClick={moveImportedStudentsToClass}>Move</Btn>
+            </div>
+          </div>
           <div style={{display:"flex",gap:"7px",marginBottom:"9px",flexWrap:"wrap"}}>
-            <label htmlFor="stuImport" style={{flex:1,minWidth:"150px",padding:"10px",background:C.s,color:"#fff",borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,boxSizing:"border-box"}}>📥 Import Students (Excel)</label>
-            <input id="stuImport" type="file" accept=".xlsx,.xls,.csv" ref={stuFileRef} onChange={importStudents} style={{display:"none"}}/>
             <Btn color={C.w} onClick={exportResults}>📤 Export Results</Btn>
             <Btn color="#475569" onClick={()=>{setMergeMsg("");setMergeModal(true);}}>🛠 Advanced Repair / Merge</Btn>
           </div>
@@ -10165,6 +10233,7 @@ document.addEventListener("click", function(e){
 <!-- BUILD_BASE_WORKING_SUBMIT_PLUS_TEACHER_FIXES_ONLY -->
 
 <!-- BUILD_FINAL_RP_STUDENT_DRAFT_PREVIEW_RECORD_AGAIN_NO_SUBMIT_TOUCH -->
+<!-- BUILD_128_IMPORT_EXISTING_CLASS_MOVE_STUDENTS_NO_FAKE_LOGIN -->
 <!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
 <!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
 
