@@ -732,70 +732,98 @@ function saveLoginMemory(patch){
 }
 function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
 
-// LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702
-// The student login dropdown must mirror the teacher Classes page, not every old/preloaded class row.
-// When the teacher dashboard loads, it stores the currently visible classes here. The login page uses
-// this exact list first, so deleted/old/preloaded classes do not come back after Logout.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_v2";
+// LOGIN_CLASSES_SINGLE_REAL_SOURCE_FIX_20260702
+// Student login classes must come from real active teacher-created/Firebase classes,
+// plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
+// or old login-cache rows.
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_v3";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
     return canonicalClassId(label || (c&&c.id) || "") || label || String((c&&c.id)||"");
   }catch(e){ return String((c&& (c.name||c.grade||c.id)) || ""); }
 }
+function eqLoginClassIdOf(c){
+  try{ return String((c&& (c.id||c.classId)) || canonicalClassId((c&& (c.name||c.grade)) || c || "") || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
+}
+function eqCleanClassName(c){
+  const id=eqLoginClassIdOf(c);
+  const official=(typeof officialClassRow === "function") ? officialClassRow(canonicalClassId((c&& (c.name||c.grade||id))||id)) : null;
+  return String((c&&c.name) || (official&&official.name) || (c&&c.grade) || id || "").trim();
+}
+function eqCleanClassRow(c){
+  if(!c) return null;
+  const id=eqLoginClassIdOf(c);
+  const name=eqCleanClassName(c);
+  if(!id || !name) return null;
+  const official=(typeof officialClassRow === "function") ? officialClassRow(canonicalClassId((c.name||c.grade||id))) : null;
+  return { ...(official||{}), ...c, id:id, name:name, grade:String((c&&c.grade) || (official&&official.grade) || "").trim() };
+}
+function eqIsDeletedClass(c, deletedSet){
+  if(!c) return true;
+  const id=eqLoginClassIdOf(c), canon=(typeof canonicalClassId==="function")?canonicalClassId(id):id;
+  return !!(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || (deletedSet&&(deletedSet.has(id)||deletedSet.has(canon))));
+}
+function eqPushUniqueClass(out, seen, c, deletedSet){
+  const row=eqCleanClassRow(c);
+  if(!row || eqIsDeletedClass(row, deletedSet)) return;
+  const key=eqClassDisplayKey(row) || row.id;
+  if(!key || seen.has(key)) return;
+  seen.add(key); out.push(row);
+}
+function eqRealActiveClassesFromData(d){
+  try{
+    d=d||{};
+    const deletedSet=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
+    const deletedStudents=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(d.users||[]);
+    const out=[], seen=new Set();
+
+    // 1) Real class documents from Firebase/local teacher-created classes only.
+    (Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,deletedSet); });
+    (Array.isArray(d.classes)?d.classes:[]).forEach(function(c){
+      // Do not let old hard-coded PRELOADED_CLASSES come back by themselves.
+      if(c && c.preloaded && !(Array.isArray(d.firebaseClasses)&&d.firebaseClasses.some(fc=>sameClassId(fc.id,c.id)))) return;
+      if(c && !c.preloaded) eqPushUniqueClass(out,seen,c,deletedSet);
+    });
+
+    // 2) If active Firebase students exist in a class, show that class even if the class row is missing.
+    const allClasses=Array.isArray(d.classes)?d.classes:[];
+    (Array.isArray(d.firebaseUsers)?d.firebaseUsers:[]).forEach(function(u){
+      if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,deletedStudents)) return;
+      const cid=canonicalClassId(u.classId||"");
+      if(!cid || (deletedSet&&(deletedSet.has(cid)||deletedSet.has(u.classId)))) return;
+      const c=allClasses.find(x=>x && (sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid))) || officialClassRow(cid) || {id:cid,name:cid,grade:""};
+      eqPushUniqueClass(out,seen,{...c,id:cid},deletedSet);
+    });
+
+    return out.sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""),"ar"); });
+  }catch(e){ return []; }
+}
 function eqStoreVisibleLoginClasses(list){
   try{
+    EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS.forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
     const out=[]; const seen=new Set();
-    (Array.isArray(list)?list:[]).forEach(function(c){
-      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return;
-      const id=String(c.id||c.classId||"").trim();
-      const name=String(c.name||c.grade||id||"").trim();
-      if(!id || !name) return;
-      const k=eqClassDisplayKey(c);
-      if(seen.has(k)) return;
-      seen.add(k);
-      out.push({id:id,name:name,grade:String(c.grade||"").trim(),updatedAt:Date.now()});
-    });
-    if(out.length) localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out));
+    (Array.isArray(list)?list:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
+    localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out.map(c=>({id:c.id,name:c.name,grade:c.grade||"",updatedAt:Date.now()}))));
   }catch(e){}
 }
 function eqReadVisibleLoginClasses(){
   try{
     const arr=JSON.parse(localStorage.getItem(EQ_ACTIVE_LOGIN_CLASSES_KEY)||"[]");
     if(!Array.isArray(arr)) return [];
-    const seen=new Set();
-    return arr.filter(function(c){
-      if(!c || !c.id || !c.name) return false;
-      const k=eqClassDisplayKey(c);
-      if(seen.has(k)) return false; seen.add(k); return true;
-    });
+    const out=[]; const seen=new Set();
+    arr.forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
+    return out;
   }catch(e){ return []; }
-}
-
-// LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702
-// Login classes must come from the live Firebase classes/students, not a hard-coded single class.
-// This keeps newly-created classes visible while still preventing old PRELOADED_CLASSES from reviving deleted classes.
-function eqLoginClassIdOf(c){
-  try{ return String((c&& (c.id||c.classId)) || canonicalClassId((c&& (c.name||c.grade)) || c || "") || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
 }
 function eqFilterLoginClasses(list){
   try{
-    const src = Array.isArray(list) ? list : [];
-    const seen = new Set();
-    const out=[];
-    src.forEach(function(c){
-      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return;
-      const id = eqLoginClassIdOf(c);
-      const key = eqClassDisplayKey(c) || id;
-      if(!id || seen.has(key)) return;
-      seen.add(key);
-      const official = (typeof officialClassRow === "function") ? officialClassRow(canonicalClassId(c.name||c.grade||id)) : null;
-      out.push({...(official||{}), ...c, id:id, name:c.name || (official&&official.name) || c.grade || id, grade:c.grade || (official&&official.grade) || ""});
-    });
+    const out=[]; const seen=new Set();
+    (Array.isArray(list)?list:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
     return out;
   }catch(e){ return Array.isArray(list) ? list : []; }
 }
-
 
 // ── READING PROGRESS STORAGE & ANALYSIS ───────────────────────
 function rpWords(text){ return String(text||"").toLowerCase().replace(/[^a-z\s']/g," ").split(/\s+/).filter(Boolean); }
@@ -2120,37 +2148,7 @@ function Landing({onLogin, prefillQuiz}) {
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
   function activeLoginClassesFromData(d){
-    try{
-      d=d||{};
-      const allClasses=Array.isArray(d.classes)?d.classes:[];
-      const firebaseUsers=Array.isArray(d.firebaseUsers)?d.firebaseUsers:[];
-      const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
-      const delStu=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(d.users||[]);
-      const byId={}; allClasses.forEach(function(c){ if(c&&c.id) byId[String(c.id)]=c; });
-      const activeUsers=firebaseUsers.filter(function(u){
-        if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,delStu)) return false;
-        const cid=String(u.classId||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(cid):cid;
-        return !!cid && !delCls.has(cid) && !delCls.has(canon);
-      });
-      // Prefer real Firebase class rows even before students are added. This makes newly-created classes
-      // appear immediately in the login class list. Fall back to active Firebase student classIds.
-      const out=[]; const seen={};
-      function addClassRow(c){
-        if(!c) return;
-        const raw=String(c.id||c.classId||c.grade||c.name||""); const canon=(typeof canonicalClassId==="function")?canonicalClassId(raw):raw;
-        if(!raw || delCls.has(raw)||delCls.has(canon) || seen[canon]) return;
-        const official=(typeof officialClassRow==="function")?officialClassRow(canon):null;
-        out.push({...(official||{}),...c,id:canon,name:c.name||(official&&official.name)||c.grade||canon,grade:c.grade||(official&&official.grade)||""});
-        seen[canon]=true;
-      }
-      (Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).forEach(addClassRow);
-      activeUsers.forEach(function(u){
-        const cid=canonicalClassId(u.classId||"");
-        const c=byId[cid] || allClasses.find(function(x){return x&&(sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid));});
-        addClassRow(c || officialClassRow(cid) || {id:cid,name:cid,grade:""});
-      });
-      return out;
-    }catch(e){ return []; }
+    return eqRealActiveClassesFromData(d);
   }
   const upd = (k,v) => sf(x=>{
     const nx={...x,[k]:v};
@@ -2161,11 +2159,11 @@ function Landing({onLogin, prefillQuiz}) {
   useEffect(()=>{
     eqHardCleanLoggedOutUI();
     loadAllData().then(function(d){
-      const cached=eqReadVisibleLoginClasses();
       const live=eqFilterLoginClasses(activeLoginClassesFromData(d));
-      // Use the teacher-visible class cache exactly when available. This prevents old classes
-      // like ثالث أول / ثالث ثالث or accidental legacy rows from appearing in the login list.
-      const active=cached.length ? cached : live;
+      // Use live real classes first. Cache is only a fallback when Firebase cannot load.
+      const cached=eqReadVisibleLoginClasses();
+      const active=live.length ? live : cached;
+      if(live.length) eqStoreVisibleLoginClasses(live);
       setClasses(active);
       if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
         const fallback=(active[0]&&active[0].id)||"";
@@ -7399,7 +7397,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function patchQuizFast(id, patch){ setQuizFastPatch(prev=>({...prev, [id]: {...(prev[id]||{}), ...patch}})); }
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
-  const myClasses=data.classes.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded));
+  const realClasses=eqRealActiveClassesFromData(data);
+  const myClasses=realClasses.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || !c.teacherIds.length));
   useEffect(()=>{ try{ eqStoreVisibleLoginClasses(myClasses); }catch(e){} }, [JSON.stringify(myClasses.map(c=>({id:c.id,name:c.name,grade:c.grade,deleted:c.deleted,status:c.status})))]);
   const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
