@@ -36,6 +36,7 @@
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
 <!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
+<!-- LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702 -->
 <!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
 <!-- RP116_REALTIME_TASKS_BADGE_DATE_VISIBLE_FINAL_20260701 -->
 <!-- RP121_STUDENT_FLUENCY_VISIBLE_20260701 -->
@@ -173,6 +174,8 @@ function canonicalClassId(v){
   if(s==="class_3_2" || d==="32" || d==="23" || n.includes("ثالث ثاني") || e.includes("third second") || e.includes("3 2") || n.includes("3 2") || n.includes("2 3")) return "class_3_2";
   if(s==="class_3_3" || d==="33" || n.includes("ثالث ثالث") || e.includes("third third") || e.includes("3 3") || n.includes("3 3")) return "class_3_3";
   if(s==="class_3_4" || d==="34" || d==="43" || n.includes("ثالث رابع") || e.includes("third fourth") || e.includes("3 4") || n.includes("3 4") || n.includes("4 3")) return "class_3_4";
+  if(s==="class_3_5" || d==="35" || d==="53" || n.includes("ثالث خامس") || e.includes("third fifth") || e.includes("3 5") || n.includes("3 5") || n.includes("5 3")) return "class_3_5";
+  if(s==="class_3_6" || d==="36" || d==="63" || n.includes("ثالث سادس") || e.includes("third sixth") || e.includes("3 6") || n.includes("3 6") || n.includes("6 3")) return "class_3_6";
   if(s==="class_2_4" || d==="24" || d==="42" || n.includes("ثاني رابع") || e.includes("second fourth") || e.includes("2 4") || n.includes("2 4") || n.includes("4 2")) return "class_2_4";
   return s;
 }
@@ -729,27 +732,67 @@ function saveLoginMemory(patch){
 }
 function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
 
+// LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702
+// The student login dropdown must mirror the teacher Classes page, not every old/preloaded class row.
+// When the teacher dashboard loads, it stores the currently visible classes here. The login page uses
+// this exact list first, so deleted/old/preloaded classes do not come back after Logout.
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_v2";
+function eqClassDisplayKey(c){
+  try{
+    const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
+    return canonicalClassId(label || (c&&c.id) || "") || label || String((c&&c.id)||"");
+  }catch(e){ return String((c&& (c.name||c.grade||c.id)) || ""); }
+}
+function eqStoreVisibleLoginClasses(list){
+  try{
+    const out=[]; const seen=new Set();
+    (Array.isArray(list)?list:[]).forEach(function(c){
+      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return;
+      const id=String(c.id||c.classId||"").trim();
+      const name=String(c.name||c.grade||id||"").trim();
+      if(!id || !name) return;
+      const k=eqClassDisplayKey(c);
+      if(seen.has(k)) return;
+      seen.add(k);
+      out.push({id:id,name:name,grade:String(c.grade||"").trim(),updatedAt:Date.now()});
+    });
+    if(out.length) localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out));
+  }catch(e){}
+}
+function eqReadVisibleLoginClasses(){
+  try{
+    const arr=JSON.parse(localStorage.getItem(EQ_ACTIVE_LOGIN_CLASSES_KEY)||"[]");
+    if(!Array.isArray(arr)) return [];
+    const seen=new Set();
+    return arr.filter(function(c){
+      if(!c || !c.id || !c.name) return false;
+      const k=eqClassDisplayKey(c);
+      if(seen.has(k)) return false; seen.add(k); return true;
+    });
+  }catch(e){ return []; }
+}
+
 // LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702
 // Login classes must come from the live Firebase classes/students, not a hard-coded single class.
 // This keeps newly-created classes visible while still preventing old PRELOADED_CLASSES from reviving deleted classes.
 function eqLoginClassIdOf(c){
-  try{ return canonicalClassId((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
+  try{ return String((c&& (c.id||c.classId)) || canonicalClassId((c&& (c.name||c.grade)) || c || "") || ""); }catch(e){ return String((c&& (c.id||c.classId||c.grade||c.name)) || c || ""); }
 }
 function eqFilterLoginClasses(list){
   try{
     const src = Array.isArray(list) ? list : [];
     const seen = new Set();
-    return src.filter(function(c){
-      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return false;
+    const out=[];
+    src.forEach(function(c){
+      if(!c || c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted) return;
       const id = eqLoginClassIdOf(c);
-      if(!id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    }).map(function(c){
-      const id = eqLoginClassIdOf(c) || c.id || c.classId || c.name;
-      const official = (typeof officialClassRow === "function") ? officialClassRow(id) : null;
-      return {...(official||{}), ...c, id:id, name:c.name || (official&&official.name) || c.grade || id, grade:c.grade || (official&&official.grade) || ""};
+      const key = eqClassDisplayKey(c) || id;
+      if(!id || seen.has(key)) return;
+      seen.add(key);
+      const official = (typeof officialClassRow === "function") ? officialClassRow(canonicalClassId(c.name||c.grade||id)) : null;
+      out.push({...(official||{}), ...c, id:id, name:c.name || (official&&official.name) || c.grade || id, grade:c.grade || (official&&official.grade) || ""});
     });
+    return out;
   }catch(e){ return Array.isArray(list) ? list : []; }
 }
 
@@ -2118,9 +2161,13 @@ function Landing({onLogin, prefillQuiz}) {
   useEffect(()=>{
     eqHardCleanLoggedOutUI();
     loadAllData().then(function(d){
-      const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
+      const cached=eqReadVisibleLoginClasses();
+      const live=eqFilterLoginClasses(activeLoginClassesFromData(d));
+      // Use the teacher-visible class cache exactly when available. This prevents old classes
+      // like ثالث أول / ثالث ثالث or accidental legacy rows from appearing in the login list.
+      const active=cached.length ? cached : live;
       setClasses(active);
-      if(f.classId && !active.some(function(c){return sameClassId(c.id,f.classId);})){
+      if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
         const fallback=(active[0]&&active[0].id)||"";
         sf(x=>({...x,classId:fallback}));
         if(fallback) saveLoginMemory({classId:fallback});
@@ -7353,6 +7400,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
   const myClasses=data.classes.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || c.preloaded));
+  useEffect(()=>{ try{ eqStoreVisibleLoginClasses(myClasses); }catch(e){} }, [JSON.stringify(myClasses.map(c=>({id:c.id,name:c.name,grade:c.grade,deleted:c.deleted,status:c.status})))]);
   const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
