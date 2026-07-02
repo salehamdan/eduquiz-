@@ -7587,6 +7587,21 @@ async function adminDeleteClass(cls, students, mode){
 }
 
 
+async function adminDeleteClassTombstoneOnly(cls){
+  const canonical=canonicalClassId(cls&& (cls.id||cls._id||cls.classId||cls.grade||cls.name||cls.className||cls.class)) || String((cls&&(cls.id||cls._id))||"");
+  if(!canonical) return 0;
+  const aliases=adminClassAliases(cls||{id:canonical});
+  const ids=Array.from(new Set([canonical, cls&&cls.id, cls&&cls._id, cls&&cls.name, cls&&cls.grade].concat(aliases))).filter(Boolean);
+  const stamp=new Date().toISOString();
+  const off=officialClassRow(canonical)||{};
+  const base={...(cls||{}),id:canonical,name:(cls&&cls.name)||off.name||canonical,grade:(cls&&cls.grade)||off.grade||"",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,cleanupDeletedAt:stamp,updatedAt:today()};
+  adminRememberDeletedClassIds(ids);
+  try{ await adminBatchDelete("classes", ids.map(function(id){return {id:String(id)};})); }catch(_e){}
+  try{ await adminBatchSet("deletedClasses", ids.map(function(id){return {...base,id:String(id)};})); }catch(_e){ try{ await fsSet("deletedClasses",canonical,base); }catch(__e){} }
+  try{ localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY); localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY); }catch(_e){}
+  return ids.length;
+}
+
 async function adminCleanOldClassData(currentData, currentUser){
   const stamp=new Date().toISOString();
   eqClearOldClassAndStudentCaches();
@@ -7687,24 +7702,44 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function buildPreview(){
     if(scope!=="all"&&!classId){setMsg("اختر الفصل أولاً.");return null;}
-    if(scope==="students"&&selectedStudents.length===0){setMsg("حدد طالبًا واحدًا على الأقل.");return null;}
     if(selectedItemIds.length===0){setMsg("حدد نوع بيانات واحد على الأقل للحذف.");return null;}
     setBusy(true); setProgress(null); setMsg("جاري حساب المعاينة...");
     const ex=await loadExtra();
-    const responses=(data.responses||[]).filter(r=>cleanupStudentMatchesRecord(r,selectedStudents,idSet)||cleanupClassMatchesRecord(r,selectedClassIds));
+
+    // CLEANUP_CLASS_STUDENT_MATCH_FIX_20260702
+    // Do not trust the currently rendered myStudents list only. It can be stale or can miss
+    // imported students saved with class/className/grade instead of classId. For class cleanup,
+    // fetch the real Firebase users and match the selected class through all aliases.
+    async function resolveCleanupStudents(){
+      if(scope==="students") return selectedStudents;
+      const classesToScan = scope==="all" ? (myClasses||[]) : [currentClass||officialClassRow(canonicalClassId(classId))||{id:classId,name:classId,grade:classId}];
+      const found=[];
+      for(const c of classesToScan){
+        try{
+          const rows=await adminFastClassStudents(c, (myStudents||[]));
+          found.push.apply(found, rows||[]);
+        }catch(_e){}
+      }
+      return adminUniqueRows(found).filter(function(st){ return st&&String(st.role||"")==="student"&&!isStudentTombstone(st); });
+    }
+    const freshStudents=await resolveCleanupStudents();
+    if(scope==="students"&&freshStudents.length===0){setMsg("حدد طالبًا واحدًا على الأقل.");setBusy(false);return null;}
+    const freshIdSet=cleanupIdSet(freshStudents);
+
+    const responses=(data.responses||[]).filter(r=>cleanupStudentMatchesRecord(r,freshStudents,freshIdSet)||cleanupClassMatchesRecord(r,selectedClassIds));
     const normalResponses=responses.filter(r=>!cleanupIsProjectResponse(r)&&!cleanupIsZipResponse(r));
     const zipResponses=responses.filter(cleanupIsZipResponse);
     const projectGradeResponses=responses.filter(cleanupIsProjectResponse);
-    const projectSubs=(data.projectSubmissions||[]).filter(s=>cleanupStudentMatchesRecord(s,selectedStudents,idSet)||cleanupClassMatchesRecord(s,selectedClassIds));
-    const readingSubs=(data.readingSubmissions||[]).filter(s=>cleanupStudentMatchesRecord(s,selectedStudents,idSet)||cleanupClassMatchesRecord(s,selectedClassIds));
-    const readingTheory=(data.readingTheoryResponses||[]).filter(s=>cleanupStudentMatchesRecord(s,selectedStudents,idSet)||cleanupClassMatchesRecord(s,selectedClassIds));
-    const readingResets=(data.readingAttemptResets||[]).filter(s=>cleanupStudentMatchesRecord(s,selectedStudents,idSet)||cleanupClassMatchesRecord(s,selectedClassIds));
-    const gb=(ex.gradebook||[]).filter(g=>cleanupStudentMatchesRecord(g,selectedStudents,idSet)||cleanupClassMatchesRecord(g,selectedClassIds));
+    const projectSubs=(data.projectSubmissions||[]).filter(s=>cleanupStudentMatchesRecord(s,freshStudents,freshIdSet)||cleanupClassMatchesRecord(s,selectedClassIds));
+    const readingSubs=(data.readingSubmissions||[]).filter(s=>cleanupStudentMatchesRecord(s,freshStudents,freshIdSet)||cleanupClassMatchesRecord(s,selectedClassIds));
+    const readingTheory=(data.readingTheoryResponses||[]).filter(s=>cleanupStudentMatchesRecord(s,freshStudents,freshIdSet)||cleanupClassMatchesRecord(s,selectedClassIds));
+    const readingResets=(data.readingAttemptResets||[]).filter(s=>cleanupStudentMatchesRecord(s,freshStudents,freshIdSet)||cleanupClassMatchesRecord(s,selectedClassIds));
+    const gb=(ex.gradebook||[]).filter(g=>cleanupStudentMatchesRecord(g,freshStudents,freshIdSet)||cleanupClassMatchesRecord(g,selectedClassIds));
     const logs=(ex.cleanupLogs||[]).filter(l=>scope==="all"?true:cleanupClassMatchesRecord(l,selectedClassIds));
     const wdoc=cleanupWriteDocFromSettings(data.appSettings||[]);
-    const w=cleanupFilterWritingDoc(wdoc,selectedStudents,idSet,selectedClassIds);
+    const w=cleanupFilterWritingDoc(wdoc,freshStudents,freshIdSet,selectedClassIds);
     const rows={
-      students:selectedStudents,
+      students:freshStudents,
       classes:selectedClasses,
       quizResponses:normalResponses,
       gradebookRecords:[...gb],
@@ -7716,8 +7751,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       aiReading:readingTheory,
       cleanupLogs:logs
     };
-    const p={at:new Date().toISOString(),scope,classes:selectedClasses,students:selectedStudents,itemIds:selectedItemIds,rows,writingDocId:wdoc&&(wdoc.id||wdoc._id),counts:Object.fromEntries(CLEANUP_ITEMS.map(it=>[it.id,(rows[it.id]||[]).length]))};
-    setPreview(p); setBusy(false); setMsg("✅ Preview ready. Review counts before deletion."); return p;
+    const p={at:new Date().toISOString(),scope,classes:selectedClasses,students:freshStudents,itemIds:selectedItemIds,rows,writingDocId:wdoc&&(wdoc.id||wdoc._id),counts:Object.fromEntries(CLEANUP_ITEMS.map(it=>[it.id,(rows[it.id]||[]).length]))};
+    setPreview(p); setBusy(false); setMsg("✅ Preview ready. Students found: "+freshStudents.length+". Review counts before deletion."); return p;
   }
   function exportBackup(){
     const p=preview; if(!p){setMsg("اعمل Preview أولاً.");return;}
@@ -7784,16 +7819,19 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       }
       if(selected.has("students")){
         const rows=p.rows.students||[];
-        rows.forEach(st=>adminRememberDeletedStudent(st));
-        const marked=rows.map(st=>({...st,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()}));
-        setProgress({stage:"Deleting selected students",done:progressState.done,total:progressState.total});
-        await adminBatchSet("users",marked);
-        deleted.students=rows.length;
+        setProgress({stage:"Deleting selected students and their linked data",done:progressState.done,total:progressState.total});
+        // Permanent delete, not just marking. This prevents old class rosters from returning later.
+        const purge=await adminPurgeStudentsAndAllDataFast(rows,{onProgress:function(pp){
+          setProgress({stage:pp.stage||"Deleting selected students",done:progressState.done+(pp.done||0),total:Math.max(progressState.total,progressState.done+(pp.total||0))});
+        }});
+        deleted.students=purge.students||rows.length;
+        Object.keys(purge||{}).forEach(function(k){ if(k!=="students") deleted[k]=(deleted[k]||0)+(typeof purge[k]==="number"?purge[k]:0); });
+        progressState.done+=rows.length;
       }
       if(selected.has("classes") && scope!=="students"){
         const rows=p.rows.classes||[];
-        setProgress({stage:"Deleting classes",done:progressState.done,total:progressState.total});
-        for(const c of rows){ await adminDeleteClass(c,p.rows.students||[],selected.has("students")?"classStudents":"classOnly"); }
+        setProgress({stage:"Deleting class records",done:progressState.done,total:progressState.total});
+        for(const c of rows){ await adminDeleteClassTombstoneOnly(c); }
         deleted.classes=rows.length;
       }
       if(selected.has("cleanupLogs")){ deleted.cleanupLogs=await cleanupDeleteRows("cleanupLogs",p.rows.cleanupLogs||[],"Deleting cleanup logs",progressState); }
