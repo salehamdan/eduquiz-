@@ -469,7 +469,8 @@ function normalizeClassRows(rows){
     if(official) map[cid]={...official,...(map[cid]||{}),...c,id:cid,deleted:false};
     else if(c && (c.id||c._id)) map[c.id||c._id]={...c,id:c.id||c._id};
   });
-  ["class_3_1","class_3_2","class_3_3","class_3_4","class_2_4"].forEach(id=>{ if(!deletedOfficial.has(id) && !map[id]) map[id]=officialClassRow(id); });
+  // REAL_CLASSES_ONLY_20260702: do not recreate hard-coded/preloaded classes here.
+  // A class appears only if it exists as an active saved class or is created by import.
   return Object.values(map).filter(function(x){return x && x.deleted!==true && x.status!=="deleted";});
 }
 
@@ -676,7 +677,7 @@ async function fsDel(col, id) {
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
-const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_v1";
+const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v2";
 function eqSaveFastDataCache(d){
   try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
 }
@@ -695,8 +696,11 @@ async function loadAllData() {
   ]);
   const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
   const deletedClassRows=(deletedClasses||[]).map(x=>({...x,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
-  const users = ensureProtectedStudents(mergePreloadedRows([].concat(usersRaw||[], deletedStudentRows), PRELOADED_USERS));
-  const classes = normalizeClassRows(mergePreloadedRows([].concat(classesRaw||[], deletedClassRows), PRELOADED_CLASSES));
+  // REAL_FIREBASE_ROSTER_ONLY_20260702:
+  // Do not merge PRELOADED_USERS / PRELOADED_CLASSES into the live dashboard.
+  // This prevents old counts and old fake classes from flashing on refresh.
+  const users = mergePreloadedRows([].concat(usersRaw||[], deletedStudentRows), []);
+  const classes = normalizeClassRows([].concat(classesRaw||[], deletedClassRows));
   // تحميل AI Key من Firebase تلقائياً إلى localStorage إذا لم يكن موجوداً محلياً
   const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
@@ -716,6 +720,7 @@ function loadSession() { try { return JSON.parse(localStorage.getItem("eq_sessio
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 function eqHardCleanLoggedOutUI(){
   try{
+    ["eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
     ["rp-v11-student-status","rp-floating-button-20260605","rp-v11-panel","w12fab","w12p"].forEach(function(id){var el=document.getElementById(id); if(el) el.remove();});
     var badge=document.getElementById("rp-floating-count"); if(badge) badge.style.display="none";
     try{ localStorage.removeItem("eq_session"); }catch(_e){}
@@ -736,8 +741,8 @@ function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); 
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_v3";
-const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v4";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
@@ -787,15 +792,9 @@ function eqRealActiveClassesFromData(d){
       if(c && !c.preloaded) eqPushUniqueClass(out,seen,c,deletedSet);
     });
 
-    // 2) If active Firebase students exist in a class, show that class even if the class row is missing.
-    const allClasses=Array.isArray(d.classes)?d.classes:[];
-    (Array.isArray(d.firebaseUsers)?d.firebaseUsers:[]).forEach(function(u){
-      if(!u || u.role!=="student" || isStudentTombstone(u) || studentMatchesDeletedSet(u,deletedStudents)) return;
-      const cid=canonicalClassId(u.classId||"");
-      if(!cid || (deletedSet&&(deletedSet.has(cid)||deletedSet.has(u.classId)))) return;
-      const c=allClasses.find(x=>x && (sameClassId(x.id,cid)||sameClassId(x.grade,cid)||sameClassId(x.name,cid))) || officialClassRow(cid) || {id:cid,name:cid,grade:""};
-      eqPushUniqueClass(out,seen,{...c,id:cid},deletedSet);
-    });
+    // 2) Do NOT derive login classes from student classId alone.
+    // That was the cause of fake/old classes such as 3-5 — Third returning.
+    // Import will create a missing real class document when needed.
 
     return out.sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""),"ar"); });
   }catch(e){ return []; }
@@ -2160,10 +2159,9 @@ function Landing({onLogin, prefillQuiz}) {
     eqHardCleanLoggedOutUI();
     loadAllData().then(function(d){
       const live=eqFilterLoginClasses(activeLoginClassesFromData(d));
-      // Use live real classes first. Cache is only a fallback when Firebase cannot load.
+      // Use the teacher-visible class list first. Do not revive all Firebase/old classes on the login page.
       const cached=eqReadVisibleLoginClasses();
-      const active=live.length ? live : cached;
-      if(live.length) eqStoreVisibleLoginClasses(live);
+      const active=cached.length ? cached : live;
       setClasses(active);
       if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
         const fallback=(active[0]&&active[0].id)||"";
@@ -7400,7 +7398,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const realClasses=eqRealActiveClassesFromData(data);
   const myClasses=realClasses.filter(c=>c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || !c.teacherIds.length));
   useEffect(()=>{ try{ eqStoreVisibleLoginClasses(myClasses); }catch(e){} }, [JSON.stringify(myClasses.map(c=>({id:c.id,name:c.name,grade:c.grade,deleted:c.deleted,status:c.status})))]);
-  const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (myClasses.some(c=>c.id===u.classId)||!u.classId)).map(fixAhmedStudent);
+  const myStudents=data.users.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -7689,6 +7687,36 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   async function saveNote(){const ex=data.notes.find(n=>n.teacherId===user.id&&n.studentId===noteModal.id);const id=ex?ex.id:uid();await fsSet("notes",id,{id,teacherId:user.id,studentId:noteModal.id,note:noteText,updatedAt:today()});await reload();setNoteModal(null);}
   async function postAnn(){const id=uid();await fsSet("announcements",id,{id,teacherId:user.id,...ann,createdAt:today()});await reload();setAnnModal(false);setAnn({title:"",text:"",classIds:[]});}
   // ── IMPORT STUDENTS FROM EXCEL/CSV ──
+  function importClassTargetFromCell(raw, classList){
+    const cell=String(raw||"").trim();
+    if(!cell) return null;
+    const norm=normalizeNameText(cell);
+    const canon=canonicalClassId(cell);
+    const existing=(classList||[]).find(function(c){
+      return sameClassId(c.id,canon) || sameClassId(c.grade,canon) || sameClassId(c.name,canon) || normalizeNameText(c.name)===norm || normalizeNameText(c.grade)===norm;
+    });
+    if(existing) return {id:existing.id, name:existing.name, grade:existing.grade||""};
+    // If the Excel class column contains only 1/2/3/4/5/6, treat it as third-secondary section number.
+    // In the user's current roster, class=4 means ثالث رابع.
+    const digits=eqDigits(cell);
+    let id=canon;
+    if(/^\d$/.test(digits)) id="class_3_"+digits;
+    const official=officialClassRow(id);
+    if(official) return {id:official.id, name:official.name, grade:official.grade||""};
+    // Known additional class not present in the old official map.
+    if(id==="class_3_5") return {id:"class_3_5", name:"ثالث خامس", grade:"3-5"};
+    if(id==="class_3_6") return {id:"class_3_6", name:"ثالث سادس", grade:"3-6"};
+    return {id:id, name:cell, grade:""};
+  }
+  async function ensureImportClassExists(target, classList){
+    if(!target || !target.id) return "";
+    const found=(classList||[]).find(function(c){return sameClassId(c.id,target.id)||sameClassId(c.name,target.id)||sameClassId(c.grade,target.id);});
+    if(found) return found.id;
+    const row={id:target.id, name:target.name||target.id, grade:target.grade||"", teacherIds:[user.id], createdAt:today(), active:true, source:"excel-import"};
+    await fsSet("classes", row.id, row);
+    classList.push(row);
+    return row.id;
+  }
   async function importStudents(e){
     const file=e.target.files[0]; if(e.target)e.target.value="";
     if(!file) return;
@@ -7696,9 +7724,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     try {
       const buf=await file.arrayBuffer();
       const wb=XLSX.read(new Uint8Array(buf),{type:"array"});
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""});
       if(!rows.length){setImportMsg("File is empty.");return;}
-      // Detect header columns
       const hdr=rows[0].map(c=>String(c||"").trim().toLowerCase());
       let ci={name:-1,id:-1,cls:-1,email:-1};
       hdr.forEach((h,i)=>{
@@ -7711,23 +7738,41 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       if(!hasHeader){ci={name:0,id:1,cls:2,email:-1};}
       const dataRows=rows.slice(hasHeader?1:0);
       const existing=await fsAll("users");
-      let added=0,skipped=0,dupe=0;
-      const myClassList=data.classes.filter(c=>(c.teacherIds||[]).includes(user.id));
+      const existingBySid={};
+      (existing||[]).forEach(function(u){ const sid=eqDigits(u&&u.studentId); if(sid && !isStudentTombstone(u)) existingBySid[sid]=u; });
+      let classList=(await fsAll("classes")||[]).filter(c=>c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted);
+      let added=0,updated=0,skipped=0,createdClasses=0;
+      const beforeClassCount=classList.length;
       for(const r of dataRows){
         const name=String(r[ci.name]||"").trim();
-        const sid=String(r[ci.id]||"").trim();
+        const sidRaw=String(r[ci.id]||"").trim();
+        const sid=eqDigits(sidRaw)||sidRaw;
         if(!name||!sid){skipped++;continue;}
-        if(existing.find(u=>(u.studentId||"")===sid)){dupe++;continue;}
-        // Match class by name if provided
         let classId="";
-        if(ci.cls>=0){const cn=String(r[ci.cls]||"").trim().toLowerCase();const mc=myClassList.find(c=>c.name.toLowerCase()===cn||((c.grade||"").toLowerCase()===cn));if(mc)classId=mc.id;}
+        if(ci.cls>=0){
+          const target=importClassTargetFromCell(r[ci.cls], classList);
+          if(target){
+            const oldLen=classList.length;
+            classId=await ensureImportClassExists(target, classList);
+            if(classList.length>oldLen) createdClasses++;
+          }
+        }
         const email=ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():"";
-        const nu={id:uid(),role:"student",name,studentId:sid,classId,email,password:"",createdAt:today()};
-        await fsSet("users",nu.id,nu);
-        existing.push(nu); added++;
+        const old=existingBySid[eqDigits(sid)];
+        if(old){
+          const nu={...old,role:"student",name,shortName:(old.shortName||name.split(/\s+/).slice(0,2).join(" ")),studentId:String(sid),classId:classId||old.classId||"",email:email||old.email||"",password:old.password||String(sid),deleted:false,status:"active",updatedAt:today()};
+          await fsSet("users", old.id||("student_"+sid), nu);
+          existingBySid[eqDigits(sid)]=nu;
+          updated++;
+        }else{
+          const nu={id:"student_"+sid,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:String(sid),classId,email,password:String(sid),createdAt:today(),status:"active"};
+          await fsSet("users",nu.id,nu);
+          existingBySid[eqDigits(sid)]=nu;
+          added++;
+        }
       }
       await reload();
-      setImportMsg("✅ Added "+added+" students."+(dupe?" Skipped "+dupe+" already existing.":"")+(skipped?" Skipped "+skipped+" rows missing name/ID.":""));
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+(createdClasses?" · Created classes "+createdClasses:"")+".");
     } catch(err){ setImportMsg("Error: "+(err.message||err)); }
   }
 
