@@ -36,6 +36,15 @@
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
 <!-- CLASS_READD_EMPTY_HARD_DELETE_20260702 -->
+<!-- CLEAR_STALE_DELETE_FIELDS_LOGIN_FIX_20260702 -->
+<script>
+try{
+  Object.keys(localStorage).forEach(function(k){
+    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_fast_data_cache/i.test(k) || k==="eq_users"){ localStorage.removeItem(k); }
+  });
+}catch(e){}
+</script>
+
 <!-- CLASSES_LOGIN_STRICT_SOURCE_20260702 -->
 <script>
 try{
@@ -366,7 +375,15 @@ async function adminRememberDeletedClassRemote(cls){
     await fsSet('classes', canonical, row);
   }catch(e){ console.warn('deleted class archive failed', e&&e.message); }
 }
-function isStudentTombstone(u){ return !!(u && u.role==="student" && (u.deleted===true || u.status==="deleted" || u.hidePreloaded || u.permanentDeleted || u.cleanupDeletedAt || u.adminDeletedAt)); }
+function isStudentTombstone(u){
+  // CLEAR_STALE_DELETE_FIELDS_LOGIN_FIX_20260702
+  // If a student was re-imported, Firestore merge may leave old deletedAt/adminDeletedAt fields.
+  // Explicit active flags must win, so a re-imported student is not blocked as "removed".
+  if(!u || String(u.role||"")!=="student") return false;
+  const explicitlyActive = (u.deleted===false && String(u.status||"").toLowerCase()==="active" && u.hidePreloaded===false && u.permanentDeleted===false);
+  if(explicitlyActive) return false;
+  return !!(u.deleted===true || String(u.status||"").toLowerCase()==="deleted" || u.hidePreloaded===true || u.permanentDeleted===true || u.cleanupDeletedAt || u.adminDeletedAt || u.deletedAt);
+}
 function deletedStudentKeySetFromRows(rows){
   const set=adminDeletedStudentSet();
   (rows||[]).forEach(u=>{ if(isStudentTombstone(u)) adminStudentDeleteKeys(u).forEach(k=>set.add(String(k))); });
@@ -897,13 +914,14 @@ function eqSafeActiveStudentRow(base, sid, classId, name){
   const id="student_"+cleanSid;
   const row={...(base||{}), id, role:"student", name:String(name || (base&&base.name) || "").trim(), shortName:String(name || (base&&base.shortName) || "").trim().split(/\s+/).slice(0,2).join(" "), studentId:cleanSid, classId:canonicalClassId(classId), className:canonicalClassId(classId), class:canonicalClassId(classId), password:(base&&base.password&&String(base.password)!=="deleted")?base.password:cleanSid, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false, preloaded:false, source:"teacher-import", updatedAt:today(), createdAt:(base&&base.createdAt)||today()};
   delete row._id;
-  delete row.deletedAt;
-  delete row.cleanupDeletedAt;
-  delete row.adminDeletedAt;
-  delete row.tombstoneFor;
-  delete row.originalId;
-  delete row.keys;
-  delete row.deletedReason;
+  // Keep these fields as null/empty so Firestore merge clears stale tombstone values.
+  row.deletedAt=null;
+  row.cleanupDeletedAt=null;
+  row.adminDeletedAt=null;
+  row.tombstoneFor="";
+  row.originalId="";
+  row.keys=[];
+  row.deletedReason="";
   Object.keys(row).forEach(k=>{ if(row[k]===undefined) delete row[k]; });
   return row;
 }
@@ -912,7 +930,7 @@ function eqSafeActiveStudentRow(base, sid, classId, name){
 // CLASSES_LOGIN_STRICT_SOURCE_20260702
 // Student Login must mirror the teacher Classes page only.
 // Never rebuild Login classes from old students/users or old localStorage rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v150";
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v151";
 const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_actual_v13_only_3246","eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
@@ -2489,7 +2507,21 @@ function Landing({onLogin, prefillQuiz}) {
     // REIMPORT_REACTIVATE_STUDENT_LOGIN_FIX_20260702:
     // If the teacher imported this ID again as an active Firebase student in the selected class,
     // old deletedStudents/localStorage tombstones must not block login.
-    const activeReimportedStudent = eqActiveFirebaseStudentBySid(d, idDigits || id, f.classId);
+    let activeReimportedStudent = eqActiveFirebaseStudentBySid(d, idDigits || id, f.classId);
+    // If an import merged over a previous tombstone, the raw user may still contain old adminDeletedAt/deletedAt.
+    // Accept it when it is explicitly active and belongs to the selected live class, then repair the document.
+    if(!activeReimportedStudent){
+      const rawMaybe=(firebaseUsers||[]).find(function(x){
+        if(!x || String(x.role||"")!=="student") return false;
+        if(eqDigits(x.studentId||x.id||"")!==idDigits) return false;
+        if(!sameClassId(x.classId||x.className||x.class||"", f.classId)) return false;
+        return x.deleted===false && String(x.status||"").toLowerCase()==="active" && x.hidePreloaded===false && x.permanentDeleted===false;
+      });
+      if(rawMaybe){
+        activeReimportedStudent={...rawMaybe,deletedAt:null,cleanupDeletedAt:null,adminDeletedAt:null,tombstoneFor:"",originalId:"",keys:[],deletedReason:""};
+        try{ await fsSet("users", String(activeReimportedStudent.id||("student_"+idDigits)), activeReimportedStudent); }catch(_repairErr){}
+      }
+    }
     if(!activeReimportedStudent && ((idDigits && (deletedSet.has(idDigits)||deletedSet.has("student_"+idDigits))) || deletedSet.has(id))){
       setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher.");setLoading(false);return;
     }
