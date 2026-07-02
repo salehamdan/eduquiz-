@@ -412,6 +412,24 @@ function studentMatchesDeletedSet(u,set){
   if(!u||!set) return false;
   return adminStudentDeleteKeys(u).some(k=>set.has(String(k)));
 }
+function eqClassRosterTokenForClassId(classId, classRows){
+  try{
+    const canon=canonicalClassId(classId||"");
+    if(!canon) return "";
+    const rows=[].concat(
+      Array.isArray(classRows)?classRows:[],
+      Array.isArray(classRows&&classRows.classes)?classRows.classes:[],
+      Array.isArray(classRows&&classRows.firebaseClasses)?classRows.firebaseClasses:[]
+    );
+    const row=rows.find(function(c){ return c && sameClassId(c.id||c.classId||c.grade||c.name||c.className||c.class, canon); });
+    return String((row&&(row.rosterToken||row.classRosterToken))||"").trim();
+  }catch(e){ return ""; }
+}
+function eqStudentMatchesClassRosterToken(u, classId, classRows){
+  const rt=eqClassRosterTokenForClassId(classId, classRows);
+  if(!rt) return true;
+  return String((u&&(u.classRosterToken||u.rosterToken))||"").trim()===rt;
+}
 function eqActiveFirebaseStudentBySid(data, sid, classId){
   // A current active Firebase user overrides old deletedStudents/local tombstone marks.
   const cleanSid=eqDigits(sid||"");
@@ -423,6 +441,7 @@ function eqActiveFirebaseStudentBySid(data, sid, classId){
     if(isStudentTombstone(u)) return false;
     if(eqDigits(u.studentId||u.id||"")!==cleanSid) return false;
     if(canon && !sameClassId(u.classId||u.className||u.class||"", canon)) return false;
+    if(canon && !eqStudentMatchesClassRosterToken(u, canon, data||{})) return false;
     return true;
   }) || null;
 }
@@ -949,7 +968,7 @@ function eqSafeActiveStudentRow(base, sid, classId, name){
 // CLASSES_LOGIN_STRICT_SOURCE_20260702
 // Student Login must mirror the teacher Classes page only.
 // Never rebuild Login classes from old students/users or old localStorage rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v152_restore_3_2";
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v153_no_auto_delete_roster_token";
 const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_actual_v13_only_3246","eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
@@ -8193,7 +8212,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
     return Array.from(map.values());
   })();
-  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
+  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -8533,7 +8552,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const canon=canonicalClassId(target.id||target.name||target.grade);
     if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return "";
     const off=officialClassRow(canon)||target;
-    const row={id:canon, name:off.name||target.name||canon, grade:off.grade||target.grade||"", teacherIds:[user.id,"GLOBAL"], createdAt:today(), updatedAt:today(), active:true, source:"teacher-created", preloaded:false, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false};
+    const existingClassForImport=[].concat(classList||[], myClasses||[], (data&&data.classes)||[]).find(function(c){return c&&sameClassId(c.id||c.classId||c.grade||c.name, canon);})||{};
+    const keepRosterToken=String(existingClassForImport.rosterToken||existingClassForImport.classRosterToken||"").trim();
+    const row={id:canon, name:off.name||target.name||canon, grade:off.grade||target.grade||"", teacherIds:[user.id,"GLOBAL"], createdAt:existingClassForImport.createdAt||today(), updatedAt:today(), active:true, source:"teacher-created", preloaded:false, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false, ...(keepRosterToken?{rosterToken:keepRosterToken,emptyNewClass:existingClassForImport.emptyNewClass===true}: {})};
     try{ await fsDel("deletedClasses", row.id); }catch(e){}
     try{ await fsSetStrict("classes", row.id, row); }catch(e){ console.warn("ensure class write failed", e); }
     if(classList && !classList.some(c=>sameClassId(c.id,row.id))) classList.push(row);
@@ -8710,6 +8731,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         if(!classId){ skipped++; continue; }
         const base=bySid[sid] || {};
         const row=eqSafeActiveStudentRow({...base,email:(ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():base.email||"")}, sid, classId, name);
+        const rt=eqClassRosterTokenForClassId(classId, [].concat(myClasses||[], (data&&data.classes)||[]));
+        if(rt) row.classRosterToken=rt;
         writeRows.push(row);
         if(base.id||base._id) updated++; else added++;
       }
@@ -8722,11 +8745,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const cleared=hardClearClassFromScreen(targetClassId);
         cleanedOldInTarget=cleared.students||0;
         setImportMsg("Saving new Excel roster to "+((officialClassRow(targetClassId)||{}).name||targetClassId)+"… Old names are blocked from display.");
-        resetInfo=await adminResetClassBeforeImport(targetClassId, writeRows, {onProgress:function(p){
-          const total=p.total||0, done=p.done||0;
-          const pct=total?Math.min(100,Math.round(done*100/total)):0;
-          setImportMsg("⏳ "+(p.stage||"Deleting old class data")+" — "+done+" / "+total+(total?" ("+pct+"%)":""));
-        }});
+        // Do not hard-delete Firebase records automatically during Excel import.
+        // The rosterToken on newly-created empty classes prevents old students from appearing.
+        await adminClearDeletedStudentMarksForRows(writeRows);
+        resetInfo={oldStudents:0, deleted:{}};
       }else{
         await adminClearDeletedStudentMarksForRows(writeRows);
       }
@@ -8853,26 +8875,21 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const existingActive=(myClasses||[]).find(function(c){ return canonicalClassId(c&& (c.id||c.classId||c.grade||c.name))===id; });
     if(existingActive){ alert("الفصل موجود مسبقًا في المنصة."); return; }
     const aliases=Array.from(new Set([id, canon, rawName, rawGrade, official.name, official.grade].filter(Boolean)));
-    // Re-adding a class must create a NEW EMPTY class. Old students/results from a previous year
-    // are hard-deleted first; they must not reappear just because the class name was created again.
-    setAdminBusy("⏳ Cleaning old data for "+official.name+" before creating the new empty class…");
-    try{
-      await adminResetClassBeforeImport(id, [], {onProgress:function(p){
-        const total=p.total||0, done=p.done||0;
-        const pct=total?Math.min(100,Math.round(done*100/total)):0;
-        setAdminBusy("⏳ "+(p.stage||"Cleaning old class data")+" — "+done+" / "+total+(total?" ("+pct+"%)":""));
-      }});
-    }catch(e){ console.warn("old class purge before add failed", e&&e.message); }
-    hardClearClassFromScreen(id);
+    // ADD_CLASS_EMPTY_NO_AUTO_DELETE_20260702
+    // Creating a class must NOT delete any other class or any old Firebase data automatically.
+    // It creates a fresh rosterToken so old students with the same classId are hidden from this new roster
+    // until the teacher imports/adds students into this specific class instance.
+    setAdminBusy("⏳ Creating empty class: "+official.name+"…");
     adminForgetDeletedClassIds(aliases);
     try{ await adminBatchDelete("deletedClasses", aliases.map(function(a){return {id:String(a)};})); }catch(e){ try{ await fsDel("deletedClasses", id); }catch(_e){} }
     try{ await fsDel("deletedClasses", canon); }catch(e){}
-    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,classResetAt:new Date().toISOString()};
+    const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
     await fsSetStrict("classes",id,row);
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
     eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>canonicalClassId(c&& (c.id||c.grade||c.name))!==id), row]);
-    await reload();setAdminBusy("✅ New empty class created: "+official.name); setTimeout(()=>setAdminBusy(""),3500); setClsModal(false);setNewCls({name:"",grade:""});
+    await reload();setAdminBusy("✅ Empty class created: "+official.name+". No students were deleted."); setTimeout(()=>setAdminBusy(""),3500); setClsModal(false);setNewCls({name:"",grade:""});
   }
 
   async function editClass(cls){
@@ -8895,12 +8912,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(existing){
       if(!window.confirm("This Student ID already exists: "+existing.name+" in "+((data.classes||[]).find(c=>c.id===existing.classId)?.name||"No class")+".\nMove this existing student to "+cls.name+" instead of creating a duplicate?")){ setAddStuMsg("Cancelled. No duplicate was created."); return; }
       setAddStuMsg("⏳ Moving existing student... please wait.");
-      await fsSet("users",existing.id||existing._id,{...existing,id:existing.id||existing._id,classId:cls.id,updatedAt:today()});
+      await fsSet("users",existing.id||existing._id,{...existing,id:existing.id||existing._id,classId:cls.id,classRosterToken:(cls.rosterToken||""),updatedAt:today()});
       setAddStuMsg("✅ Existing student moved to this class."); await reload(); setTimeout(()=>setAddStuModal(null),600); return;
     }
     const id="student_"+sid;
     setAddStuMsg("⏳ Adding student... please wait.");
-    await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,password:pass||sid,createdAt:today()});
+    await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,classRosterToken:(cls.rosterToken||""),password:pass||sid,createdAt:today()});
     setAddStuMsg("✅ Student added."); await reload(); setTimeout(()=>setAddStuModal(null),600);
   }
   async function deleteClass(cls){
