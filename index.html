@@ -7323,6 +7323,22 @@ async function adminPurgeClassStudentsExceptFast(classId, keepSidSet, opts){
   del.purged=remove.length;
   return del;
 }
+async function adminPurgeClassStudentsExceptDocIdsFast(classId, keepDocIdSet, opts){
+  const canon=canonicalClassId(classId);
+  if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return {purged:0, duplicateDocs:0};
+  const rows=await adminFastClassStudents({id:canon,name:(officialClassRow(canon)||{}).name,grade:(officialClassRow(canon)||{}).grade}, []);
+  const keep=new Set(Array.from(keepDocIdSet||[]).map(x=>String(x||"")));
+  const remove=rows.filter(function(st){
+    const sid=eqDigits(st.studentId||st.id||st._id||"");
+    const docId=String(st.id||st._id||(sid?"student_"+sid:""));
+    return docId && !keep.has(docId);
+  });
+  if(!remove.length) return {purged:0, duplicateDocs:0};
+  const del=await adminPurgeStudentsAndAllDataFast(remove, opts||{});
+  del.purged=remove.length;
+  del.duplicateDocs=remove.length;
+  return del;
+}
 async function adminFastClassStudents(cls, fallbackStudents){
   const aliases=adminClassAliases(cls);
   const tasks=[];
@@ -7651,6 +7667,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [editingQuiz,setEditingQuiz]=useState(null);
   const [importMsg,setImportMsg]=useState("");
   const [localStudentPatch,setLocalStudentPatch]=useState([]);
+  const [resettingClassId,setResettingClassId]=useState("");
   const [importTargetClass,setImportTargetClass]=useState("excel");
   const [moveFromId,setMoveFromId]=useState("3401"),[moveToId,setMoveToId]=useState("3435"),[moveTargetClass,setMoveTargetClass]=useState("");
   const [editStu,setEditStu]=useState(null);
@@ -7695,7 +7712,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
     return Array.from(map.values());
   })();
-  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
+  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class))).map(fixAhmedStudent);
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -8110,7 +8127,15 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   async function importStudents(e){
     const file=e.target.files&&e.target.files[0]; if(!file)return;
-    setImportMsg("Importing students…");
+    const preTarget=(importTargetClass && importTargetClass!=="excel") ? canonicalClassId(importTargetClass) : "";
+    if(preTarget && EQ_ACTUAL_CLASS_IDS.includes(preTarget)){
+      setResettingClassId(preTarget);
+      removeStudentsFromClassLocally(preTarget);
+      setFilterCls(preTarget);
+      setImportMsg("Resetting "+((officialClassRow(preTarget)||{}).name||preTarget)+" on screen, then importing…");
+    }else{
+      setImportMsg("Importing students…");
+    }
     try{
       const buf=await file.arrayBuffer();
       const wb=XLSX.read(buf,{type:"array"});
@@ -8164,17 +8189,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       setImportTargetClass(writeRows[0].classId);
       setMoveTargetClass(writeRows[0].classId);
       setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Old students removed from screen: "+cleanedOldInTarget+". Cleaning old Firebase data in background…":""));
+      setResettingClassId("");
       if(targetClassId && keepSet){
+        const keepDocIds=new Set(writeRows.map(r=>String(r.id||("student_"+eqDigits(r.studentId||"")))));
         (async function(){
           try{
-            const purgeRes=await adminPurgeClassStudentsExceptFast(targetClassId, keepSet);
+            const purgeRes=await adminPurgeClassStudentsExceptDocIdsFast(targetClassId, keepDocIds);
             const n=purgeRes&&purgeRes.purged?purgeRes.purged:0;
-            if(n) setImportMsg(prev=>String(prev||"")+" ✅ Old Firebase records deleted: "+n+".");
+            if(n) setImportMsg(prev=>String(prev||"")+" ✅ Old duplicate Firebase student records deleted: "+n+".");
           }catch(cleanErr){ console.warn("background class cleanup failed", cleanErr); setImportMsg(prev=>String(prev||"")+" ⚠️ Background old-data cleanup failed: "+(cleanErr.message||cleanErr)); }
         })();
       }
       // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
-    }catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
+    }catch(err){ setResettingClassId(""); setImportMsg("❌ Import failed: "+(err.message||err)); }
     try{ e.target.value=""; }catch(_e){}
   }
 
@@ -8334,6 +8361,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     // Important: update the UI first. Do not leave stale class students visible until Firebase finishes.
     const removedNow=(mode==="classOnly")?0:removeStudentsFromClassLocally(classId);
     if(mode!=="classOnly"){
+      setResettingClassId(classId);
       setFilterCls(classId);
       setAdminBusy("✅ Removed "+removedNow+" students from the screen. Firebase delete is running in background…");
     }else{
@@ -8356,11 +8384,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
           }
         }catch(_e){}
+        setResettingClassId("");
         setAdminBusy("✅ Firebase delete finished. "+JSON.stringify(res));
         // Do not force a foreground reload; it can re-show stale cached data. Refresh silently later.
         setTimeout(function(){ reload().catch(function(){}); }, 700);
         setTimeout(()=>setAdminBusy(""),4000);
-      }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
+      }catch(e){ setResettingClassId(""); setAdminBusy("❌ Delete failed: "+(e.message||e)); }
     })();
   }
   async function deleteStudent(st){
