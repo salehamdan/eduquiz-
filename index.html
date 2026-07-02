@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- CLASS_DELETE_IMPORT_NO_STALE_UI_20260702 -->
 <!-- CLASS_DATA_CLEAN_DELETE_FAST_20260702 -->
 <!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
 <!-- LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702 -->
@@ -8057,6 +8058,43 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     }catch(e){ console.warn("merge local users failed", e); }
   }
 
+  function removeStudentsFromClassLocally(classId){
+    const canon=canonicalClassId(classId);
+    if(!canon) return 0;
+    const stamp=new Date().toISOString();
+    const rows=[].concat(Array.isArray(data&&data.users)?data.users:[], Array.isArray(localStudentPatch)?localStudentPatch:[])
+      .filter(st=>st && st.role==="student" && st.deleted!==true && st.status!=="deleted" && sameClassId(st.classId||st.className||st.class||"", canon));
+    const seen=new Set();
+    const tombs=[];
+    rows.forEach(function(st){
+      const sid=eqDigits(st.studentId||st.id||st._id||"");
+      const id=sid?"student_"+sid:String(st.id||st._id||uid());
+      if(seen.has(id)) return;
+      seen.add(id);
+      const t={...st,id:id,role:"student",studentId:sid||st.studentId||"",classId:canon,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,updatedAt:today()};
+      delete t._id;
+      Object.keys(t).forEach(function(k){ if(t[k]===undefined) delete t[k]; });
+      tombs.push(t);
+    });
+    try{
+      if(data && Array.isArray(data.users)){
+        data.users=data.users.filter(st=>!(st && st.role==="student" && sameClassId(st.classId||st.className||st.class||"", canon)));
+      }
+    }catch(_e){}
+    try{
+      setLocalStudentPatch(function(prev){
+        const out=(Array.isArray(prev)?prev:[]).filter(st=>!(st && st.role==="student" && sameClassId(st.classId||st.className||st.class||"", canon)));
+        return out.concat(tombs);
+      });
+    }catch(_e){}
+    try{
+      const arr=JSON.parse(localStorage.getItem("eq_users")||"[]");
+      if(Array.isArray(arr)) localStorage.setItem("eq_users", JSON.stringify(arr.filter(st=>!(st && st.role==="student" && sameClassId(st.classId||st.className||st.class||"", canon)))));
+    }catch(_e){}
+    return tombs.length;
+  }
+
+
   function mergeWrittenClassesIntoLocal(rows){
     try{
       if(!Array.isArray(rows)) return;
@@ -8114,16 +8152,27 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }
       if(!writeRows.length){ setImportMsg("No valid students to import. تأكد من الأعمدة Name و ID واختر الفصل الصحيح."); return; }
       let cleanedOldInTarget=0;
+      let keepSet=null;
       if(targetClassId){
-        const keepSet=new Set(writeRows.map(r=>eqDigits(r.studentId||r.id||""))); 
-        { const purgeRes=await adminPurgeClassStudentsExceptFast(targetClassId, keepSet); cleanedOldInTarget=purgeRes.purged||0; }
+        keepSet=new Set(writeRows.map(r=>eqDigits(r.studentId||r.id||"")));
+        // Remove stale students from the screen immediately, before Firebase cleanup finishes.
+        cleanedOldInTarget=removeStudentsFromClassLocally(targetClassId);
       }
       await adminBatchSetMergeQuick("users", writeRows, 20000);
       mergeWrittenUsersIntoLocal(writeRows);
       setFilterCls(writeRows[0].classId);
       setImportTargetClass(writeRows[0].classId);
       setMoveTargetClass(writeRows[0].classId);
-      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Deleted old students and their old data from this class: "+cleanedOldInTarget+".":""));
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Old students removed from screen: "+cleanedOldInTarget+". Cleaning old Firebase data in background…":""));
+      if(targetClassId && keepSet){
+        (async function(){
+          try{
+            const purgeRes=await adminPurgeClassStudentsExceptFast(targetClassId, keepSet);
+            const n=purgeRes&&purgeRes.purged?purgeRes.purged:0;
+            if(n) setImportMsg(prev=>String(prev||"")+" ✅ Old Firebase records deleted: "+n+".");
+          }catch(cleanErr){ console.warn("background class cleanup failed", cleanErr); setImportMsg(prev=>String(prev||"")+" ⚠️ Background old-data cleanup failed: "+(cleanErr.message||cleanErr)); }
+        })();
+      }
       // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
     }catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
     try{ e.target.value=""; }catch(_e){}
@@ -8275,29 +8324,44 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const classId=canonicalClassId(cls&& (cls.id||cls.classId||cls.grade||cls.name));
     const classAliasSet=new Set(adminClassAliases(cls).map(canonicalClassId));
     const visibleStuds = myStudents.filter(u=>u.role==="student" && !u.deleted && classAliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
-    const choice=prompt("Delete class: "+cls.name+"\nVisible students: "+visibleStuds.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete students in this class only (keep class)\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","2");
+    const choice=prompt("Delete class: "+cls.name+"\nVisible students: "+visibleStuds.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete students + their data in this class (keep class)\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","2");
     if(!choice)return;
     const modeMap={"1":"classOnly","2":"studentsOnly","3":"classStudentsData"}; const mode=modeMap[String(choice).trim()];
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
-    try{
-      setAdminBusy("⏳ Deleting... please keep this page open.");
-      let res={};
-      if(mode==="studentsOnly"){
-        const n=await adminDeleteClassStudentsFastByClassId(cls,false);
-        res={studentsDeleted:n, classKept:classId};
-      }else{
-        const liveStuds=await adminFastClassStudents(cls, visibleStuds);
-        res=await adminDeleteClass(cls,liveStuds,mode==="classOnly"?"classOnly":"classStudentsData");
-      }
-      setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
-      try{ if(data&&Array.isArray(data.users)) data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class,classId)); }catch(_e){}
-      setAdminBusy("✅ Done. "+JSON.stringify(res));
-      // Update the screen immediately and refresh in background; do not leave loading for minutes.
-      reload().catch(function(){});
-      setTimeout(()=>setAdminBusy(""),3500);
-    }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
+
+    // Important: update the UI first. Do not leave stale class students visible until Firebase finishes.
+    const removedNow=(mode==="classOnly")?0:removeStudentsFromClassLocally(classId);
+    if(mode!=="classOnly"){
+      setFilterCls(classId);
+      setAdminBusy("✅ Removed "+removedNow+" students from the screen. Firebase delete is running in background…");
+    }else{
+      setAdminBusy("⏳ Moving students out of class in Firebase…");
+    }
+
+    (async function(){
+      try{
+        let res={};
+        if(mode==="studentsOnly"){
+          const n=await adminDeleteClassStudentsFastByClassId(cls,true);
+          res={studentsAndDataDeleted:n, classKept:classId};
+        }else{
+          const liveStuds=await adminFastClassStudents(cls, visibleStuds);
+          res=await adminDeleteClass(cls,liveStuds,mode==="classOnly"?"classOnly":"classStudentsData");
+        }
+        try{
+          if(mode!=="classOnly"){
+            if(data&&Array.isArray(data.users)) data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class,classId));
+            setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
+          }
+        }catch(_e){}
+        setAdminBusy("✅ Firebase delete finished. "+JSON.stringify(res));
+        // Do not force a foreground reload; it can re-show stale cached data. Refresh silently later.
+        setTimeout(function(){ reload().catch(function(){}); }, 700);
+        setTimeout(()=>setAdminBusy(""),4000);
+      }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
+    })();
   }
   async function deleteStudent(st){
     const choice=prompt("Delete student: "+st.name+" #"+(st.studentId||"")+"\n\nType one option number:\n1 = Remove from class only\n2 = Delete student only\n3 = Delete student + all results\n\nFor safety, type 1, 2, or 3:","1");
