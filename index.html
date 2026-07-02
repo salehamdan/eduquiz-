@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- CLASS_IMPORT_PERSISTENT_HARD_RESET_20260702 -->
 <!-- CLASS_DELETE_IMPORT_NO_STALE_UI_20260702 -->
 <!-- CLASS_DATA_CLEAN_DELETE_FAST_20260702 -->
 <!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
@@ -707,7 +708,7 @@ async function fsDel(col, id) {
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
-const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v3_classes_final";
+const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v4_no_stale_students";
 function eqSaveFastDataCache(d){
   try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
 }
@@ -724,7 +725,18 @@ async function loadAllData() {
   const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
-  const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
+  // ACTIVE_TOMBSTONE_REIMPORT_FIX_20260702:
+  // If a student was deleted in an earlier year and then imported again with the same ID,
+  // the old deletedStudents tombstone must NOT override the new active users/student_xxxx doc.
+  const activeUserKeySet=new Set();
+  (usersRaw||[]).forEach(function(u){
+    if(u && String(u.role||"")==="student" && !isStudentTombstone(u)){
+      adminStudentDeleteKeys(u).forEach(function(k){ if(k) activeUserKeySet.add(String(k)); });
+    }
+  });
+  const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true})).filter(function(x){
+    return !adminStudentDeleteKeys(x).some(function(k){ return activeUserKeySet.has(String(k)); });
+  });
   const deletedClassRows=(deletedClasses||[]).map(x=>({...x,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
   // REAL_FIREBASE_ROSTER_ONLY_20260702:
   // Do not merge PRELOADED_USERS / PRELOADED_CLASSES into the live dashboard.
@@ -7167,6 +7179,43 @@ async function adminBatchSetMergeQuick(col, rows, timeoutMs){
   if(!timeoutMs) return work;
   return await Promise.race([work, new Promise(function(_,reject){setTimeout(function(){reject(new Error("Firestore write timeout after "+timeoutMs+"ms"));}, timeoutMs);})]);
 }
+async function adminClearDeletedStudentMarksForRows(rows){
+  rows=(rows||[]).filter(Boolean);
+  if(!rows.length) return 0;
+  const keySet=new Set();
+  rows.forEach(function(r){ adminStudentDeleteKeys(r).forEach(function(k){ if(k) keySet.add(String(k)); }); });
+  if(!keySet.size) return 0;
+  const docs=[];
+  keySet.forEach(function(k){ docs.push({id:k}); const sid=eqDigits(k); if(sid) docs.push({id:"student_"+sid}); });
+  try{
+    const marks=await fsAll("deletedStudents").catch(function(){return [];});
+    (marks||[]).forEach(function(m){
+      if(adminStudentDeleteKeys(m).some(function(k){return keySet.has(String(k));})){ docs.push({id:String(m.id||m._id||"")}); }
+    });
+  }catch(_e){}
+  try{
+    const n=await adminBatchDelete("deletedStudents", adminUniqueRows(docs.filter(function(x){return x&&x.id;})));
+    return n||0;
+  }catch(e){ console.warn("clear deleted student marks failed", e&&e.message); return 0; }
+}
+
+async function adminResetClassBeforeImport(classId, newRows, opts){
+  opts=opts||{};
+  const canon=canonicalClassId(classId);
+  if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return {oldStudents:0, deleted:{}};
+  const cls=officialClassRow(canon)||{id:canon,name:canon};
+  let oldRows=[];
+  try{ oldRows=await adminFastClassStudents(cls, []); }catch(e){ oldRows=[]; }
+  // Also remove deleted/tombstone markers for students being re-imported, otherwise they disappear after refresh.
+  await adminClearDeletedStudentMarksForRows(newRows||[]);
+  let deleted={};
+  if(oldRows.length){
+    deleted=await adminPurgeStudentsAndAllDataFast(oldRows, opts);
+  }
+  await adminClearDeletedStudentMarksForRows(newRows||[]);
+  return {oldStudents:oldRows.length, deleted:deleted};
+}
+
 function adminStudentFastTokens(st){
   const set=new Set();
   if(!st) return [];
@@ -8054,7 +8103,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           return Array.from(map.values());
         });
       }catch(_stateErr){}
+      const liveKeySet=new Set();
+      cleanedRows.forEach(function(clean){ adminStudentDeleteKeys(clean).forEach(function(k){ if(k) liveKeySet.add(String(k)); }); });
+      if(data && Array.isArray(data.deletedStudents)){
+        data.deletedStudents=data.deletedStudents.filter(function(ds){ return !adminStudentDeleteKeys(ds).some(function(k){return liveKeySet.has(String(k));}); });
+      }
       if(data && Array.isArray(data.users)){
+        data.users=data.users.filter(function(u){
+          if(!isStudentTombstone(u)) return true;
+          return !adminStudentDeleteKeys(u).some(function(k){return liveKeySet.has(String(k));});
+        });
         const byId=new Map(data.users.map((u,i)=>[String(u.id||u._id||""),i]));
         cleanedRows.forEach(function(clean){
           if(!clean) return;
@@ -8177,30 +8235,26 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }
       if(!writeRows.length){ setImportMsg("No valid students to import. تأكد من الأعمدة Name و ID واختر الفصل الصحيح."); return; }
       let cleanedOldInTarget=0;
-      let keepSet=null;
+      let resetInfo=null;
       if(targetClassId){
-        keepSet=new Set(writeRows.map(r=>eqDigits(r.studentId||r.id||"")));
-        // Remove stale students from the screen immediately, before Firebase cleanup finishes.
+        // Remove stale students from the screen immediately, then hard-reset old Firebase records
+        // before writing the new Excel roster. This prevents old names/grades from returning after refresh.
         cleanedOldInTarget=removeStudentsFromClassLocally(targetClassId);
+        setImportMsg("Resetting old "+((officialClassRow(targetClassId)||{}).name||targetClassId)+" data, then saving the new Excel roster…");
+        resetInfo=await adminResetClassBeforeImport(targetClassId, writeRows, {onProgress:function(){}});
+      }else{
+        await adminClearDeletedStudentMarksForRows(writeRows);
       }
       await adminBatchSetMergeQuick("users", writeRows, 20000);
+      await adminClearDeletedStudentMarksForRows(writeRows);
       mergeWrittenUsersIntoLocal(writeRows);
       setFilterCls(writeRows[0].classId);
       setImportTargetClass(writeRows[0].classId);
       setMoveTargetClass(writeRows[0].classId);
-      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Old students removed from screen: "+cleanedOldInTarget+". Cleaning old Firebase data in background…":""));
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Old students removed from screen: "+cleanedOldInTarget+".":"")+(resetInfo&&resetInfo.oldStudents?" Old Firebase class students/data reset: "+resetInfo.oldStudents+".":""));
       setResettingClassId("");
-      if(targetClassId && keepSet){
-        const keepDocIds=new Set(writeRows.map(r=>String(r.id||("student_"+eqDigits(r.studentId||"")))));
-        (async function(){
-          try{
-            const purgeRes=await adminPurgeClassStudentsExceptDocIdsFast(targetClassId, keepDocIds);
-            const n=purgeRes&&purgeRes.purged?purgeRes.purged:0;
-            if(n) setImportMsg(prev=>String(prev||"")+" ✅ Old duplicate Firebase student records deleted: "+n+".");
-          }catch(cleanErr){ console.warn("background class cleanup failed", cleanErr); setImportMsg(prev=>String(prev||"")+" ⚠️ Background old-data cleanup failed: "+(cleanErr.message||cleanErr)); }
-        })();
-      }
-      // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
+      try{ localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY); }catch(_e){}
+      // UI is updated immediately from the saved rows. No foreground reload here.
     }catch(err){ setResettingClassId(""); setImportMsg("❌ Import failed: "+(err.message||err)); }
     try{ e.target.value=""; }catch(_e){}
   }
@@ -9184,7 +9238,8 @@ function App() {
       const sess=loadSession();
       // Show cached dashboard immediately when available, then refresh Firebase in the background.
       const cached=eqLoadFastDataCache();
-      if(cached && !data){
+      const useCachedStartup = cached && !data && !(sess && String(sess.role||"")!=="student");
+      if(useCachedStartup){
         try{
           setData(cached);
           if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase());if(cq)setDirectQuiz(cq);}
