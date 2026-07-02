@@ -1542,13 +1542,16 @@ function rpHasAnyAudio(sub){ return !!(sub && (sub.audioUrl || sub.audioDataUrl 
 
 // RP155: Stable teacher audio player. It plays outside RP cards so live refresh/re-render cannot cut the audio.
 async function rpTeacherStableAudioSrc(sub, explicitSrc){
-  if(explicitSrc) return explicitSrc;
-  if(!sub) return "";
-  if(sub.audioDataUrl) return sub.audioDataUrl;
-  if(sub.audioUrl) return sub.audioUrl;
-  if(sub.audioChunked && sub.audioChunkCount && typeof rpResolveAudioDataUrl==="function"){
-    try{ return await rpResolveAudioDataUrl(sub); }catch(e){ console.warn("RP155 chunk audio resolve failed", e); }
+  // RP156: prefer the full saved recording over the button blob URL.
+  // Some old cards build a short/stale blob URL first; that is why playback stopped after about one second.
+  if(sub){
+    if(sub.audioChunked && sub.audioChunkCount && typeof rpResolveAudioDataUrl==="function"){
+      try{ const full=await rpResolveAudioDataUrl(sub); if(full) return full; }catch(e){ console.warn("RP156 chunk audio resolve failed", e); }
+    }
+    if(sub.audioDataUrl) return sub.audioDataUrl;
+    if(sub.audioUrl) return sub.audioUrl;
   }
+  if(explicitSrc) return explicitSrc;
   return "";
 }
 window.rpTeacherPlayAudio = async function(sub, explicitSrc){
@@ -10195,8 +10198,28 @@ document.addEventListener("click", function(e){
   }
 
   function rpMetricValue(r,k){
+    // RP156: if a record already saved an old fluency value (e.g. 82) but the actual
+    // word analysis is perfect, show the corrected fluency immediately. Re-analyzing
+    // will also persist the new value.
+    if(k==="fluency" && rpPerfectReadingRecord(r)) return 100;
     const v=rpMetricFromSubmission(r,k);
     return v===null?"":v;
+  }
+  function rpPerfectReadingRecord(r){
+    try{
+      if(!r) return false;
+      const acc=Number(r.accuracy ?? (r.analysis&&r.analysis.accuracy));
+      const miss=Number(r.mistakes ?? r.mistakeCount ?? (r.analysis&&r.analysis.mistakes) ?? (r.analysis&&r.analysis.mistakeCount));
+      const cw=Number(r.correctWords ?? (r.analysis&&r.analysis.correctWords));
+      const tw=Number(r.totalWords ?? (r.analysis&&r.analysis.totalWords));
+      const missingArr=(r.missing || (r.analysis&&r.analysis.missing) || []);
+      const extraArr=(r.extra || (r.analysis&&r.analysis.extra) || []);
+      const repeatedArr=(r.repeated || (r.analysis&&r.analysis.repeated) || []);
+      const arrOk=(!Array.isArray(missingArr)||missingArr.length===0) && (!Array.isArray(extraArr)||extraArr.length===0) && (!Array.isArray(repeatedArr)||repeatedArr.length===0);
+      if(Number.isFinite(acc) && acc>=99 && (miss===0 || !Number.isFinite(miss)) && arrOk) return true;
+      if(Number.isFinite(cw) && Number.isFinite(tw) && tw>0 && cw>=tw && arrOk) return true;
+      return false;
+    }catch(e){return false;}
   }
   function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted")); }
   function isRejected(r){ return !!(r && r.status==="rejected"); }
@@ -11680,6 +11703,79 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
 
 <!-- BUILD_READING_MODE_CHOICE_NORMAL_DEFAULT_20260629 -->
 <!-- BUILD_PROJECTS_V1_20260629 -->
+
+
+<!-- RP156_ROBUST_TEACHER_AUDIO_STARTUP_PANEL_FLUENCY_DISPLAY_FIX -->
+<script>
+(function(){
+  if(window.__rp156RobustPatchStarted) return;
+  window.__rp156RobustPatchStarted=true;
+  const RP_KEY="rp_attempt_records_v11";
+  function readJSON(k,f){try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;}}
+  function sess(){try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};}}
+  function isTeacher(){try{const u=sess(); const r=String(u.role||u.type||"").toLowerCase(); const t=(document.body&&document.body.innerText)||""; return r.includes("teacher")||t.includes("TEACHER DASHBOARD")||t.includes("Teacher Dashboard")||t.includes("+ Quiz")||(t.includes("Classes")&&t.includes("Students"));}catch(e){return false;}}
+  function isChunk(r){return !!(r&&(r.source==="rp_audio_chunk"||String(r.id||"").includes("_chunk_")));}
+  function isWaiting(r){try{if(!r||isChunk(r)||r.deleted===true||r.hidden===true)return false; const v=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus,r.analysisStatus].map(x=>String(x||"").toLowerCase()).join(" "); if(/accepted|approved|rejected|retake|deleted/.test(v)) return false; return /submitted|pending|waiting|queued|analyz/.test(v)||!!(r.audioUrl||r.audioDataUrl||r.audioChunked||r.audioId);}catch(e){return false;}}
+  function records(){const a=[]; try{if(Array.isArray(window.__rpLiveRecords)) a.push(...window.__rpLiveRecords);}catch(e){} try{const local=readJSON(RP_KEY,[]); if(Array.isArray(local)) a.push(...local);}catch(e){} const m=new Map(); a.forEach(r=>{if(r&&r.id&&!isChunk(r))m.set(String(r.id),Object.assign({},m.get(String(r.id))||{},r));}); return Array.from(m.values());}
+  // Store what the live listener receives so the startup panel and player use the same live source as RP.
+  function wrapMerge(){try{if(window.__rp156WrappedMerge||typeof window.rpV11MergeCloudRecords!=="function")return; const old=window.rpV11MergeCloudRecords; window.rpV11MergeCloudRecords=function(remote){const out=old.apply(this,arguments); try{window.__rpLiveRecords=Array.isArray(out)?out:(Array.isArray(remote)?remote:[]);}catch(e){} return out;}; window.__rp156WrappedMerge=true;}catch(e){}}
+  setInterval(wrapMerge,500); setTimeout(wrapMerge,300);
+  async function loadChunks(r){
+    try{
+      const n=Number(r&&r.audioChunkCount)||0; if(!n)return"";
+      const sid=String(r.id||r.submissionId||""); if(!sid)return"";
+      const parts=[];
+      for(let i=0;i<n;i++){
+        let d="";
+        try{d=localStorage.getItem("__rp_audio_chunk__"+sid+"__"+i)||"";}catch(e){}
+        if(!d && typeof db!=="undefined"&&db&&db.collection){try{const doc=await db.collection("readingSubmissions").doc("__rp_audio_chunk__"+sid+"__"+i).get(); if(doc.exists){const row=doc.data()||{}; d=String(row.data||"");}}catch(e){}}
+        if(!d)return""; parts.push(d);
+      }
+      return parts.join("");
+    }catch(e){return"";}
+  }
+  function findRec(id){return records().find(r=>String(r.id)===String(id))||null;}
+  window.rpTeacherPlayAudioStable156=async function(idOrRec, explicit){
+    const r=(idOrRec&&typeof idOrRec==="object")?idOrRec:findRec(idOrRec);
+    let src="";
+    if(r&&r.audioChunked&&r.audioChunkCount) src=await loadChunks(r);
+    if(!src&&r&&r.audioDataUrl) src=r.audioDataUrl;
+    if(!src&&r&&r.audioUrl) src=r.audioUrl;
+    if(!src&&explicit) src=explicit;
+    if(!src){alert("لا يوجد ملف صوتي كامل لهذا التسجيل.");return;}
+    let a=window.__rpTeacherAudioPlayer156;
+    if(!a){a=new Audio(); a.controls=true; a.preload="auto"; a.style.cssText="position:fixed;left:12px;bottom:12px;z-index:2147483647;width:min(380px,94vw);background:white;border:2px solid #2563eb;border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.35)"; document.body.appendChild(a); window.__rpTeacherAudioPlayer156=a;}
+    a.onended=null; a.onerror=function(){console.warn("RP156 audio error", a.error);};
+    if(a.src!==src){a.pause(); a.removeAttribute("src"); a.load(); a.src=src;}
+    a.style.display="block"; a.currentTime=0;
+    try{await a.play();}catch(e){console.warn("RP156 play failed",e); alert("اضغط زر التشغيل مرة أخرى إذا منع المتصفح التشغيل.");}
+  };
+  document.addEventListener("click",function(e){
+    const btn=e.target&&e.target.closest&&e.target.closest("[data-play]");
+    if(!btn) return;
+    e.preventDefault(); e.stopPropagation(); if(e.stopImmediatePropagation)e.stopImmediatePropagation();
+    const id=btn.getAttribute("data-play"); const src=btn.getAttribute("data-audio-src")||"";
+    window.rpTeacherPlayAudioStable156(id,src);
+  },true);
+  function recName(r){return String((r&&(r.studentName||r.name||r.studentFullName))||"Student").trim()||"Student";}
+  function recSid(r){return String((r&&(r.studentNumber||r.studentId||r.sid))||"").trim();}
+  function showPanel(){try{
+    if(!isTeacher()) return;
+    const waiting=records().filter(isWaiting).sort((a,b)=>String(b.createdAt||b.submittedAt||b.updatedAt||"").localeCompare(String(a.createdAt||a.submittedAt||a.updatedAt||"")));
+    let box=document.getElementById("rp-startup-pending-panel")||document.getElementById("rp156-startup-pending-panel");
+    if(!waiting.length){if(box)box.remove();return;}
+    if(!box){box=document.createElement("div"); box.id="rp156-startup-pending-panel"; box.style.cssText="position:fixed;left:14px;top:72px;z-index:2147483646;width:min(370px,94vw);background:#fff;border:2px solid #f59e0b;border-radius:18px;box-shadow:0 14px 35px rgba(15,23,42,.25);padding:12px;font-family:system-ui;direction:rtl"; document.body.appendChild(box);}
+    const rows=waiting.slice(0,5).map(r=>'<div style="padding:6px 0;border-top:1px solid #fde68a;color:#334155;font-size:12px;font-weight:800">🎙️ '+recName(r)+(recSid(r)?' — '+recSid(r):'')+'</div>').join('');
+    const more=waiting.length>5?'<div style="font-size:11px;color:#92400e;font-weight:900;margin-top:4px">+'+(waiting.length-5)+' تسجيلات أخرى</div>':'';
+    box.innerHTML='<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;direction:ltr"><button id="rp156-startup-close" type="button" style="border:0;background:#64748b;color:white;border-radius:9px;width:28px;height:28px;font-weight:900">×</button><div style="text-align:right;direction:rtl"><div style="font-size:15px;font-weight:1000;color:#92400e">تسجيلات RP منتظرة: '+waiting.length+'</div><div style="font-size:11px;color:#64748b;font-weight:800">لوحة التسجيلات الجديدة</div></div></div>'+rows+more+'<button id="rp156-startup-open" type="button" style="width:100%;margin-top:9px;padding:10px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-weight:1000">فتح لوحة RP</button>';
+    const c=box.querySelector('#rp156-startup-close'); if(c)c.onclick=()=>box.remove();
+    const o=box.querySelector('#rp156-startup-open'); if(o)o.onclick=()=>{try{const p=document.getElementById('rp-v11-panel'); if(p)p.style.display='block'; if(typeof window.rpV11RenderNow==='function')window.rpV11RenderNow();}catch(e){}};
+    const badge=document.getElementById("rp-floating-count"); if(badge){badge.textContent=String(waiting.length); badge.style.display=waiting.length?"block":"none";}
+  }catch(e){console.warn("RP156 startup panel failed",e);}}
+  setInterval(showPanel,1500); setTimeout(showPanel,1000); setTimeout(showPanel,3500);
+})();
+</script>
+
 </body>
 </html>
 
