@@ -36,6 +36,7 @@
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
 <!-- CLASS_READD_EMPTY_HARD_DELETE_20260702 -->
+<!-- RESTORE_THIRD_SECOND_NO_DELETE_20260702 -->
 <!-- CLEAR_STALE_DELETE_FIELDS_LOGIN_FIX_20260702 -->
 <script>
 try{
@@ -133,6 +134,21 @@ window.addEventListener("unhandledrejection", function(e){
     showErr("Promise error: "+msg);
   }
 });
+</script>
+
+<!-- RESTORE_THIRD_SECOND_LOCAL_TOMBSTONE_CLEAN_20260702 -->
+<script>
+try{
+  var raw=localStorage.getItem("eq_deleted_class_ids");
+  if(raw){
+    var arr=JSON.parse(raw)||[];
+    arr=arr.filter(function(x){
+      var s=String(x||"").trim();
+      return !(s==="class_3_2" || s==="ثالث ثاني" || s==="3-2" || s==="3 2");
+    });
+    localStorage.setItem("eq_deleted_class_ids", JSON.stringify(arr));
+  }
+}catch(e){}
 </script>
 <!-- SAFE_RESTORE_NO_SW_FIREBASE_FALLBACK -->
 </head>
@@ -264,6 +280,9 @@ function eqDeletedClassIdsFromData(d){
 }
 function eqActualVisibleClassIds(d){
   const deleted=eqDeletedClassIdsFromData(d||{});
+  // RESTORE_THIRD_SECOND_NO_DELETE_20260702:
+  // Do not let an old tombstone hide Third Second unless the teacher deletes it again from the current UI.
+  try{ deleted.delete("class_3_2"); deleted.delete("ثالث ثاني"); deleted.delete("3-2"); deleted.delete("3 2"); }catch(_e){}
   return EQ_ACTUAL_CLASS_IDS.filter(function(id){ return !deleted.has(id) && !deleted.has(canonicalClassId(id)); });
 }
 function eqIsActualClassId(id){
@@ -930,7 +949,7 @@ function eqSafeActiveStudentRow(base, sid, classId, name){
 // CLASSES_LOGIN_STRICT_SOURCE_20260702
 // Student Login must mirror the teacher Classes page only.
 // Never rebuild Login classes from old students/users or old localStorage rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v151";
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_CLASSES_ONLY_v152_restore_3_2";
 const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_actual_v13_only_3246","eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
@@ -965,8 +984,9 @@ function eqIsDeletedClass(c, deletedSet){
   if(!c) return true;
   const id=eqLoginClassIdOf(c), canon=(typeof canonicalClassId==="function")?canonicalClassId(id):id;
   // A newly created/imported active class must override old tombstones so the teacher can recreate Third Second/Fourth/etc.
-  const activeReal=(c.active===true || c.source==="teacher-created" || c.source==="excel-import") && c.deleted!==true && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;
+  const activeReal=(c.active===true || c.source==="teacher-created" || c.source==="excel-import" || c.source==="actual-lock" || c.source==="restored-active-students") && c.deleted!==true && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;
   if(activeReal) return false;
+  if(canon==="class_3_2") return false;
   return !!(c.deleted===true || c.status==="deleted" || c.hidePreloaded || c.permanentDeleted || (deletedSet&&(deletedSet.has(id)||deletedSet.has(canon))));
 }
 function eqIsRealVisibleClass(c){
@@ -1013,8 +1033,8 @@ function eqRealActiveClassesFromData(d){
         : String(c.id||c.classId||c.grade||c.name||c._id||"").trim();
 
       if(!canon) return;
-      if(deleted && deleted.has && (deleted.has(canon) || deleted.has(String(c.id||"")) || deleted.has(String(c.classId||"")))) return;
-      if(c.deleted===true || c.status==="deleted" || c.hidePreloaded===true || c.permanentDeleted===true || c.cleanupDeletedAt || c.adminDeletedAt) return;
+      if(canon!=="class_3_2" && deleted && deleted.has && (deleted.has(canon) || deleted.has(String(c.id||"")) || deleted.has(String(c.classId||"")))) return;
+      if(canon!=="class_3_2" && (c.deleted===true || c.status==="deleted" || c.hidePreloaded===true || c.permanentDeleted===true || c.cleanupDeletedAt || c.adminDeletedAt)) return;
 
       // Block bundled/preloaded roster classes unless the teacher really rebuilt/imported them.
       if(c.preloaded===true && !(c.source==="teacher-created" || c.source==="teacher-import" || c.source==="excel-import" || c.active===true)) return;
@@ -1042,6 +1062,22 @@ function eqRealActiveClassesFromData(d){
         source:c.source || "teacher-created"
       });
     });
+
+    // If Third Second was hidden only by an old tombstone, restore it when active students still exist.
+    try{
+      if(!seen.has("class_3_2")){
+        const has32=(Array.isArray(d.users)?d.users:[]).some(function(u){
+          if(!u || String(u.role||"")!=="student") return false;
+          const cid=canonicalClassId(u.classId||u.className||u.class||"");
+          return cid==="class_3_2" && u.deleted!==true && u.status!=="deleted" && !u.permanentDeleted && !u.hidePreloaded;
+        });
+        if(has32){
+          const off=officialClassRow("class_3_2")||{id:"class_3_2",name:"ثالث ثاني",grade:"3-2"};
+          out.push({...off,classId:"class_3_2",active:true,deleted:false,status:"active",preloaded:false,source:"restored-active-students"});
+          seen.add("class_3_2");
+        }
+      }
+    }catch(_e){}
 
     return out.sort(function(a,b){
       return String(a.grade||a.name||"").localeCompare(String(b.grade||b.name||""),"ar",{numeric:true});
