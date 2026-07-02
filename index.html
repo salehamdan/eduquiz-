@@ -190,7 +190,7 @@ function canonicalClassId(v){
   if(s==="class_3_1" || d==="31" || d==="13" || n.includes("ثالث اول") || e.includes("third first") || e.includes("3 1") || n.includes("3 1") || n.includes("1 3")) return "class_3_1";
   if(s==="class_3_2" || d==="32" || d==="23" || n.includes("ثالث ثاني") || e.includes("third second") || e.includes("3 2") || n.includes("3 2") || n.includes("2 3")) return "class_3_2";
   if(s==="class_3_3" || d==="33" || n.includes("ثالث ثالث") || e.includes("third third") || e.includes("3 3") || n.includes("3 3")) return "class_3_3";
-  if(s==="class_3_4" || d==="34" || d==="43" || n.includes("ثالث رابع") || e.includes("third fourth") || e.includes("3 4") || n.includes("3 4") || n.includes("4 3")) return "class_3_4";
+  if(s==="class_3_4" || d==="34" || d==="43" || n.includes("ثالث رابع") || n.includes("الثالث رابع") || n.includes("ثالث الرابع") || n.includes("الثالث الرابع") || n.includes("ثالث ورابع") || n.includes("الثالث والرابع") || e.includes("third fourth") || e.includes("3 4") || n.includes("3 4") || n.includes("4 3")) return "class_3_4";
   if(s==="class_3_5" || d==="35" || d==="53" || n.includes("ثالث خامس") || e.includes("third fifth") || e.includes("3 5") || n.includes("3 5") || n.includes("5 3")) return "class_3_5";
   if(s==="class_3_6" || d==="36" || d==="63" || n.includes("ثالث سادس") || e.includes("third sixth") || e.includes("3 6") || n.includes("3 6") || n.includes("6 3")) return "class_3_6";
   if(s==="class_2_4" || d==="24" || d==="42" || n.includes("ثاني رابع") || e.includes("second fourth") || e.includes("2 4") || n.includes("2 4") || n.includes("4 2")) return "class_2_4";
@@ -219,6 +219,24 @@ function eqDeletedClassIdsFromData(d){
       if(!deleted) return;
       [c.id,c._id,c.classId,c.name,c.grade,c.className,c.class].forEach(add);
       try{ (adminClassAliases(c)||[]).forEach(add); }catch(_e){}
+    });
+  }catch(_e){}
+  // READD_CLASS_TOMBSTONE_FIX_20260702:
+  // If the teacher creates the class again, an active class document must win over old tombstones
+  // from deletedClasses/localStorage. Otherwise Add Class succeeds but the UI/login still hide it.
+  try{
+    const activeRows=[].concat((d&&d.classes)||[], (d&&d.firebaseClasses)||[]);
+    activeRows.forEach(function(c){
+      if(!c) return;
+      const active=!(c.deleted===true || c.status==="deleted" || c.hidePreloaded===true || c.permanentDeleted===true || c.cleanupDeletedAt || c.adminDeletedAt);
+      if(!active) return;
+      [c.id,c._id,c.classId,c.name,c.grade,c.className,c.class].forEach(function(v){
+        if(v===undefined||v===null) return;
+        const raw=String(v).trim(); if(!raw) return;
+        set.delete(raw);
+        try{ const canon=canonicalClassId(raw); if(canon) set.delete(canon); }catch(_e2){}
+      });
+      try{ (adminClassAliases(c)||[]).forEach(function(a){ set.delete(String(a)); try{ const canon=canonicalClassId(a); if(canon) set.delete(canon); }catch(_e3){} }); }catch(_e4){}
     });
   }catch(_e){}
   return set;
@@ -253,6 +271,18 @@ function adminRememberDeletedClassIds(ids){
   try{
     const set=adminDeletedClassSet();
     (ids||[]).forEach(x=>{ if(x) set.add(String(x)); });
+    localStorage.setItem("eq_deleted_class_ids", JSON.stringify(Array.from(set)));
+  }catch(e){}
+}
+function adminForgetDeletedClassIds(ids){
+  try{
+    const set=adminDeletedClassSet();
+    (ids||[]).forEach(function(x){
+      if(!x) return;
+      const raw=String(x);
+      set.delete(raw);
+      try{ const canon=canonicalClassId(raw); if(canon) set.delete(canon); }catch(_e){}
+    });
     localStorage.setItem("eq_deleted_class_ids", JSON.stringify(Array.from(set)));
   }catch(e){}
 }
@@ -8636,11 +8666,17 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني، ثالث رابع، ثالث سادس."); return; }
     const official=officialClassRow(canon);
     const id=official.id;
-    try{ await fsDel("deletedClasses", id); }catch(e){}
-    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false};
+    const aliases=Array.from(new Set([id, canon, rawName, rawGrade, official.name, official.grade].filter(Boolean)));
+    // Re-adding a class must remove every old tombstone/hidden flag for that class,
+    // locally and remotely. This fixes: class is created but does not appear in Classes/login.
+    adminForgetDeletedClassIds(aliases);
+    try{ await adminBatchDelete("deletedClasses", aliases.map(function(a){return {id:String(a)};})); }catch(e){ try{ await fsDel("deletedClasses", id); }catch(_e){} }
+    try{ await fsDel("deletedClasses", canon); }catch(e){}
+    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null};
     await fsSetStrict("classes",id,row);
+    try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
-    eqStoreVisibleLoginClasses([...(myClasses||[]), row]);
+    eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>canonicalClassId(c&& (c.id||c.grade||c.name))!==id), row]);
     await reload();setClsModal(false);setNewCls({name:"",grade:""});
   }
 
