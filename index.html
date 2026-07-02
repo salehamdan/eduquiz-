@@ -7100,10 +7100,26 @@ async function adminBatchSet(col, rows){
   let count=0;
   for(let i=0;i<rows.length;i+=450){
     const batch=db.batch();
-    rows.slice(i,i+450).forEach(r=>{const id=r.id||r._id; if(id){ batch.set(db.collection(col).doc(String(id)),{...r,id:String(id)},{merge:false}); count++; }});
+    rows.slice(i,i+450).forEach(r=>{const id=r.id||r._id; if(id){ const clean=eqCleanFirestoreData({...r,id:String(id)}); delete clean._id; batch.set(db.collection(col).doc(String(id)),clean,{merge:false}); count++; }});
     await batch.commit();
   }
   return count;
+}
+function eqCleanFirestoreData(value){
+  if(value === undefined) return undefined;
+  if(value === null) return null;
+  if(Array.isArray(value)){
+    return value.map(eqCleanFirestoreData).filter(function(v){return v !== undefined;});
+  }
+  if(value && typeof value === "object"){
+    const out={};
+    Object.keys(value).forEach(function(k){
+      const v=eqCleanFirestoreData(value[k]);
+      if(v !== undefined) out[k]=v;
+    });
+    return out;
+  }
+  return value;
 }
 async function adminBatchSetMergeQuick(col, rows, timeoutMs){
   rows=(rows||[]).filter(r=>r && (r.id||r._id));
@@ -7115,7 +7131,7 @@ async function adminBatchSetMergeQuick(col, rows, timeoutMs){
       const batch=db.batch();
       rows.slice(i,i+450).forEach(function(r){
         const id=String(r.id||r._id||"");
-        if(id){ const clean={...r,id:id,_id:undefined}; batch.set(db.collection(col).doc(id), clean, {merge:true}); count++; }
+        if(id){ const clean=eqCleanFirestoreData({...r,id:id}); delete clean._id; batch.set(db.collection(col).doc(id), clean, {merge:true}); count++; }
       });
       await batch.commit();
     }
@@ -7812,7 +7828,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           if(!r) return;
           const id=String(r.id||r._id||"");
           if(!id) return;
-          const clean={...r,id:id,_id:undefined};
+          const clean={...r,id:id}; delete clean._id;
           const idx=byId.get(id);
           if(idx!==undefined) data.users[idx]={...(data.users[idx]||{}),...clean};
           else { data.users.push(clean); byId.set(id,data.users.length-1); }
@@ -7822,7 +7838,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const arr=JSON.parse(localStorage.getItem("eq_users")||"[]");
         const byId=new Map((Array.isArray(arr)?arr:[]).map((u,i)=>[String(u.id||u._id||""),i]));
         const out=Array.isArray(arr)?arr:[];
-        rows.forEach(function(r){ const id=String(r.id||r._id||""); if(!id)return; const clean={...r,id:id,_id:undefined}; const idx=byId.get(id); if(idx!==undefined) out[idx]={...(out[idx]||{}),...clean}; else {out.push(clean); byId.set(id,out.length-1);} });
+        rows.forEach(function(r){ const id=String(r.id||r._id||""); if(!id)return; const clean={...r,id:id}; delete clean._id; const idx=byId.get(id); if(idx!==undefined) out[idx]={...(out[idx]||{}),...clean}; else {out.push(clean); byId.set(id,out.length-1);} });
         localStorage.setItem("eq_users", JSON.stringify(out));
       }catch(_e){}
     }catch(e){ console.warn("merge local users failed", e); }
