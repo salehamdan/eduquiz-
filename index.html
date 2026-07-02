@@ -182,6 +182,25 @@ function canonicalClassId(v){
   return s;
 }
 
+
+// ACTUAL_CLASSES_LOCK_20260702
+// Current real active classes requested by teacher. All class dropdowns and login list are locked to these IDs only.
+const EQ_ACTUAL_CLASS_IDS = ["class_3_2","class_3_4","class_3_6"];
+function eqIsActualClassId(id){
+  try{ return EQ_ACTUAL_CLASS_IDS.includes(canonicalClassId(id)); }catch(e){ return false; }
+}
+function eqActualOfficialClasses(){
+  return EQ_ACTUAL_CLASS_IDS.map(function(id){
+    const r=officialClassRow(id) || {id:id,name:id,grade:""};
+    return {...r,id:r.id||id,teacherIds:["GLOBAL"],active:true,source:"actual-lock",preloaded:false,deleted:false,status:"active"};
+  });
+}
+function eqCanonicalClassRow(c){
+  const canon=canonicalClassId((c&& (c.id||c.classId||c.grade||c.name)) || c || "");
+  const official=officialClassRow(canon);
+  return official ? {...official, ...(c||{}), id:official.id, name:official.name, grade:official.grade, active:true, deleted:false, status:"active", preloaded:false} : null;
+}
+
 // FAST_ADMIN_FIX_20260630
 function adminClassKey(v){ return String(v||"").trim(); }
 function adminDeletedClassSet(){
@@ -729,7 +748,7 @@ function loadSession() { try { return JSON.parse(localStorage.getItem("eq_sessio
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 function eqHardCleanLoggedOutUI(){
   try{
-    ["eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
+    ["eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
     ["rp-v11-student-status","rp-floating-button-20260605","rp-v11-panel","w12fab","w12p"].forEach(function(id){var el=document.getElementById(id); if(el) el.remove();});
     var badge=document.getElementById("rp-floating-count"); if(badge) badge.style.display="none";
     try{ localStorage.removeItem("eq_session"); }catch(_e){}
@@ -750,8 +769,8 @@ function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); 
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_real_v12_final";
-const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_actual_v13_only_3246";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
@@ -791,23 +810,11 @@ function eqIsDeletedClass(c, deletedSet){
 }
 function eqIsRealVisibleClass(c){
   if(!c) return false;
-  const id=eqLoginClassIdOf(c);
-  const canon=(typeof canonicalClassId==="function")?canonicalClassId((c.id||c.classId||c.grade||c.name||id)):id;
-  const name=String((c.name||"")).trim();
-  const grade=String((c.grade||"")).trim();
-  const text=(name+" "+grade+" "+id).trim();
-  // Block the exact fake rows that were created by old patches/caches.
-  if(/^mr[0-9a-z]{8,}$/i.test(name) || /^mr[0-9a-z]{8,}$/i.test(id)) return false;
-  if(canon==="class_3_5") return false;
-  if(/^third$/i.test(name)) return false;
-  // Allow real Arabic sections and official canonical ids.
-  if(/ثالث\s*(أول|اول|ثاني|ثالث|رابع|خامس|سادس)|ثاني\s*رابع/.test(text)) return true;
-  if(["class_3_1","class_3_2","class_3_3","class_3_4","class_3_5","class_3_6","class_2_4"].includes(canon)){
-    const official=officialClassRow(canon);
-    if(official){ c.name=official.name; c.grade=official.grade; c.id=official.id; return true; }
-  }
-  return false;
+  const canon=(typeof canonicalClassId==="function") ? canonicalClassId(c.id||c.classId||c.grade||c.name||"") : String(c.id||"");
+  // FINAL STRICT RULE: only the three real classes are visible now.
+  return EQ_ACTUAL_CLASS_IDS.includes(canon);
 }
+
 function eqPushUniqueClass(out, seen, c, deletedSet){
   const row=eqCleanClassRow(c);
   try{ if(canonicalClassId(row && (row.id||row.grade||row.name))==="class_3_5") return; }catch(e){}
@@ -820,62 +827,38 @@ function eqPushUniqueClass(out, seen, c, deletedSet){
   seen.add(key); out.push(row);
 }
 function eqRealActiveClassesFromData(d){
+  // FINAL STRICT SOURCE: only the three actual classes requested by teacher are visible.
   try{
     d=d||{};
-    const deletedSet=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
-    const deletedStudents=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(d):deletedStudentKeySetFromRows(d.users||[]);
-    const out=[], seen=new Set();
-
-    // 1) Real class documents from Firebase/local teacher-created classes only.
-    (Array.isArray(d.firebaseClasses)?d.firebaseClasses:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,deletedSet); });
-    (Array.isArray(d.classes)?d.classes:[]).forEach(function(c){
-      // Do not let old hard-coded PRELOADED_CLASSES come back by themselves.
-      if(c && c.preloaded && !(Array.isArray(d.firebaseClasses)&&d.firebaseClasses.some(fc=>sameClassId(fc.id,c.id)))) return;
-      if(c && !c.preloaded) eqPushUniqueClass(out,seen,c,deletedSet);
+    const byId={};
+    eqActualOfficialClasses().forEach(function(r){ byId[r.id]={...r}; });
+    const allClassDocs=[].concat(Array.isArray(d.firebaseClasses)?d.firebaseClasses:[], Array.isArray(d.classes)?d.classes:[]);
+    allClassDocs.forEach(function(c){
+      const canon=canonicalClassId(c&& (c.id||c.classId||c.grade||c.name));
+      if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return;
+      const off=officialClassRow(canon)||{};
+      byId[canon]={...byId[canon], ...(c||{}), id:canon, name:off.name||byId[canon].name, grade:off.grade||byId[canon].grade, deleted:false, status:"active", active:true, preloaded:false};
     });
-
-    // 2) Restore real in-use classes from active students when the class document is missing.
-    // This protects existing classes such as ثالث ثاني from disappearing after a display/filter update.
-    // Do not revive the known fake legacy class 3-5 / Third from old login cache.
-    (Array.isArray(d.users)?d.users:[]).forEach(function(u){
-      if(!u || u.role!=="student" || u.deleted===true || u.status==="deleted") return;
-      const rawCid = u.classId || u.className || u.class || "";
-      const canon = (typeof canonicalClassId === "function") ? canonicalClassId(rawCid) : String(rawCid||"");
-      if(!canon) return;
-      if(String(canon)==="class_3_5" || /(^|[^0-9])3\s*[-/]\s*5([^0-9]|$)/i.test(String(rawCid||""))) return;
-      if(deletedSet && (deletedSet.has(canon) || deletedSet.has(rawCid))) return;
-      const official = (typeof officialClassRow === "function") ? officialClassRow(canon) : null;
-      const row = official || { id: canon, name: String(rawCid||canon), grade: "" };
-      eqPushUniqueClass(out, seen, { ...row, id: canon }, deletedSet);
-    });
-
-    return out.sort(function(a,b){ return String(a.name||"").localeCompare(String(b.name||""),"ar"); });
-  }catch(e){ return []; }
+    return EQ_ACTUAL_CLASS_IDS.map(id=>byId[id]).filter(Boolean);
+  }catch(e){ return eqActualOfficialClasses(); }
 }
+
 function eqStoreVisibleLoginClasses(list){
   try{
     EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS.forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
-    const out=[]; const seen=new Set();
-    (Array.isArray(list)?list:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
+    const out=eqActualOfficialClasses();
     localStorage.setItem(EQ_ACTIVE_LOGIN_CLASSES_KEY, JSON.stringify(out.map(c=>({id:c.id,name:c.name,grade:c.grade||"",updatedAt:Date.now()}))));
   }catch(e){}
 }
+
 function eqReadVisibleLoginClasses(){
-  try{
-    const arr=JSON.parse(localStorage.getItem(EQ_ACTIVE_LOGIN_CLASSES_KEY)||"[]");
-    if(!Array.isArray(arr)) return [];
-    const out=[]; const seen=new Set();
-    arr.forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
-    return out;
-  }catch(e){ return []; }
+  return eqActualOfficialClasses();
 }
+
 function eqFilterLoginClasses(list){
-  try{
-    const out=[]; const seen=new Set();
-    (Array.isArray(list)?list:[]).forEach(function(c){ eqPushUniqueClass(out,seen,c,null); });
-    return out;
-  }catch(e){ return Array.isArray(list) ? list : []; }
+  return eqActualOfficialClasses();
 }
+
 
 // REAL_CLASSES_ONLY_FAST_IMPORT_MOVE_20260702
 function eqIsTeacherRealClassDoc(c){
@@ -2229,14 +2212,11 @@ function Landing({onLogin, prefillQuiz}) {
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
   function activeLoginClassesFromData(d){
-    // Login class list must match the real Classes tab only.
-    // Do not rebuild from students, PRELOADED_CLASSES, or old caches.
-    try{
-      const live = eqRealActiveClassesFromData(d||{});
-      if(live && live.length) { eqStoreVisibleLoginClasses(live); return live; }
-      return [];
-    }catch(e){ return []; }
+    const live = eqActualOfficialClasses();
+    try{ eqStoreVisibleLoginClasses(live); }catch(e){}
+    return live;
   }
+
   const upd = (k,v) => sf(x=>{
     const nx={...x,[k]:v};
     saveLoginMemory({mode,name:nx.name||"",classId:nx.classId||"",studentId:nx.email||nx.studentId||"",email:nx.email||"",password:nx.password||"",code:nx.code||"",fatherName:nx.fatherName||""});
@@ -7125,6 +7105,25 @@ async function adminBatchSet(col, rows){
   }
   return count;
 }
+async function adminBatchSetMergeQuick(col, rows, timeoutMs){
+  rows=(rows||[]).filter(r=>r && (r.id||r._id));
+  if(!rows.length) return 0;
+  const work=(async function(){
+    if(!FIREBASE_OK){ for(const r of rows){ await fsSet(col,r.id||r._id,r); } return rows.length; }
+    let count=0;
+    for(let i=0;i<rows.length;i+=450){
+      const batch=db.batch();
+      rows.slice(i,i+450).forEach(function(r){
+        const id=String(r.id||r._id||"");
+        if(id){ const clean={...r,id:id,_id:undefined}; batch.set(db.collection(col).doc(id), clean, {merge:true}); count++; }
+      });
+      await batch.commit();
+    }
+    return count;
+  })();
+  if(!timeoutMs) return work;
+  return await Promise.race([work, new Promise(function(_,reject){setTimeout(function(){reject(new Error("Firestore write timeout after "+timeoutMs+"ms"));}, timeoutMs);})]);
+}
 function adminStudentFastTokens(st){
   const set=new Set();
   if(!st) return [];
@@ -7779,168 +7778,165 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function importClassTargetFromCell(raw, classList){
     const cell=String(raw||"").trim();
     if(!cell) return null;
-    const norm=normalizeNameText(cell);
-    const canon=canonicalClassId(cell);
-    const existing=(classList||[]).find(function(c){
-      return sameClassId(c.id,canon) || sameClassId(c.grade,canon) || sameClassId(c.name,canon) || normalizeNameText(c.name)===norm || normalizeNameText(c.grade)===norm;
-    });
-    if(existing) return {id:existing.id, name:existing.name, grade:existing.grade||""};
-    // If the Excel class column contains only 1/2/3/4/5/6, treat it as third-secondary section number.
-    // In the user's current roster, class=4 means ثالث رابع.
     const digits=eqDigits(cell);
-    let id=canon;
-    if(/^\d$/.test(digits)) id="class_3_"+digits;
-    const official=officialClassRow(id);
-    if(official) return {id:official.id, name:official.name, grade:official.grade||""};
-    // Known additional class not present in the old official map.
-    if(id==="class_3_5") return null;
-    if(id==="class_3_6") return {id:"class_3_6", name:"ثالث سادس", grade:"3-6"};
-    return {id:id, name:cell, grade:""};
+    let canon=canonicalClassId(cell);
+    if(/^\d$/.test(digits)) canon="class_3_"+digits;
+    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return null;
+    const off=officialClassRow(canon);
+    return off ? {id:off.id,name:off.name,grade:off.grade||""} : null;
   }
+
   async function ensureImportClassExists(target, classList){
     if(!target || !target.id) return "";
-    const found=(classList||[]).find(function(c){return sameClassId(c.id,target.id)||sameClassId(c.name,target.id)||sameClassId(c.grade,target.id);});
-    if(found) return found.id;
-    const row={id:target.id, name:target.name||target.id, grade:target.grade||"", teacherIds:[user.id], createdAt:today(), updatedAt:today(), active:true, source:"excel-import", preloaded:false, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false};
+    const canon=canonicalClassId(target.id||target.name||target.grade);
+    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return "";
+    const off=officialClassRow(canon)||target;
+    const row={id:canon, name:off.name||target.name||canon, grade:off.grade||target.grade||"", teacherIds:[user.id,"GLOBAL"], createdAt:today(), updatedAt:today(), active:true, source:"teacher-created", preloaded:false, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false};
     try{ await fsDel("deletedClasses", row.id); }catch(e){}
-    await fsSetStrict("classes", row.id, row);
-    classList.push(row);
+    try{ await fsSetStrict("classes", row.id, row); }catch(e){ console.warn("ensure class write failed", e); }
+    if(classList && !classList.some(c=>sameClassId(c.id,row.id))) classList.push(row);
     try{ mergeWrittenClassesIntoLocal([row]); }catch(e){}
     return row.id;
   }
+
   function studentDocIdForWrite(u, sid){
     const clean=eqDigits(sid || (u&&u.studentId) || (u&&u.id) || "");
     return String((u&&(u._id||u.id)) || (clean?"student_"+clean:uid()));
   }
   function mergeWrittenUsersIntoLocal(rows){
     try{
-      if(!data || !Array.isArray(data.users) || !Array.isArray(rows)) return;
-      const byId=new Map(data.users.map((u,i)=>[String(u.id||u._id||""),i]));
-      rows.forEach(function(r){
-        if(!r) return;
-        const id=String(r.id||r._id||"");
-        if(!id) return;
-        const idx=byId.get(id);
-        if(idx!==undefined) data.users[idx]={...(data.users[idx]||{}),...r,id:id};
-        else { data.users.push({...r,id:id}); byId.set(id,data.users.length-1); }
-      });
-    }catch(e){}
+      if(!Array.isArray(rows)) return;
+      if(data && Array.isArray(data.users)){
+        const byId=new Map(data.users.map((u,i)=>[String(u.id||u._id||""),i]));
+        rows.forEach(function(r){
+          if(!r) return;
+          const id=String(r.id||r._id||"");
+          if(!id) return;
+          const clean={...r,id:id,_id:undefined};
+          const idx=byId.get(id);
+          if(idx!==undefined) data.users[idx]={...(data.users[idx]||{}),...clean};
+          else { data.users.push(clean); byId.set(id,data.users.length-1); }
+        });
+      }
+      try{
+        const arr=JSON.parse(localStorage.getItem("eq_users")||"[]");
+        const byId=new Map((Array.isArray(arr)?arr:[]).map((u,i)=>[String(u.id||u._id||""),i]));
+        const out=Array.isArray(arr)?arr:[];
+        rows.forEach(function(r){ const id=String(r.id||r._id||""); if(!id)return; const clean={...r,id:id,_id:undefined}; const idx=byId.get(id); if(idx!==undefined) out[idx]={...(out[idx]||{}),...clean}; else {out.push(clean); byId.set(id,out.length-1);} });
+        localStorage.setItem("eq_users", JSON.stringify(out));
+      }catch(_e){}
+    }catch(e){ console.warn("merge local users failed", e); }
   }
+
   function mergeWrittenClassesIntoLocal(rows){
     try{
-      if(!data || !Array.isArray(data.classes) || !Array.isArray(rows)) return;
-      const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
-      rows.forEach(function(r){
-        if(!r) return;
-        const id=String(r.id||r._id||"");
-        if(!id) return;
-        const idx=byId.get(id);
-        if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r,id:id};
-        else { data.classes.push({...r,id:id}); byId.set(id,data.classes.length-1); }
-      });
-    }catch(e){}
+      if(!Array.isArray(rows)) return;
+      const cleanRows=rows.map(eqCanonicalClassRow).filter(Boolean);
+      if(data && Array.isArray(data.classes)){
+        const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
+        cleanRows.forEach(function(r){ const id=String(r.id||""); const idx=byId.get(id); if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r}; else {data.classes.push(r); byId.set(id,data.classes.length-1);} });
+      }
+      try{ localStorage.setItem("eq_classes", JSON.stringify(eqActualOfficialClasses())); }catch(_e){}
+      try{ eqStoreVisibleLoginClasses(eqActualOfficialClasses()); }catch(_e){}
+    }catch(e){ console.warn("merge local classes failed", e); }
   }
+
   async function importStudents(e){
-    const file=e.target.files[0]; if(e.target)e.target.value="";
-    if(!file) return;
-    setImportMsg("Reading file…");
-    try {
+    const file=e.target.files&&e.target.files[0]; if(!file)return;
+    setImportMsg("Importing students…");
+    try{
       const buf=await file.arrayBuffer();
-      const wb=XLSX.read(new Uint8Array(buf),{type:"array"});
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:""});
-      if(!rows.length){setImportMsg("File is empty.");return;}
-      const hdr=rows[0].map(c=>String(c||"").trim().toLowerCase());
+      const wb=XLSX.read(buf,{type:"array"});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+      if(!rows.length){setImportMsg("No rows found.");return;}
+      const header=rows[0].map(x=>String(x||"").trim().toLowerCase());
       let ci={name:-1,id:-1,cls:-1,email:-1};
-      hdr.forEach((h,i)=>{
-        if(ci.name<0&&(h==="name"||h.includes("student name")||h.includes("full name")||h==="اسم"||h.includes("الاسم"))) ci.name=i;
-        else if(ci.id<0&&(h==="id"||h.includes("student id")||h.includes("number")||h.includes("رقم")||h.includes("هوية"))) ci.id=i;
+      header.forEach((h,i)=>{
+        if(ci.name<0&&(h==="name"||h.includes("name")||h.includes("اسم"))) ci.name=i;
+        else if(ci.id<0&&(h==="id"||h.includes("student")||h.includes("رقم")||h.includes("هوية"))) ci.id=i;
         else if(ci.cls<0&&(h==="class"||h.includes("class")||h.includes("grade")||h.includes("صف")||h.includes("فصل"))) ci.cls=i;
         else if(ci.email<0&&h.includes("email")) ci.email=i;
       });
       const hasHeader=ci.name>=0||ci.id>=0;
       if(!hasHeader){ci={name:0,id:1,cls:2,email:-1};}
       const dataRows=rows.slice(hasHeader?1:0);
-      const existing=await fsAll("users");
-      const bySid={};
-      (existing||[]).forEach(function(u){ const sid=eqDigits(u&&u.studentId); if(sid){ (bySid[sid]=bySid[sid]||[]).push(u); } });
-      let classList=(await fsAll("classes")||[]).filter(c=>c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted);
-      let added=0,updated=0,skipped=0,createdClasses=0;
-      const writeMap={};
-      function queue(row){ if(row && row.id) writeMap[String(row.id)]={...row,id:String(row.id)}; }
+      let added=0,updated=0,skipped=0;
+      const writeRows=[];
+      const existingLocal=(data&&Array.isArray(data.users))?data.users:[];
+      const bySid={}; existingLocal.forEach(u=>{const sid=eqDigits(u&&u.studentId); if(sid) bySid[sid]=u;});
+      let targetClassId="";
+      if(importTargetClass && importTargetClass!=="excel"){
+        targetClassId=canonicalClassId(importTargetClass);
+        if(!EQ_ACTUAL_CLASS_IDS.includes(targetClassId)){ setImportMsg("اختر فصلًا صحيحًا: ثالث ثاني / ثالث رابع / ثالث سادس."); return; }
+        await ensureImportClassExists({id:targetClassId}, []);
+      }
       for(const r of dataRows){
         const name=String(r[ci.name]||"").trim();
-        const sidRaw=String(r[ci.id]||"").trim();
-        const sid=eqDigits(sidRaw)||sidRaw;
+        const sid=eqDigits(String(r[ci.id]||"").trim());
         if(!name||!sid){skipped++;continue;}
-        let classId="";
-        if(importTargetClass && importTargetClass!=="excel"){
-          const selected=myClasses.find(c=>sameClassId(c.id,importTargetClass));
-          classId=(selected&&selected.id)||importTargetClass;
-        } else if(ci.cls>=0){
-          const target=importClassTargetFromCell(r[ci.cls], classList);
-          if(target){
-            const oldLen=classList.length;
-            classId=await ensureImportClassExists(target, classList);
-            if(classList.length>oldLen) createdClasses++;
-          }
-        }
-        const email=ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():"";
-        const matches=bySid[eqDigits(sid)]||[];
-        const base=matches.find(x=>!isStudentTombstone(x)) || matches[0] || null;
-        const cleanSid=String(sid);
-        const merged={...(base||{}),role:"student",name,shortName:((base&&base.shortName)||name.split(/\s+/).slice(0,2).join(" ")),studentId:cleanSid,classId:classId||((base&&base.classId)||""),email:email||((base&&base.email)||""),password:((base&&base.password)||cleanSid),deleted:false,status:"active",updatedAt:today(),createdAt:(base&&base.createdAt)||today()};
-        const ids=new Set(["student_"+eqDigits(cleanSid)]);
-        matches.forEach(m=>ids.add(studentDocIdForWrite(m,cleanSid)));
-        ids.forEach(id=>queue({...merged,id,_id:undefined}));
-        if(matches.length) updated++; else added++;
+        let classId=targetClassId;
+        if(!classId && ci.cls>=0){ const t=importClassTargetFromCell(r[ci.cls], myClasses); if(t){ classId=await ensureImportClassExists(t, []); } }
+        if(!classId){ skipped++; continue; }
+        const base=bySid[sid] || {};
+        const row={...base,id:"student_"+sid,role:"student",name:name,shortName:(base.shortName||name.split(/\s+/).slice(0,2).join(" ")),studentId:sid,classId:classId,email:(ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():base.email||""),password:base.password||sid,deleted:false,status:"active",updatedAt:today(),createdAt:base.createdAt||today()};
+        writeRows.push(row);
+        if(base.id||base._id) updated++; else added++;
       }
-      const rowsToWrite=Object.values(writeMap);
-      if(rowsToWrite.length) await adminBatchSet("users", rowsToWrite);
-      mergeWrittenUsersIntoLocal(rowsToWrite);
-      setFilterCls(importTargetClass && importTargetClass!=="excel" ? importTargetClass : filterCls);
-      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+(createdClasses?" · Created classes "+createdClasses:"")+". Saved rows: "+rowsToWrite.length+".");
-      setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after import failed", err); }); }, 100);
-    } catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
+      if(!writeRows.length){ setImportMsg("No valid students to import. تأكد من الأعمدة Name و ID واختر الفصل الصحيح."); return; }
+      await adminBatchSetMergeQuick("users", writeRows, 20000);
+      mergeWrittenUsersIntoLocal(writeRows);
+      setFilterCls(writeRows[0].classId);
+      setImportTargetClass(writeRows[0].classId);
+      setMoveTargetClass(writeRows[0].classId);
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+".");
+      setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after import failed", err); }); }, 150);
+    }catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
+    try{ e.target.value=""; }catch(_e){}
   }
+
 
 
   async function moveImportedStudentsToClass(){
     const from=Number(eqDigits(moveFromId));
     const to=Number(eqDigits(moveToId));
-    const cls=myClasses.find(c=>sameClassId(c.id,moveTargetClass));
+    const targetClassId=canonicalClassId(moveTargetClass);
     if(!from||!to||from>to){setImportMsg("Enter a valid ID range, for example 3401 to 3435.");return;}
-    if(!cls){setImportMsg("Choose the target class first.");return;}
-    const liveUsers=await fsAll("users");
-    const groups={};
-    (liveUsers||[]).forEach(function(u){
-      if(!u || String(u.role||"student")!=="student") return;
-      const sid=eqDigits(u.studentId||u.id||"");
-      const n=Number(sid);
-      if(n>=from && n<=to){ (groups[sid]=groups[sid]||[]).push(u); }
-    });
-    const sids=Object.keys(groups).sort((a,b)=>Number(a)-Number(b));
-    if(!sids.length){setImportMsg("No students found in this ID range.");return;}
-    if(!window.confirm("Move "+sids.length+" students ("+from+"-"+to+") to "+cls.name+"?\nNo students or results will be deleted.")) return;
-    setImportMsg("Moving "+sids.length+" students to "+cls.name+"…");
-    const writeMap={};
-    sids.forEach(function(sid){
-      const matches=groups[sid]||[];
-      const base=matches.find(x=>!isStudentTombstone(x)) || matches[0] || {studentId:sid,id:"student_"+sid};
-      const row={...base,role:"student",studentId:String(sid),classId:cls.id,deleted:false,status:"active",updatedAt:today()};
-      const ids=new Set(["student_"+sid]);
-      matches.forEach(m=>ids.add(studentDocIdForWrite(m,sid)));
-      ids.forEach(id=>writeMap[String(id)]={...row,id:String(id),_id:undefined});
-    });
-    const rows=Object.values(writeMap);
-    // Fast write: one Firestore batch instead of 35 separate waits.
-    await adminBatchSet("users", rows);
-    mergeWrittenUsersIntoLocal(rows);
-    setFilterCls(cls.id);
-    setImportTargetClass(cls.id);
-    setMoveTargetClass(cls.id);
-    setImportMsg("✅ Moved "+sids.length+" students to "+cls.name+". Saved rows: "+rows.length+". No results were deleted.");
-    setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after move failed", err); }); }, 100);
+    if(!EQ_ACTUAL_CLASS_IDS.includes(targetClassId)){setImportMsg("اختر فصلًا صحيحًا: ثالث ثاني / ثالث رابع / ثالث سادس.");return;}
+    const cls=officialClassRow(targetClassId)||{id:targetClassId,name:targetClassId};
+    if(!window.confirm("Move students "+from+"-"+to+" to "+cls.name+"?\nNo students or results will be deleted.")) return;
+    setImportMsg("Moving students to "+cls.name+"…");
+    try{
+      await ensureImportClassExists({id:targetClassId}, []);
+      let liveUsers=[];
+      try{ liveUsers=await Promise.race([fsAll("users"), new Promise(resolve=>setTimeout(()=>resolve([]),3500))]); }catch(_e){ liveUsers=[]; }
+      const bySid={};
+      [].concat(Array.isArray(data&&data.users)?data.users:[], Array.isArray(liveUsers)?liveUsers:[]).forEach(function(u){
+        const sid=eqDigits(u&& (u.studentId||u.id));
+        const n=Number(sid);
+        if(n>=from && n<=to && !bySid[sid]) bySid[sid]=u;
+      });
+      const rows=[];
+      for(let n=from;n<=to;n++){
+        const sid=String(n);
+        const base=bySid[sid]||{};
+        // Do not invent names for missing students; but if the Excel import already created them locally/cloud, update them.
+        if(!base.name && !base.studentId && !(sid in bySid)) continue;
+        rows.push({...base,id:"student_"+sid,role:"student",studentId:sid,classId:targetClassId,password:base.password||sid,deleted:false,status:"active",updatedAt:today(),createdAt:base.createdAt||today()});
+      }
+      if(!rows.length){ setImportMsg("No students found in this ID range. أعد رفع ملف Excel واختر الفصل الهدف أولًا."); return; }
+      await adminBatchSetMergeQuick("users", rows, 20000);
+      mergeWrittenUsersIntoLocal(rows);
+      setFilterCls(targetClassId);
+      setImportTargetClass(targetClassId);
+      setMoveTargetClass(targetClassId);
+      setImportMsg("✅ Moved "+rows.length+" students to "+cls.name+". No results were deleted.");
+      setTimeout(function(){ reload().catch(function(err){ console.warn("background reload after move failed", err); }); }, 150);
+    }catch(err){
+      setImportMsg("❌ Move failed: "+(err.message||err));
+    }
   }
+
 
 
   // ── EXPORT GRADEBOOK (grid: students x quizzes) ──
@@ -8002,15 +7998,17 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(!newCls.name.trim())return;
     const rawName=newCls.name.trim(), rawGrade=newCls.grade.trim();
     const canon=canonicalClassId(rawName||rawGrade);
+    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني، ثالث رابع، ثالث سادس."); return; }
     const official=officialClassRow(canon);
-    const id=official?official.id:uid();
+    const id=official.id;
     try{ await fsDel("deletedClasses", id); }catch(e){}
-    const row={id,name:official?official.name:rawName,grade:official?(official.grade||rawGrade):rawGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false};
+    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false};
     await fsSetStrict("classes",id,row);
     mergeWrittenClassesIntoLocal([row]);
-    eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(data));
+    eqStoreVisibleLoginClasses(eqActualOfficialClasses());
     await reload();setClsModal(false);setNewCls({name:"",grade:""});
   }
+
   async function editClass(cls){
     const name = prompt("Edit class name:", cls.name||"");
     if(name===null || !name.trim()) return;
