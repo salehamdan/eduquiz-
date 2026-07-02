@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- CLASS_DATA_CLEAN_DELETE_FAST_20260702 -->
 <!-- LOGIN_CLASSES_DYNAMIC_FIREBASE_STUDENT_CLASS_FIX_20260702 -->
 <!-- LOGIN_CLASSES_EXACT_TEACHER_CACHE_FIX_20260702 -->
 <!-- RP120_ACCEPT_PENDING_BULK_FIX_20260701 -->
@@ -765,12 +766,37 @@ function saveLoginMemory(patch){
 }
 function clearLoginMemory(){ try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){} }
 
+function eqClearOldClassAndStudentCaches(){
+  try{
+    const remove=[];
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i)||"";
+      if(/eduquiz_active_login_classes|eq_fast_data_cache|eq_classes|eq_users/i.test(k)) remove.push(k);
+    }
+    remove.forEach(k=>{try{localStorage.removeItem(k);}catch(_e){}});
+  }catch(e){}
+}
+function eqOfficialActualClassOrNull(v){
+  const canon=canonicalClassId(v);
+  if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return null;
+  return officialClassRow(canon) || null;
+}
+function eqSafeActiveStudentRow(base, sid, classId, name){
+  const cleanSid=eqDigits(sid || (base&&base.studentId) || (base&&base.id) || "");
+  const id="student_"+cleanSid;
+  const row={...(base||{}), id, role:"student", name:String(name || (base&&base.name) || "").trim(), shortName:String(name || (base&&base.shortName) || "").trim().split(/\s+/).slice(0,2).join(" "), studentId:cleanSid, classId:canonicalClassId(classId), className:canonicalClassId(classId), class:canonicalClassId(classId), password:(base&&base.password)||cleanSid, deleted:false, status:"active", hidePreloaded:false, permanentDeleted:false, preloaded:false, source:"teacher-import", updatedAt:today(), createdAt:(base&&base.createdAt)||today()};
+  delete row._id;
+  Object.keys(row).forEach(k=>{ if(row[k]===undefined) delete row[k]; });
+  return row;
+}
+
+
 // LOGIN_CLASSES_SINGLE_REAL_SOURCE_FIX_20260702
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_actual_v13_only_3246";
-const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_actual_v14_clean_only_3246";
+const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_actual_v13_only_3246","eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
     const label = normalizeNameText(((c&&c.name)||"")+" "+((c&&c.grade)||""));
@@ -7257,6 +7283,84 @@ async function adminDeleteClass(cls, students, mode){
 }
 
 
+async function adminCleanOldClassData(currentData, currentUser){
+  const stamp=new Date().toISOString();
+  eqClearOldClassAndStudentCaches();
+  const [cloudUsers, cloudClasses]=await Promise.all([fsAll("users"), fsAll("classes")]);
+  const invalidClassRows=(cloudClasses||[]).filter(function(c){
+    const canon=canonicalClassId(c&& (c.id||c.classId||c.grade||c.name||c._id));
+    return canon && !EQ_ACTUAL_CLASS_IDS.includes(canon);
+  });
+  const classTombs=[];
+  invalidClassRows.forEach(function(c){
+    const canon=canonicalClassId(c&& (c.id||c.classId||c.grade||c.name||c._id)) || String(c&& (c.id||c._id)||uid());
+    const tomb={...(c||{}), id:String(c&& (c.id||c._id)||canon), canonicalId:canon, deleted:true, status:"deleted", hidePreloaded:true, permanentDeleted:true, cleanupDeletedAt:stamp, adminDeletedAt:stamp, updatedAt:today()};
+    classTombs.push(tomb);
+    if(String(tomb.id)!==String(canon)) classTombs.push({...tomb,id:canon,tombstoneFor:tomb.id});
+  });
+  const invalidUsers=(cloudUsers||[]).filter(function(u){
+    if(!u || String(u.role||"")!=="student") return false;
+    if(u.deleted===true || u.status==="deleted" || u.hidePreloaded || u.permanentDeleted) return false;
+    const cid=canonicalClassId(u.classId||u.className||u.class||"");
+    return !EQ_ACTUAL_CLASS_IDS.includes(cid);
+  });
+  const userTombs=[];
+  invalidUsers.forEach(function(u){
+    const sid=eqDigits(u.studentId||u.id||u._id||"");
+    const id=sid?"student_"+sid:String(u.id||u._id||uid());
+    const tomb={...(u||{}), id:String(u.id||u._id||id), role:"student", studentId:sid||u.studentId||"", deleted:true, status:"deleted", hidePreloaded:true, permanentDeleted:true, cleanupDeletedAt:stamp, adminDeletedAt:stamp, updatedAt:today()};
+    userTombs.push(tomb);
+    if(String(tomb.id)!==String(id)) userTombs.push({...tomb,id:id,tombstoneFor:tomb.id});
+  });
+  if(classTombs.length){ await adminBatchSet("classes", classTombs); await adminBatchSet("deletedClasses", classTombs.map(c=>({...c,id:canonicalClassId(c.canonicalId||c.id)||c.id}))); }
+  if(userTombs.length){ await adminBatchSet("users", userTombs); await adminBatchSet("deletedStudents", userTombs.map(u=>({...u,id:(eqDigits(u.studentId||u.id||"")?"student_"+eqDigits(u.studentId||u.id||""):String(u.id||uid()))}))); }
+  try{ eqStoreVisibleLoginClasses(eqActualOfficialClasses()); }catch(e){}
+  return {oldClasses:invalidClassRows.length, oldStudents:invalidUsers.length};
+}
+
+async function adminDeleteClassStudentsFastByClassId(cls, hardData){
+  const classId=canonicalClassId(cls&& (cls.id||cls.classId||cls.grade||cls.name));
+  if(!EQ_ACTUAL_CLASS_IDS.includes(classId)) throw new Error("Invalid class id");
+  const rows=await adminFastClassStudents({id:classId,name:(officialClassRow(classId)||{}).name,grade:(officialClassRow(classId)||{}).grade}, []);
+  if(hardData){
+    for(let i=0;i<rows.length;i+=10){
+      await Promise.all(rows.slice(i,i+10).map(st=>adminDeleteStudent(st,"hard")));
+    }
+  }else{
+    const stamp=new Date().toISOString();
+    await adminBatchSet("users", rows.map(function(st){
+      const sid=eqDigits(st.studentId||st.id||st._id||"");
+      const id=sid?"student_"+sid:String(st.id||st._id||uid());
+      return {...st,id:String(st.id||st._id||id),deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,updatedAt:today()};
+    }));
+    await adminBatchSet("deletedStudents", rows.map(function(st){
+      const sid=eqDigits(st.studentId||st.id||st._id||"");
+      return {...st,id:sid?"student_"+sid:String(st.id||st._id||uid()),role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,updatedAt:today()};
+    }));
+  }
+  return rows.length;
+}
+
+async function adminHideStudentsInClassExcept(classId, keepSidSet){
+  const canon=canonicalClassId(classId);
+  if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return 0;
+  const rows=await adminFastClassStudents({id:canon,name:(officialClassRow(canon)||{}).name,grade:(officialClassRow(canon)||{}).grade}, []);
+  const remove=rows.filter(function(st){
+    const sid=eqDigits(st.studentId||st.id||st._id||"");
+    return sid && !(keepSidSet&&keepSidSet.has(sid));
+  });
+  if(!remove.length) return 0;
+  const stamp=new Date().toISOString();
+  const tombs=remove.map(function(st){
+    const sid=eqDigits(st.studentId||st.id||st._id||"");
+    return {...st,id:sid?"student_"+sid:String(st.id||st._id||uid()),role:"student",studentId:sid||st.studentId||"",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,cleanupDeletedAt:stamp,updatedAt:today()};
+  });
+  await adminBatchSet("users", tombs);
+  await adminBatchSet("deletedStudents", tombs);
+  return tombs.length;
+}
+
+
 function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [scope,setScope]=useState("class");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"");
@@ -7805,6 +7909,17 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   }
   async function saveNote(){const ex=data.notes.find(n=>n.teacherId===user.id&&n.studentId===noteModal.id);const id=ex?ex.id:uid();await fsSet("notes",id,{id,teacherId:user.id,studentId:noteModal.id,note:noteText,updatedAt:today()});await reload();setNoteModal(null);}
   async function postAnn(){const id=uid();await fsSet("announcements",id,{id,teacherId:user.id,...ann,createdAt:today()});await reload();setAnnModal(false);setAnn({title:"",text:"",classIds:[]});}
+  async function cleanOldClassDataNow(){
+    if(!window.confirm("Clean old deleted class data?\nThis hides old students/classes outside: ثالث ثاني، ثالث رابع، ثالث سادس.\nNo quiz/RP results are deleted.")) return;
+    setImportMsg("Cleaning old classes/students cache and Firebase tombstones…");
+    try{
+      const res=await adminCleanOldClassData(data,user);
+      setLocalStudentPatch([]);
+      setImportMsg("✅ Cleaned old data. Old classes: "+res.oldClasses+" · old students hidden: "+res.oldStudents+". Results were not deleted.");
+      await reload();
+    }catch(e){ setImportMsg("❌ Clean failed: "+(e.message||e)); }
+  }
+
   // ── IMPORT STUDENTS FROM EXCEL/CSV ──
   function importClassTargetFromCell(raw, classList){
     const cell=String(raw||"").trim();
@@ -7918,17 +8033,22 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         if(!classId && ci.cls>=0){ const t=importClassTargetFromCell(r[ci.cls], myClasses); if(t){ classId=await ensureImportClassExists(t, []); } }
         if(!classId){ skipped++; continue; }
         const base=bySid[sid] || {};
-        const row={...base,id:"student_"+sid,role:"student",name:name,shortName:(base.shortName||name.split(/\s+/).slice(0,2).join(" ")),studentId:sid,classId:classId,email:(ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():base.email||""),password:base.password||sid,deleted:false,status:"active",updatedAt:today(),createdAt:base.createdAt||today()};
+        const row=eqSafeActiveStudentRow({...base,email:(ci.email>=0?String(r[ci.email]||"").trim().toLowerCase():base.email||"")}, sid, classId, name);
         writeRows.push(row);
         if(base.id||base._id) updated++; else added++;
       }
       if(!writeRows.length){ setImportMsg("No valid students to import. تأكد من الأعمدة Name و ID واختر الفصل الصحيح."); return; }
+      let cleanedOldInTarget=0;
+      if(targetClassId){
+        const keepSet=new Set(writeRows.map(r=>eqDigits(r.studentId||r.id||""))); 
+        cleanedOldInTarget=await adminHideStudentsInClassExcept(targetClassId, keepSet);
+      }
       await adminBatchSetMergeQuick("users", writeRows, 20000);
       mergeWrittenUsersIntoLocal(writeRows);
       setFilterCls(writeRows[0].classId);
       setImportTargetClass(writeRows[0].classId);
       setMoveTargetClass(writeRows[0].classId);
-      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+".");
+      setImportMsg("✅ Added "+added+" · Updated "+updated+" · Skipped "+skipped+". Saved "+writeRows.length+" students to "+((officialClassRow(writeRows[0].classId)||{}).name||writeRows[0].classId)+"."+(cleanedOldInTarget?" Cleaned old students from this class: "+cleanedOldInTarget+".":""));
       // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
     }catch(err){ setImportMsg("❌ Import failed: "+(err.message||err)); }
     try{ e.target.value=""; }catch(_e){}
@@ -7961,7 +8081,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         const base=bySid[sid]||{};
         // Do not invent names for missing students; but if the Excel import already created them locally/cloud, update them.
         if(!base.name && !base.studentId && !(sid in bySid)) continue;
-        rows.push({...base,id:"student_"+sid,role:"student",studentId:sid,classId:targetClassId,password:base.password||sid,deleted:false,status:"active",updatedAt:today(),createdAt:base.createdAt||today()});
+        rows.push(eqSafeActiveStudentRow(base, sid, targetClassId, base.name||""));
       }
       if(!rows.length){ setImportMsg("No students found in this ID range. أعد رفع ملف Excel واختر الفصل الهدف أولًا."); return; }
       await adminBatchSetMergeQuick("users", rows, 20000);
@@ -8077,18 +8197,28 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setAddStuMsg("✅ Student added."); await reload(); setTimeout(()=>setAddStuModal(null),600);
   }
   async function deleteClass(cls){
+    const classId=canonicalClassId(cls&& (cls.id||cls.classId||cls.grade||cls.name));
     const classAliasSet=new Set(adminClassAliases(cls).map(canonicalClassId));
-    const studs = data.users.filter(u=>u.role==="student" && !u.deleted && classAliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
-    const choice=prompt("Delete class: "+cls.name+"\nStudents: "+studs.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete class + students only\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","1");
+    const visibleStuds = myStudents.filter(u=>u.role==="student" && !u.deleted && classAliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
+    const choice=prompt("Delete class: "+cls.name+"\nVisible students: "+visibleStuds.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete students in this class only (keep class)\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","2");
     if(!choice)return;
-    const map={"1":"classOnly","2":"classStudents","3":"classStudentsData"}; const mode=map[String(choice).trim()];
+    const modeMap={"1":"classOnly","2":"studentsOnly","3":"classStudentsData"}; const mode=modeMap[String(choice).trim()];
     if(!mode){alert("Cancelled. Invalid option.");return;}
     const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
     if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
     try{
-      setAdminBusy("⏳ Deleting class... please keep this page open.");
-      const res=await adminDeleteClass(cls,studs,mode);
-      setAdminBusy("✅ Class deleted. "+JSON.stringify(res));
+      setAdminBusy("⏳ Deleting... please keep this page open.");
+      let res={};
+      if(mode==="studentsOnly"){
+        const n=await adminDeleteClassStudentsFastByClassId(cls,false);
+        res={studentsDeleted:n, classKept:classId};
+      }else{
+        const liveStuds=await adminFastClassStudents(cls, visibleStuds);
+        res=await adminDeleteClass(cls,liveStuds,mode==="classOnly"?"classOnly":"classStudentsData");
+      }
+      setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
+      try{ if(data&&Array.isArray(data.users)) data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class,classId)); }catch(_e){}
+      setAdminBusy("✅ Done. "+JSON.stringify(res));
       await reload();
       setTimeout(()=>setAdminBusy(""),3500);
     }catch(e){ setAdminBusy("❌ Delete failed: "+(e.message||e)); }
@@ -8488,7 +8618,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete Class</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete / Students</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div>
             </Card>;
           })}
@@ -8521,6 +8651,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>
           <div style={{display:"flex",gap:"7px",marginBottom:"9px",flexWrap:"wrap"}}>
             <Btn color={C.w} onClick={exportResults}>📤 Export Results</Btn>
+            <Btn color={C.d} onClick={cleanOldClassDataNow}>🧹 Clean Old Classes</Btn>
             <Btn color="#475569" onClick={()=>{setMergeMsg("");setMergeModal(true);}}>🛠 Advanced Repair / Merge</Btn>
           </div>
           {importMsg && <div style={{background:importMsg.startsWith("✅")?"#f0fdf4":"#eff6ff",border:"1px solid "+(importMsg.startsWith("✅")?"#86efac":"#93c5fd"),borderRadius:"8px",padding:"9px 12px",fontSize:"12px",color:importMsg.startsWith("✅")?"#166534":"#1e40af",marginBottom:"9px",fontFamily:F}}>{importMsg}</div>}
