@@ -35,6 +35,7 @@
 <!-- RP115_TASK_VISIBILITY_AUDIO_CONTROLS_FINAL_20260701 -->
 <!-- RP117_LIVE_SYNC_RB_STUDENT_STATUS_FINAL_20260701 -->
 <!-- RP119_RESTORE_RP_FIREBASE_LINK_LIVE_CACHE_20260701 -->
+<!-- CLASS_DELETE_FAST_TARGETED_QUERY_20260702 -->
 <!-- CLASS_HARD_DELETE_PROGRESS_SELECTED_RESET_20260702 -->
 <!-- CLASS_IMPORT_PERSISTENT_HARD_RESET_20260702 -->
 <!-- CLASS_DELETE_IMPORT_NO_STALE_UI_20260702 -->
@@ -199,11 +200,37 @@ function canonicalClassId(v){
 // ACTUAL_CLASSES_LOCK_20260702
 // Current real active classes requested by teacher. All class dropdowns and login list are locked to these IDs only.
 const EQ_ACTUAL_CLASS_IDS = ["class_3_2","class_3_4","class_3_6"];
+function eqDeletedClassIdsFromData(d){
+  const set=new Set();
+  function add(v){
+    if(v===undefined||v===null) return;
+    const s=String(v).trim();
+    if(!s) return;
+    set.add(s);
+    try{ const c=canonicalClassId(s); if(c) set.add(c); }catch(_e){}
+  }
+  try{ (JSON.parse(localStorage.getItem("eq_deleted_class_ids")||"[]")||[]).forEach(add); }catch(_e){}
+  try{
+    const rows=[].concat((d&&d.deletedClasses)||[], (d&&d.classes)||[], (d&&d.firebaseClasses)||[]);
+    rows.forEach(function(c){
+      if(!c) return;
+      const deleted=(c.deleted===true || c.status==="deleted" || c.hidePreloaded===true || c.permanentDeleted===true || c.cleanupDeletedAt || c.adminDeletedAt);
+      if(!deleted) return;
+      [c.id,c._id,c.classId,c.name,c.grade,c.className,c.class].forEach(add);
+      try{ (adminClassAliases(c)||[]).forEach(add); }catch(_e){}
+    });
+  }catch(_e){}
+  return set;
+}
+function eqActualVisibleClassIds(d){
+  const deleted=eqDeletedClassIdsFromData(d||{});
+  return EQ_ACTUAL_CLASS_IDS.filter(function(id){ return !deleted.has(id) && !deleted.has(canonicalClassId(id)); });
+}
 function eqIsActualClassId(id){
   try{ return EQ_ACTUAL_CLASS_IDS.includes(canonicalClassId(id)); }catch(e){ return false; }
 }
-function eqActualOfficialClasses(){
-  return EQ_ACTUAL_CLASS_IDS.map(function(id){
+function eqActualOfficialClasses(d){
+  return eqActualVisibleClassIds(d||{}).map(function(id){
     const r=officialClassRow(id) || {id:id,name:id,grade:""};
     return {...r,id:r.id||id,teacherIds:["GLOBAL"],active:true,source:"actual-lock",preloaded:false,deleted:false,status:"active"};
   });
@@ -721,7 +748,7 @@ async function fsDel(col, id) {
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
-const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v15_no_stale_students_instant_reset";
+const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v16_deleted_classes_respected";
 function eqSaveFastDataCache(d){
   try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
 }
@@ -821,7 +848,7 @@ function eqSafeActiveStudentRow(base, sid, classId, name){
 // Student login classes must come from real active teacher-created/Firebase classes,
 // plus classes that currently have active Firebase students. Never revive PRELOADED_CLASSES
 // or old login-cache rows.
-const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_actual_v15_clean_only_3246";
+const EQ_ACTIVE_LOGIN_CLASSES_KEY = "eduquiz_active_login_classes_actual_v16_deleted_classes_respected";
 const EQ_OLD_ACTIVE_LOGIN_CLASSES_KEYS = ["eduquiz_active_login_classes_actual_v13_only_3246","eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"];
 function eqClassDisplayKey(c){
   try{
@@ -879,20 +906,25 @@ function eqPushUniqueClass(out, seen, c, deletedSet){
   seen.add(key); out.push(row);
 }
 function eqRealActiveClassesFromData(d){
-  // FINAL STRICT SOURCE: only the three actual classes requested by teacher are visible.
+  // Deleted classes must NOT be recreated from the hard-coded official list.
   try{
     d=d||{};
+    const visibleIds=eqActualVisibleClassIds(d);
+    const visibleSet=new Set(visibleIds);
+    const deleted=eqDeletedClassIdsFromData(d);
     const byId={};
-    eqActualOfficialClasses().forEach(function(r){ byId[r.id]={...r}; });
+    eqActualOfficialClasses(d).forEach(function(r){ byId[r.id]={...r}; });
     const allClassDocs=[].concat(Array.isArray(d.firebaseClasses)?d.firebaseClasses:[], Array.isArray(d.classes)?d.classes:[]);
     allClassDocs.forEach(function(c){
       const canon=canonicalClassId(c&& (c.id||c.classId||c.grade||c.name));
-      if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return;
+      if(!visibleSet.has(canon) || deleted.has(canon)) return;
+      const isDeleted=(c&& (c.deleted===true || c.status==="deleted" || c.hidePreloaded===true || c.permanentDeleted===true || c.cleanupDeletedAt || c.adminDeletedAt));
+      if(isDeleted) return;
       const off=officialClassRow(canon)||{};
-      byId[canon]={...byId[canon], ...(c||{}), id:canon, name:off.name||byId[canon].name, grade:off.grade||byId[canon].grade, deleted:false, status:"active", active:true, preloaded:false};
+      byId[canon]={...byId[canon], ...(c||{}), id:canon, name:off.name||((byId[canon]||{}).name), grade:off.grade||((byId[canon]||{}).grade), deleted:false, status:"active", active:true, preloaded:false};
     });
-    return EQ_ACTUAL_CLASS_IDS.map(id=>byId[id]).filter(Boolean);
-  }catch(e){ return eqActualOfficialClasses(); }
+    return visibleIds.map(id=>byId[id]).filter(Boolean);
+  }catch(e){ return eqActualOfficialClasses(d||{}); }
 }
 
 function eqStoreVisibleLoginClasses(list){
@@ -7335,12 +7367,63 @@ async function adminPurgeStudentsAndAllDataFast(students, opts){
   const userDocs=[];
   rows.forEach(function(st){
     const sid=adminSidFromAny(st.studentId||st.id||st._id||st.password);
-    if(sid){ sidSet.add(sid); userDocs.push({id:"student_"+sid}); userDocs.push({id:sid}); }
+    if(sid){ sidSet.add(String(sid)); userDocs.push({id:"student_"+sid}); userDocs.push({id:String(sid)}); }
     if(st.id||st._id) userDocs.push({id:String(st.id||st._id)});
   });
   const deleted={students:0,responses:0,reading:0,readingTheory:0,projects:0,gradebook:0,notes:0,writing:0,deletedStudentMarks:0};
-  if(!sidSet.size && !userDocs.length) return deleted;
   const emit=function(stage,done,total){ if(progress) progress({stage:stage,done:done||0,total:total||0}); };
+  if(!sidSet.size && !userDocs.length){ emit("Nothing to delete",1,1); return deleted; }
+
+  function chunkArray(arr,n){ const out=[]; for(let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
+  function classTokenSetFromOpts(){
+    const set=new Set();
+    const raw=opts.classId || opts.className || opts.class || opts.grade || "";
+    const canon=canonicalClassId(raw);
+    const off=officialClassRow(canon)||{};
+    const cls={id:canon||raw,name:off.name||opts.className||raw,grade:off.grade||opts.grade||raw,classId:canon||raw};
+    try{ adminClassAliases(cls).forEach(function(x){ if(x!==undefined&&x!==null&&String(x).trim()) set.add(String(x).trim()); const c=canonicalClassId(x); if(c) set.add(c); }); }catch(_e){}
+    [raw,canon,off.name,off.grade].forEach(function(x){ if(x!==undefined&&x!==null&&String(x).trim()) set.add(String(x).trim()); });
+    return set;
+  }
+  const classTokens=classTokenSetFromOpts();
+  function recordMatchesClassTokens(rec){
+    if(!rec || !classTokens.size) return false;
+    const fields=["classId","className","class","grade","targetClassId","courseClassId","studentClassId"];
+    for(const f of fields){
+      const v=rec[f];
+      if(v!==undefined&&v!==null){
+        const s=String(v).trim();
+        if(classTokens.has(s) || classTokens.has(canonicalClassId(s))) return true;
+      }
+    }
+    return false;
+  }
+  async function queryRowsByIn(col, field, values){
+    values=Array.from(new Set((values||[]).map(v=>String(v||"").trim()).filter(Boolean)));
+    if(!values.length) return [];
+    if(!FIREBASE_OK){
+      try{ const arr=JSON.parse(localStorage.getItem("eq_"+col)||"[]"); return (arr||[]).filter(function(r){ return values.includes(String(r&&r[field]||"")); }); }catch(_e){ return []; }
+    }
+    const groups=chunkArray(values,10);
+    const snaps=await Promise.all(groups.map(function(g){
+      return db.collection(col).where(field,"in",g).get().then(function(s){ return s.docs.map(function(d){ const data=d.data()||{}; return {...data,id:data.id||d.id,_id:d.id}; }); }).catch(function(){ return []; });
+    }));
+    return [].concat.apply([],snaps);
+  }
+  async function findRelatedRowsFast(col){
+    const sidVals=Array.from(sidSet);
+    const idVals=[];
+    sidVals.forEach(function(sid){ idVals.push(sid); idVals.push("student_"+sid); });
+    const sidFields=["studentId","student_id","studentNumber","userId","uid","ownerId","createdBy","password","studentPassword","restoredFromStudentId","restoredFrom"];
+    const classFields=["classId","className","class","grade","targetClassId","courseClassId","studentClassId"];
+    const tasks=[];
+    sidFields.forEach(function(f){ tasks.push(queryRowsByIn(col,f,sidVals)); tasks.push(queryRowsByIn(col,f,idVals)); });
+    if(classTokens.size){ classFields.forEach(function(f){ tasks.push(queryRowsByIn(col,f,Array.from(classTokens))); }); }
+    const found=adminUniqueRows([].concat.apply([], await Promise.all(tasks)));
+    return found.filter(function(r){ return adminRecordMatchesSidSet(r,sidSet) || recordMatchesClassTokens(r); });
+  }
+
+  // Delete roster docs first. This is the fast visible part and should finish in seconds for 35 students.
   const uniqueUserDocs=adminUniqueRows(userDocs);
   emit("Deleting student accounts",0,uniqueUserDocs.length);
   deleted.students=await adminBatchDelete("users", uniqueUserDocs, function(inc,col,count,total){ emit("Deleting student accounts",count,total); });
@@ -7349,6 +7432,7 @@ async function adminPurgeStudentsAndAllDataFast(students, opts){
     emit("Deleting old delete markers",0,dsDocs.length);
     deleted.deletedStudentMarks=await adminBatchDelete("deletedStudents", dsDocs, function(inc,col,count,total){ emit("Deleting old delete markers",count,total); });
   }catch(_e){}
+
   const colMap=[
     ["responses","responses","quiz responses"],
     ["readingSubmissions","reading","reading submissions"],
@@ -7358,30 +7442,35 @@ async function adminPurgeStudentsAndAllDataFast(students, opts){
     ["gradebook","gradebook","gradebook records"],
     ["notes","notes","notes"]
   ];
-  emit("Finding related results",0,colMap.length);
-  const all=await Promise.all(colMap.map(function(x,idx){ emit("Finding related results",idx,colMap.length); return fsAll(x[0]).catch(function(){return [];}); }));
-  emit("Finding related results",colMap.length,colMap.length);
+  emit("Finding related data",0,colMap.length);
+  const related=await Promise.all(colMap.map(function(x,idx){
+    emit("Finding related data",idx+1,colMap.length);
+    return findRelatedRowsFast(x[0]).catch(function(){ return []; });
+  }));
+  const totalRelated=related.reduce(function(a,b){ return a+(b?b.length:0); },0);
+  let relatedDone=0;
   for(let i=0;i<colMap.length;i++){
     const col=colMap[i][0], bucket=colMap[i][1], label=colMap[i][2];
-    const matches=(all[i]||[]).filter(function(r){ return adminRecordMatchesSidSet(r,sidSet); });
+    const matches=adminUniqueRows(related[i]||[]);
     if(matches.length){
-      emit("Deleting "+label,0,matches.length);
-      const n=await adminBatchDelete(col,matches,function(inc,c,count,total){ emit("Deleting "+label,count,total); });
+      emit("Deleting "+label,relatedDone,totalRelated);
+      const n=await adminBatchDelete(col,matches,function(inc,c,count,total){ emit("Deleting "+label,relatedDone+count,totalRelated||total); });
+      relatedDone+=matches.length;
       deleted[bucket]=(deleted[bucket]||0)+n;
     }
   }
   try{
-    emit("Deleting writing records",0,1);
+    emit("Checking writing records",0,1);
     const appSettings=await fsAll("appSettings");
     const wdoc=cleanupWriteDocFromSettings(appSettings||[]);
     if(wdoc){
       const clone=JSON.parse(JSON.stringify(wdoc));
       const before=(clone.submissions||[]).length;
-      clone.submissions=(clone.submissions||[]).filter(function(x){ return !adminRecordMatchesSidSet(x,sidSet); });
+      clone.submissions=(clone.submissions||[]).filter(function(x){ return !(adminRecordMatchesSidSet(x,sidSet) || recordMatchesClassTokens(x)); });
       deleted.writing=before-clone.submissions.length;
       if(deleted.writing>0){ clone.updatedAt=new Date().toISOString(); clone.cleanupLastUpdatedAt=new Date().toISOString(); await fsSet("appSettings",clone.id||clone._id,clone); }
     }
-    emit("Deleting writing records",1,1);
+    emit("Checking writing records",1,1);
   }catch(_e){}
   emit("Hard delete completed",1,1);
   return deleted;
@@ -7423,7 +7512,7 @@ async function adminPurgeClassStudentsExceptFast(classId, keepSidSet, opts){
     return sid && !(keepSidSet&&keepSidSet.has(sid));
   });
   if(!remove.length) return {purged:0};
-  const del=await adminPurgeStudentsAndAllDataFast(remove, opts||{});
+  const del=await adminPurgeStudentsAndAllDataFast(remove, {...(opts||{}), classId:canon, className:(officialClassRow(canon)||{}).name, grade:(officialClassRow(canon)||{}).grade});
   del.purged=remove.length;
   return del;
 }
@@ -7438,7 +7527,7 @@ async function adminPurgeClassStudentsExceptDocIdsFast(classId, keepDocIdSet, op
     return docId && !keep.has(docId);
   });
   if(!remove.length) return {purged:0, duplicateDocs:0};
-  const del=await adminPurgeStudentsAndAllDataFast(remove, opts||{});
+  const del=await adminPurgeStudentsAndAllDataFast(remove, {...(opts||{}), classId:canon, className:(officialClassRow(canon)||{}).name, grade:(officialClassRow(canon)||{}).grade});
   del.purged=remove.length;
   del.duplicateDocs=remove.length;
   return del;
@@ -7534,7 +7623,7 @@ async function adminDeleteClassStudentsFastByClassId(cls, hardData, opts){
   const rows=await adminFastClassStudents({id:classId,name:(officialClassRow(classId)||{}).name,grade:(officialClassRow(classId)||{}).grade}, []);
   if(!rows.length) return {students:0, deleted:{}};
   if(hardData){
-    const deleted=await adminPurgeStudentsAndAllDataFast(rows,{onProgress:opts.onProgress});
+    const deleted=await adminPurgeStudentsAndAllDataFast(rows,{onProgress:opts.onProgress,classId:classId,className:(officialClassRow(classId)||{}).name,grade:(officialClassRow(classId)||{}).grade});
     return {students:rows.length, deleted:deleted};
   }
   const n=await adminDeleteStudentRosterDocsOnlyFast(rows);
@@ -8538,14 +8627,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           setAdminBusy("⏳ "+(p.stage||"Deleting")+" — "+done+" / "+total+(total?" ("+pct+"%)":""));
         }});
         if(mode==="classStudentsData"){
-          const row={...(cls||{}),id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()};
+          const row={...(cls||{}),id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()};
+          adminRememberDeletedClassIds([classId, cls&&cls.id, cls&&cls._id, cls&&cls.name, cls&&cls.grade].filter(Boolean));
           await fsSet("classes",classId,row);
           try{ await fsSet("deletedClasses",classId,row); }catch(_e){}
         }
         try{
           if(data&&Array.isArray(data.users)) data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class,classId));
+          if(data&&Array.isArray(data.classes)) data.classes=data.classes.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId));
+          if(data&&Array.isArray(data.firebaseClasses)) data.firebaseClasses=data.firebaseClasses.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId));
+          if(data&&Array.isArray(data.deletedClasses)) data.deletedClasses=[...(data.deletedClasses||[]),{id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}];
           setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
           localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);
+          localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY);
         }catch(_e){}
         setAdminBusy("✅ Hard delete completed. Students: "+((res&&res.students)||0)+" · data: "+JSON.stringify((res&&res.deleted)||{}));
         setTimeout(()=>setAdminBusy(""),5000);
@@ -8556,8 +8650,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       const liveStuds=await adminFastClassStudents(cls, visibleStuds);
       await adminBatchSetMergeQuick("users", liveStuds.map(st=>({...st,classId:"",className:"",class:"",updatedAt:today()})), 20000);
       const row={...(cls||{}),id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()};
+      adminRememberDeletedClassIds([classId, cls&&cls.id, cls&&cls._id, cls&&cls.name, cls&&cls.grade].filter(Boolean));
       await fsSet("classes",classId,row);
       try{ await fsSet("deletedClasses",classId,row); }catch(_e){}
+      try{ if(data&&Array.isArray(data.classes)) data.classes=data.classes.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId)); localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY); localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY); }catch(_e){}
       setAdminBusy("✅ Class deleted and "+liveStuds.length+" students moved to No class.");
       setTimeout(()=>setAdminBusy(""),4000);
     }catch(e){ setResettingClassId(""); setAdminBusy("❌ Delete failed: "+(e.message||e)); }
