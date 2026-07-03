@@ -10,6 +10,7 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP174_STUDENT_LATEST_PENDING_AND_SHORT_WCPM_STRICT_FINAL_20260703 -->
 <!-- RP173_REAL_AUDIO_DURATION_FIRST_REANALYZE_WCPM_FIX_20260703 -->
 <!-- RP172_LATEST_PENDING_AFTER_FINAL_AND_AUDIO_DURATION_WCPM_20260703 -->
 <!-- RP171_ACTUAL_READING_TIME_WCPM_TRIM_SILENCE_20260703 -->
@@ -1259,12 +1260,16 @@ function rpSpeedScoreCap(wcpm, level, totalWords){
     if(r<0.95) return 93;
     return 100;
   }
-  // Very short text: no harsh cap. Accuracy/order should dominate.
+  // RP174: very short text is not punished like a long text, but a 22-word
+  // recording read word-by-word in 33–41 seconds must not receive 93–97.
+  // Use absolute WCPM tiers for short passages instead of the old blended ratio.
   if(n<=30){
-    if(r<=0) return 88;
-    if(r<0.45) return 90;
-    if(r<0.65) return 93;
-    if(r<0.85) return 96;
+    const w=Number(wcpm);
+    if(!Number.isFinite(w) || w<=0) return 82;
+    if(w<25) return 82;
+    if(w<35) return 86;
+    if(w<45) return 90;
+    if(w<60) return 94;
     return 100;
   }
   if(n<=50){
@@ -1300,11 +1305,18 @@ function rpFluencyCapBySpeed(value, wcpm, level, totalWords){
   if(!Number.isFinite(n)) return value;
   const words=Number(totalWords);
   const speed=rpSpeedScoreFromWcpm(wcpm, level, totalWords);
-  // Short passages: fluency should not become 100 automatically, but it should not be destroyed by WCPM.
+  // RP174: for short texts, fluency must reflect slow word-by-word reading.
+  // Do not force a high minimum cap such as 94 for a 22-word passage.
   let cap=Math.max(0, Math.min(100, speed+8));
-  if(Number.isFinite(words) && words>0 && words<=30) cap=Math.max(cap, 94);
-  else if(Number.isFinite(words) && words<=50) cap=Math.max(cap, 90);
-  else if(Number.isFinite(words) && words<=80) cap=Math.max(cap, 84);
+  if(Number.isFinite(words) && words>0 && words<=30){
+    const w=Number(wcpm);
+    cap = (!Number.isFinite(w)||w<=0) ? 62 : (w<25?62:(w<35?72:(w<45?80:(w<60?90:100))));
+  }
+  else if(Number.isFinite(words) && words<=50){
+    const w=Number(wcpm);
+    cap = (!Number.isFinite(w)||w<=0) ? 60 : (w<30?60:(w<45?76:(w<60?88:100)));
+  }
+  else if(Number.isFinite(words) && words<=80) cap=Math.min(cap, 84);
   return Math.max(0, Math.min(100, Math.round(Math.min(n, cap))));
 }
 function rpAnalyze(reference, transcript, seconds, level){
@@ -1834,7 +1846,7 @@ function rpLatestEffectiveAttempt(list){
   if(latestFinal && latestPending){
     const pt=submitTime(latestPending)||rpAttemptTimeMs(latestPending);
     const ft=decisionTime(latestFinal)||rpAttemptTimeMs(latestFinal);
-    if(pt>ft+1500) return latestPending;
+    if(pt>ft) return latestPending;
     return latestFinal;
   }
   if(latestFinal) return latestFinal;
@@ -5839,13 +5851,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     }
     const newestTerminalTime=terminalCloud.length?Math.max.apply(null,terminalCloud.map(function(s){return rpDecisionTime(s)||0;})):0;
     const cloudPendingAfterTerminal=cloudAll.some(function(s){
-      return rpAttemptState(s)==="pending" && (!newestTerminalTime || (rpSubmitTime(s)||0)>newestTerminalTime+1000);
+      return rpAttemptState(s)==="pending" && (!newestTerminalTime || (rpSubmitTime(s)||0)>newestTerminalTime);
     });
     const cloud=Object.values(cloudById).filter(function(s){
       if(!s || s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted") return false;
       // RP166: once teacher has a final decision for this student's task, old pending copies must never win.
       // Allow pending only when it has a real submittedAt/createdAt/timestamp after that final decision.
-      if(terminalCloud.length && rpAttemptState(s)==="pending" && (!(rpSubmitTime(s)||0) || (rpSubmitTime(s)||0) <= newestTerminalTime + 5000)) return false;
+      if(terminalCloud.length && rpAttemptState(s)==="pending" && (!(rpSubmitTime(s)||0) || (rpSubmitTime(s)||0) <= newestTerminalTime)) return false;
       return true;
     });
     const local=rpLocalAttemptsForTask(t.id).filter(function(r){
@@ -5858,8 +5870,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       // RP162: once the teacher has rejected/deleted/accepted an attempt in Firebase, never let an old
       // device-only pending marker recreate "Waiting for teacher analysis" for the student.
       // A genuinely new attempt is allowed only when Firebase also has a newer pending submission.
-      if(terminalCloud.length && (localState==="pending" || localState==="none") && !cloudPendingAfterTerminal) return false;
-      if(terminalCloud.length && (localState==="pending" || localState==="none") && (!localSubmitTime || localSubmitTime <= newestTerminalTime + 5000)) return false;
+      if(terminalCloud.length && (localState==="pending" || localState==="none")){
+        // RP174: a fresh device/local submission after the teacher decision must show Pending immediately,
+        // even before the Firestore listener has caught up. Only older local markers are suppressed.
+        if(localSubmitTime && localSubmitTime > newestTerminalTime) return true;
+        return false;
+      }
       return true;
     });
     const map={};
@@ -5928,7 +5944,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     let all=[];
     try{ tasks.forEach(t=>{ attemptsForTask(t).forEach(a=>{ if(a) all.push({...a,_taskTitle:t.title}); }); }); }catch(e){}
     all=all.filter(a=>a && a.status!=="deleted" && a.deleted!==true && !String(a.id||"").startsWith("local_counter_"));
-    all.sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0));
+    all.sort((a,b)=>(Date.parse(a.submittedAt||a.createdAt||a.timestamp||a.updatedAt||"")||0)-(Date.parse(b.submittedAt||b.createdAt||b.timestamp||b.updatedAt||"")||0));
     const last=rpLatestEffectiveAttempt(all);
     const accepted=all.filter(a=>rpIsAcceptedSubmission(a));
     const rejected=all.filter(a=>rpAttemptState(a)==="rejected").length;
@@ -12106,7 +12122,13 @@ document.addEventListener("click", function(e){
     try{
       if(typeof rpAnalyze==='function'){
         const out=rpAnalyze(ref, spoken, seconds, 'beginner')||{};
-        return Object.assign({}, out, {aiScore:out.finalScore, analysisStatus:'Completed'});
+        const words=rpWords(ref);
+        const correct=Number(out.correctWords ?? out.correct ?? words.length);
+        const sec=Number(seconds)||0;
+        const realWcpm=sec>0?Math.round(correct/(sec/60)):out.wcpm;
+        const cappedScore=rpCapBySpeed((out.finalScore??out.score??out.aiScore), realWcpm, 'beginner', words.length);
+        const cappedFluency=rpFluencyCapBySpeed((out.fluency??out.fluencyScore), realWcpm, 'beginner', words.length);
+        return Object.assign({}, out, {wcpm:realWcpm, fluency:cappedFluency, finalScore:cappedScore, score:cappedScore, aiScore:cappedScore, seconds:sec, readingSeconds:sec, actualReadingSeconds:sec, effectiveReadingSeconds:sec, analysisStatus:'Completed'});
       }
     }catch(e){}
     const a=normalizeText(ref).split(' ').filter(Boolean);
