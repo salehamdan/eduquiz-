@@ -6,6 +6,7 @@
 <title>EduQuiz — Smart Assessment v161</title>
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
+<!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
 <!-- RP159_REJECT_DELETE_STUDENT_SYNC_OVERVIEW_PANEL_20260703 -->
 <!-- RP161_STUDENT_DIRECT_REJECT_DELETE_LIVE_SYNC_20260703 -->
 <!-- RP_FLOATING_DRAWER_PENDING_ARCHIVE_ALL_20260605 -->
@@ -1517,6 +1518,68 @@ async function rpSaveStudentDecisionMarker(s, status, reason){
   try{ if(typeof fsSet==="function") await fsSet("readingSubmissions", marker.id, marker); }catch(e){ console.warn("RP163 marker fsSet failed", e&&e.message); }
   try{ if(typeof cloudSaveRecord==="function") await cloudSaveRecord(marker); }catch(e){ console.warn("RP163 marker cloudSave failed", e&&e.message); }
   return marker;
+}
+
+
+async function rpApplyFinalDecisionToStudentTask(s, status, reason){
+  // RP164: final teacher decision must close ALL duplicate pending records for the same student + task.
+  // Earlier builds changed one record only; the student card then picked another stale Pending record and stayed Waiting.
+  const cleanStatus=String(status||"rejected").toLowerCase();
+  const now=new Date().toISOString();
+  function digits(v){ try{return String(v||"").replace(/\D/g,"");}catch(e){return "";} }
+  function vals(x){ return [x&&x.studentId,x&&x.studentNumber,x&&x.studentUserId,x&&x.userId,x&&x.uid,x&&x.ownerStudentId,x&&x.ownerId,x&&x.studentEmail].filter(Boolean).map(v=>String(v)); }
+  function sameStudent(a,b){
+    const av=vals(a), bv=vals(b);
+    if(av.some(x=>bv.includes(x))) return true;
+    const ad=av.map(digits).filter(Boolean), bd=bv.map(digits).filter(Boolean);
+    if(ad.some(x=>bd.includes(x))) return true;
+    const an=String((a&&(a.studentName||a.name))||"").trim();
+    const bn=String((b&&(b.studentName||b.name))||"").trim();
+    return !!(an && bn && an===bn);
+  }
+  function sameTask(a,b){ return String((a&&a.taskId)||"") && String((a&&a.taskId)||"")===String((b&&b.taskId)||""); }
+  function finalPatch(x){
+    if(cleanStatus==="deleted") return {...x,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
+    if(cleanStatus==="retake_allowed" || cleanStatus==="retake") return {...x,status:"retake_allowed",reviewStatus:"retake_allowed",teacherReview:"retake_allowed",teacherReviewStatus:"retake_allowed",studentStatus:"retake_allowed",analysisStatus:"retake_allowed",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,reviewedAt:now,updatedAt:now,teacherNotes:reason||x.teacherNotes||""};
+    return rpBuildRejectedSubmission(x, reason||"");
+  }
+  const marker= cleanStatus==="deleted" ? rpBuildStudentDecisionMarker(s,"deleted",reason||"") : rpBuildStudentDecisionMarker(s,"rejected",reason||"");
+  let changed=0;
+  try{
+    if(typeof fsSet==="function" && s&&s.id){ await fsSet("readingSubmissions", s.id, finalPatch(s)); changed++; }
+  }catch(e){ console.warn("RP164 direct decision write failed", e&&e.message); }
+  try{
+    if(typeof db!=="undefined" && db && db.collection){
+      const snap=await db.collection("readingSubmissions").get();
+      const jobs=[];
+      snap.forEach(function(doc){
+        const r={id:doc.id,...(doc.data?doc.data():{})};
+        if(sameTask(r,s) && sameStudent(r,s)){ jobs.push(fsSet("readingSubmissions", doc.id, finalPatch(r))); }
+      });
+      const res=await Promise.allSettled(jobs);
+      changed += res.filter(x=>x.status==="fulfilled").length;
+    }
+  }catch(e){ console.warn("RP164 bulk decision scan failed", e&&e.message); }
+  try{ await rpSaveStudentDecisionMarker(s, cleanStatus==="deleted"?"deleted":"rejected", reason||""); }catch(e){}
+  try{
+    if(typeof records==="function" && typeof saveRecords==="function"){
+      const arr=(records()||[]).map(function(r){ return (sameTask(r,s)&&sameStudent(r,s)) ? finalPatch(r) : r; });
+      arr.push(marker);
+      saveRecords(arr);
+    }
+  }catch(e){}
+  try{
+    if(typeof localStorage!=="undefined"){
+      const keys=["rp_student_attempts","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"];
+      keys.forEach(function(k){
+        try{
+          const arr=JSON.parse(localStorage.getItem(k)||"[]");
+          if(Array.isArray(arr)){ localStorage.setItem(k, JSON.stringify(arr.map(function(r){ return (sameTask(r,s)&&sameStudent(r,s)) ? finalPatch(r) : r; }))); }
+        }catch(_e){}
+      });
+    }
+  }catch(e){}
+  return {changed, marker};
 }
 
 function rpLatestEffectiveAttempt(list){
@@ -6304,7 +6367,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
-            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");const marker=rpBuildStudentDecisionMarker(s,"rejected",reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd,marker]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);await rpSaveStudentDecisionMarker(s,"rejected",reason||"");try{await reload();}catch(e){}setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");const marker=rpBuildStudentDecisionMarker(s,"rejected",reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd,marker]));setMsg("Updating... Rejecting all matching attempts");try{const res=await rpApplyFinalDecisionToStudentTask(s,"rejected",reason||"");try{await reload();}catch(e){}setMsg("❌ Rejected and synced: "+(st?st.name:"student")+" ("+((res&&res.changed)||1)+" records)");}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
@@ -9207,7 +9270,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
                   <button onClick={async function(){await fsSet("readingSubmissions",s.id,rpBuildAcceptedSubmission(s));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
-                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,rpBuildRejectedSubmission(s,reason||""));await rpSaveStudentDecisionMarker(s,"rejected",reason||"");await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
+                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await rpApplyFinalDecisionToStudentTask(s,"rejected",reason||"");await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
               {extra>0&&!pendingExpanded&&<button onClick={function(){setPendingExpanded(true);}} style={{marginTop:"6px",fontSize:"11px",color:C.p,background:"none",border:"none",cursor:"pointer",fontWeight:"700",fontFamily:F}}>+ {extra} more...</button>}
@@ -10904,7 +10967,7 @@ document.addEventListener("click", function(e){
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpSaveStudentDecisionMarker(rec,"deleted",""); })().then(()=>renderCards());
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpApplyFinalDecisionToStudentTask(rec,"deleted",""); })().then(()=>renderCards());
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
@@ -10919,7 +10982,7 @@ document.addEventListener("click", function(e){
         else if(st==="rejected"){
           const reason=window.prompt("سبب الرفض (اختياري):","")||"";
           const upd=rpBuildRejectedSubmission(rec||{id:rid},reason);
-          action=(async function(){ await updateRecord(rid,upd); await rpSaveStudentDecisionMarker(rec||upd,"rejected",reason); })();
+          action=(async function(){ await updateRecord(rid,upd); await rpApplyFinalDecisionToStudentTask(rec||upd,"rejected",reason); })();
         } else action=updateRecord(rid,{status:st,deleted:false});
         action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
