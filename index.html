@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <title>EduQuiz — Smart Assessment v165</title>
+<!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
@@ -10730,7 +10731,9 @@ document.addEventListener("click", function(e){
       const arr=await fsAll("readingSubmissions");
       // RP117: RB/float drawer must not filter by the old fixed task id.
       // Load every real Reading Progress submission, excluding only audio chunks.
-      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_") && !(typeof rpIsDeleteDecisionMarker==="function" && rpIsDeleteDecisionMarker(r)));
+      let clean=(arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_") && !(typeof rpIsDeleteDecisionMarker==="function" && rpIsDeleteDecisionMarker(r)));
+      try{ if(localStorage.getItem("rp_purge_keep_only_hussein_fayez_done_at")){ clean=clean.filter(rpIsHusseinFayezRecord); } }catch(_e){}
+      return clean;
     }catch(e){
       console.warn("RP cloud read failed", e);
       return [];
@@ -10748,6 +10751,114 @@ document.addEventListener("click", function(e){
       return false;
     }
   }
+
+
+  // RP180: HARD CLEANUP - delete every Reading Progress recording from Firestore/local cache
+  // except the student حسين محمد الفايز / حسين بن محمد بن حسين الفايز (student number 3209).
+  function rpNormArabic(v){
+    return String(v||"").toLowerCase().replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/\s+/g," ").trim();
+  }
+  function rpIsHusseinFayezRecord(r){
+    try{
+      const info=(typeof rpRecInfo==="function")?rpRecInfo(r||{}):{};
+      const n=rpNormArabic((info&&info.name)||r.studentName||r.name||r.fullName||"");
+      const sid=String((info&&info.sid)||r.studentNumber||r.studentNo||r.studentId||r.idNumber||r.password||"").replace(/\D/g,"");
+      if(sid==="3209") return true;
+      if(n.includes("حسين محمد") && n.includes("الفايز")) return true;
+      if(n.includes("حسين بن محمد") && n.includes("الفايز")) return true;
+      if(n.includes("حسين") && n.includes("محمد") && n.includes("الفايز")) return true;
+    }catch(_e){}
+    return false;
+  }
+  function rpParentSubmissionId(r){
+    try{return String(r.parentSubmissionId||r.parentId||r.submissionId||r.originalSubmissionId||r.attemptId||r.sourceAttemptId||"");}catch(_e){return "";}
+  }
+  function rpChunkBelongsToKept(r,keepIds){
+    try{
+      if(rpIsHusseinFayezRecord(r)) return true;
+      const pid=rpParentSubmissionId(r);
+      if(pid && keepIds.has(String(pid))) return true;
+      const id=String(r.id||"");
+      for(const k of keepIds){ if(id && (id.includes(String(k)+"_chunk_") || id.includes(String(k)))) return true; }
+    }catch(_e){}
+    return false;
+  }
+  async function rpDeleteStorageForRecord(r){
+    try{
+      if(!(typeof firebase!=="undefined" && firebase.storage)) return false;
+      const url=String(r.audioUrl||r.downloadURL||r.storageUrl||r.audioDownloadUrl||"");
+      if(!url || !/^https?:/i.test(url)) return false;
+      await firebase.storage().refFromURL(url).delete();
+      return true;
+    }catch(e){ return false; }
+  }
+  async function rpClearIndexedDbExcept(keepAudioIds){
+    try{
+      const db=await openDB();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,"readwrite");
+        const store=tx.objectStore(STORE);
+        const req=store.openCursor();
+        req.onsuccess=function(ev){
+          const cur=ev.target.result;
+          if(cur){
+            const id=String((cur.value&&cur.value.id)||cur.key||"");
+            if(!keepAudioIds.has(id)) cur.delete();
+            cur.continue();
+          }
+        };
+        tx.oncomplete=resolve;
+        tx.onerror=function(){reject(tx.error);};
+      });
+    }catch(e){ console.warn("RP180 IndexedDB cleanup failed", e&&e.message); }
+  }
+  async function rpHardPurgeAllExceptHusseinFayez(){
+    if(!isTeacher()){
+      alert("افتح حساب المعلم أولًا ثم نفذ التنظيف من زر RP.");
+      return;
+    }
+    const phrase=window.prompt("تنظيف نهائي للتسجيلات من Firebase والمنصة.\nسيتم حذف كل تسجيلات Reading Progress ما عدا حسين محمد الفايز فقط.\nاكتب بالضبط: احذف التسجيلات");
+    if(String(phrase||"").trim()!=="احذف التسجيلات") return;
+    const btn=document.getElementById("rp-v11-hard-purge");
+    const old=btn?btn.textContent:"";
+    if(btn){btn.disabled=true;btn.textContent="جاري الحذف النهائي...";}
+    let cloud=[];
+    try{ cloud=(typeof fsAll==="function") ? (await fsAll("readingSubmissions")) : []; }catch(e){ cloud=[]; }
+    const normalized=(cloud||[]).map(function(r){return {id:String(r.id||r._id||""), ...r};}).filter(function(r){return r&&r.id;});
+    const keep=[];
+    const del=[];
+    normalized.forEach(function(r){ if(rpIsHusseinFayezRecord(r)) keep.push(r); else del.push(r); });
+    const keepIds=new Set(keep.map(function(r){return String(r.id||r._id||"");}).filter(Boolean));
+    const finalDel=del.filter(function(r){ return !rpChunkBelongsToKept(r,keepIds); });
+    let deleted=0, failed=0, storageDeleted=0;
+    for(const r of finalDel){
+      try{ if(await rpDeleteStorageForRecord(r)) storageDeleted++; }catch(_e){}
+      try{
+        if(typeof fsDel==="function") await fsDel("readingSubmissions", String(r._id||r.id));
+        else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(String(r._id||r.id)).delete();
+        deleted++;
+      }catch(e){ failed++; console.warn("RP180 delete failed", r&&r.id, e&&e.message); }
+    }
+    // Keep local cache containing only Hussein Fayez records; clear every old RP cache key so deleted records do not revive.
+    const localKeep=(keep||[]).map(function(r){return normalizeRecord({...r,id:String(r.id||r._id)});});
+    try{
+      [RP_KEY].concat(OLD_KEYS).forEach(function(k){ localStorage.setItem(k, JSON.stringify(localKeep)); });
+      localStorage.setItem("eq_readingSubmissions", JSON.stringify(localKeep));
+      localStorage.removeItem(RP_DELETED_IDS_KEY);
+      localStorage.removeItem(RP_DELETED_FP_KEY);
+      localStorage.removeItem("rp_deleted_attempt_ids_v1");
+      localStorage.removeItem("rp_deleted_attempt_fingerprints_v1");
+      localStorage.setItem("rp_purge_keep_only_hussein_fayez_done_at", new Date().toISOString());
+    }catch(e){}
+    const keepAudioIds=new Set(localKeep.map(function(r){return String(r.audioId||"");}).filter(Boolean));
+    await rpClearIndexedDbExcept(keepAudioIds);
+    saveRecords(localKeep);
+    try{ RP_LIVE_CACHE=localKeep; __rpLastCloudSyncAt=Date.now(); }catch(_e){}
+    try{ if(typeof renderCards==="function") await renderCards(); }catch(_e){}
+    if(btn){btn.disabled=false;btn.textContent=old||"تنظيف Firebase";}
+    alert("انتهى التنظيف النهائي.\nالمحفوظ لحسين محمد الفايز: "+localKeep.length+"\nالمحذوف من Firestore: "+deleted+"\nفشل الحذف: "+failed+"\nملفات Storage المحذوفة إن وجدت: "+storageDeleted+"\n\nإذا كان فشل الحذف أكبر من صفر، أرسل صورة الرسالة.");
+  }
+  try{ window.rpHardPurgeAllExceptHusseinFayez=rpHardPurgeAllExceptHusseinFayez; }catch(_e){}
 
   let __rpLastCloudSyncAt=0;
   function rpSameStudentTaskLoose(a,b){
@@ -11457,6 +11568,7 @@ document.addEventListener("click", function(e){
           <button id="rp-v11-refresh" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">تحديث</button>
           <button id="rp-v11-analyze-class" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">تحليل المنتظر الظاهر</button>
           <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول كل المنتظر المحلل</button>
+          <button id="rp-v11-hard-purge" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7f1d1d;color:white;font-weight:1000">حذف كل التسجيلات ما عدا حسين الفايز</button>
         </div>
       </div>
       <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
@@ -11474,6 +11586,7 @@ document.addEventListener("click", function(e){
       const tab=e.target.getAttribute("data-rp-tab");
       if(tab){rpActiveTab=tab;renderCards();return;}
       if(id==="rp-v11-hide"){panel.style.display="none";return;}
+      if(id==="rp-v11-hard-purge"){ await rpHardPurgeAllExceptHusseinFayez(); return; }
       if(id==="rp-v11-refresh"){e.target.textContent="Updating..."; syncCloudIntoLocal().then(()=>renderCards()).finally(()=>{e.target.textContent="تحديث";}); return;}
       if(id==="rp-v11-restore-old"){
         alert("تم تعطيل استعادة التسجيلات القديمة حتى لا ترجع بيانات أحمد/حسن القديمة إلى RP.");
