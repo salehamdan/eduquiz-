@@ -10,6 +10,7 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP176_WCPM_DURATION_PREFERS_REAL_RECORDING_SECONDS_20260703 -->
 <!-- RP174_STUDENT_LATEST_PENDING_AND_SHORT_WCPM_STRICT_FINAL_20260703 -->
 <!-- RP173_REAL_AUDIO_DURATION_FIRST_REANALYZE_WCPM_FIX_20260703 -->
 <!-- RP172_LATEST_PENDING_AFTER_FINAL_AND_AUDIO_DURATION_WCPM_20260703 -->
@@ -1371,12 +1372,19 @@ function rpValidWcpm(v){
 function rpSecondsFromSubmission(s){
   if(!s) return null;
   const an=s.analysis||{};
-  const vals=[an.readingSeconds, an.actualReadingSeconds, an.effectiveReadingSeconds, s.readingSeconds, s.actualReadingSeconds, s.effectiveReadingSeconds, an.seconds, an.durationSeconds, an.audioDuration, an.duration, s.seconds, s.durationSeconds, s.audioDuration, s.recordingSeconds, s.duration];
-  for(const v of vals){
-    const n=rpSafeNumber(v);
-    if(n!==null && n>0) return n;
-  }
-  return null;
+  function valid(v){ const n=rpSafeNumber(v); return (n!==null && n>=3 && n<=300)?n:null; }
+  // RP176: old attempts often stored readingSeconds/seconds as the default 60,
+  // while the real recording time was saved separately as recordingSeconds/fullRecordingSeconds.
+  // For display/WCPM, prefer the smallest plausible real duration instead of the old 60 fallback.
+  const primary=[an.actualReadingSeconds, an.effectiveReadingSeconds, s.actualReadingSeconds, s.effectiveReadingSeconds];
+  const realClip=[s.recordingSeconds, s.fullRecordingSeconds, an.recordingSeconds, an.fullRecordingSeconds, s.fullRecordedSeconds, an.fullRecordedSeconds];
+  const general=[an.readingSeconds, s.readingSeconds, an.seconds, s.seconds, an.durationSeconds, s.durationSeconds, an.audioDuration, s.audioDuration, an.duration, s.duration];
+  const candidates=[...primary, ...realClip, ...general].map(valid).filter(x=>x!==null);
+  if(!candidates.length) return null;
+  // If there is a non-60 duration such as 31/37/41, use it; otherwise use the available value.
+  const nonDefault=candidates.filter(x=>Math.abs(x-60)>1);
+  const pool=nonDefault.length?nonDefault:candidates;
+  return Math.min(...pool);
 }
 function rpComputedWcpmFromSubmission(s){
   if(!s) return null;
@@ -1601,6 +1609,7 @@ function rpBuildAcceptedSubmission(s, extra){
   const wcpm=rpMetricFromSubmission(s,"wcpm");
   const fluency=rpMetricFromSubmission(s,"fluency");
   const mistakes=rpMetricFromSubmission(s,"mistakes");
+  const sec=rpSecondsFromSubmission(s);
   return {
     ...(s||{}), ...(extra||{}),
     status:"accepted", reviewStatus:"accepted", teacherReview:"accepted", teacherReviewStatus:"accepted", studentStatus:"accepted",
@@ -1614,7 +1623,12 @@ function rpBuildAcceptedSubmission(s, extra){
     mistakes:mistakes===null?(s&&s.mistakes):mistakes,
     mistakeCount:mistakes===null?(s&&s.mistakeCount):mistakes,
     correctWords:rpMetricFromSubmission(s,"correctWords"),
-    totalWords:rpMetricFromSubmission(s,"totalWords")
+    totalWords:rpMetricFromSubmission(s,"totalWords"),
+    seconds:sec===null?(s&&s.seconds):sec,
+    durationSeconds:sec===null?(s&&s.durationSeconds):sec,
+    readingSeconds:sec===null?(s&&s.readingSeconds):sec,
+    actualReadingSeconds:sec===null?(s&&s.actualReadingSeconds):sec,
+    effectiveReadingSeconds:sec===null?(s&&s.effectiveReadingSeconds):sec
   };
 }
 function rpIsAcceptedSubmission(s){
@@ -11030,8 +11044,8 @@ document.addEventListener("click", function(e){
     }catch(e){ return 0; }
   }
   async function rpResolveAnalyzeSeconds(r){
-    // RP173: for Analyze Saved Recording, trust the audio file first.
-    // Old submissions often contain seconds=60, which made every 22-word recording show 22 WCPM.
+    // RP173/RP176: for Analyze Saved Recording, trust the audio file first.
+    // If decoding fails, do NOT blindly choose the old default 60; choose the real saved recording time when present.
     const blob=await rpRecordBlobForTiming(r);
     if(blob){
       const trimmed=await rpTrimmedAudioReadingSeconds(blob);
@@ -11039,12 +11053,18 @@ document.addEventListener("click", function(e){
       const dur=await rpAudioElementDurationSeconds(blob);
       if(dur>0) return Math.round(dur);
     }
-    // Only if the audio cannot be decoded/read, use stored values.
-    const explicit=[r&&r.actualReadingSeconds,r&&r.effectiveReadingSeconds,r&&r.readingSeconds,r&&r.analysis&&r.analysis.actualReadingSeconds,r&&r.analysis&&r.analysis.effectiveReadingSeconds,r&&r.analysis&&r.analysis.readingSeconds];
-    for(const v of explicit){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
-    const fallback=[r&&r.seconds,r&&r.durationSeconds,r&&r.audioDuration,r&&r.recordingSeconds,r&&r.duration,r&&r.analysis&&r.analysis.seconds,r&&r.analysis&&r.analysis.durationSeconds,r&&r.analysis&&r.analysis.audioDuration];
-    for(const v of fallback){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
-    return 0;
+    function valid(v){ const n=Number(v); return Number.isFinite(n)&&n>=3&&n<=300?Math.round(n):null; }
+    const candidates=[
+      r&&r.actualReadingSeconds, r&&r.effectiveReadingSeconds,
+      r&&r.recordingSeconds, r&&r.fullRecordingSeconds, r&&r.fullRecordedSeconds,
+      r&&r.durationSeconds, r&&r.seconds, r&&r.audioDuration, r&&r.duration,
+      r&&r.analysis&&r.analysis.actualReadingSeconds, r&&r.analysis&&r.analysis.effectiveReadingSeconds,
+      r&&r.analysis&&r.analysis.recordingSeconds, r&&r.analysis&&r.analysis.fullRecordingSeconds,
+      r&&r.analysis&&r.analysis.durationSeconds, r&&r.analysis&&r.analysis.seconds, r&&r.analysis&&r.analysis.audioDuration
+    ].map(valid).filter(x=>x!==null);
+    if(!candidates.length) return 0;
+    const nonDefault=candidates.filter(x=>Math.abs(x-60)>1);
+    return Math.min(...(nonDefault.length?nonDefault:candidates));
   }
   function score(ref,spoken,seconds=60){
     const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
