@@ -10752,7 +10752,7 @@ document.addEventListener("click", function(e){
   }
 
 
-  // RP181: SAFE CLEANUP TOOLS - purge all RP or targeted delete by current filters
+  // RP182: SAFE CLEANUP TOOLS - purge all RP or targeted delete by real dropdowns from platform data
   function rpNormArabic(v){
     return String(v||"").toLowerCase().replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/\s+/g," ").trim();
   }
@@ -10904,7 +10904,7 @@ document.addEventListener("click", function(e){
     if(!isTeacher()){ alert("افتح حساب المعلم أولًا."); return; }
     const f=rpDeleteSelectedFilters();
     if(!f.clsVal && !f.stuVal && !f.taskVal && !f.searchQ){
-      alert("اختر صفًا أو طالبًا أو مهمة أو اكتب بحثًا أولًا. لا يمكن الحذف المحدد بدون فلتر.");
+      alert("اختر من القوائم: صفًا أو طالبًا أو مهمة، أو اكتب بحثًا أولًا. القوائم الآن تُحمّل من بيانات المنصة وليس من التسجيلات الظاهرة فقط.");
       return;
     }
     const btn=document.getElementById("rp-v11-target-delete");
@@ -10924,7 +10924,7 @@ document.addEventListener("click", function(e){
     const res=await rpDeleteRecordsHard(targetIds, all);
     const keep=all.filter(function(r){ return !targetIds.has(String(r.id||r._id||"")); });
     await rpAfterHardDelete(keep);
-    if(btn){btn.disabled=false;btn.textContent=old||"🎯 حذف المحدد بالفلاتر";}
+    if(btn){btn.disabled=false;btn.textContent=old||"🎯 حذف حسب الطالب/الصف/المهمة";}
     alert("انتهى حذف التسجيلات المحددة.\n"+desc+"\nالمحذوف من Firestore: "+res.deleted+"\nفشل الحذف: "+res.failed+"\nملفات Storage المحذوفة إن وجدت: "+res.storageDeleted);
   }
   // Backward name kept only so old buttons do not break; it now means purge ALL, no exception.
@@ -11638,7 +11638,7 @@ document.addEventListener("click", function(e){
           <button id="rp-v11-refresh" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">تحديث</button>
           <button id="rp-v11-analyze-class" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">تحليل المنتظر الظاهر</button>
           <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول كل المنتظر المحلل</button>
-          <button id="rp-v11-target-delete" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#ea580c;color:white;font-weight:1000">🎯 حذف المحدد بالفلاتر</button>
+          <button id="rp-v11-target-delete" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#ea580c;color:white;font-weight:1000">🎯 حذف حسب الطالب/الصف/المهمة</button>
           <button id="rp-v11-hard-purge-all" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7f1d1d;color:white;font-weight:1000">🧹 حذف كل تسجيلات RP</button>
         </div>
       </div>
@@ -11788,8 +11788,8 @@ document.addEventListener("click", function(e){
         const res=await Promise.all([fsAll("classes"),fsAll("users")]);
         cls=res[0]||[]; users=res[1]||[];
       }
-      const preCls=[];
-      const preUsers=[];
+      const preCls=(typeof PRELOADED_CLASSES!=="undefined" && Array.isArray(PRELOADED_CLASSES))?PRELOADED_CLASSES:[];
+      const preUsers=(typeof PRELOADED_USERS!=="undefined" && Array.isArray(PRELOADED_USERS))?PRELOADED_USERS:[];
       const cMap=new Map();
       [...preCls,...cls].forEach(c=>{ const cc=rpCleanClassRow(c); if(cc) cMap.set(cc.id,cc); });
       RP_ACTIVE_CLASSES_CACHE=Array.from(cMap.values());
@@ -11929,28 +11929,53 @@ document.addEventListener("click", function(e){
   function rpPopulateFilterOptions(all,tasks){
     const classSel=document.getElementById("rp-v11-class"), stuSel=document.getElementById("rp-v11-student"), taskSel=document.getElementById("rp-v11-task");
     const clsVal=classSel?classSel.value:"";
-    const classOpts=rpClassesBase().map(c=>({value:c.id,label:c.name}));
-    rpSetOptions(classSel,classOpts,"جميع الفصول");
+    // RP182: these menus must come from platform data, not only from currently visible RP cards.
+    // This lets the teacher choose a class/student/task even when the current Pending tab is empty.
+    const classMap=new Map();
+    rpClassesBase().forEach(c=>{ if(c&&c.id) classMap.set(String(c.id),{value:String(c.id),label:c.name||c.id}); });
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      const cid=String(info.classId||r.classId||"").trim();
+      const cname=String(info.className||r.className||"").trim();
+      if(cid && !classMap.has(cid)) classMap.set(cid,{value:cid,label:cname||cid});
+    });
+    const classOpts=Array.from(classMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    rpSetOptions(classSel,classOpts,"اختر الصف / جميع الفصول");
+
     const roster=rpRosterBase().filter(u=>!clsVal || String(u.classId||"")===String(clsVal));
     const seen=new Set();
     const stuOpts=[];
-    roster.forEach(u=>{const key=String(u.studentId||u.id||u.name); if(!key||seen.has(key)) return; seen.add(key); stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")});});
-    (all||[]).forEach(r=>{const info=rpRecInfo(r); if(clsVal && info.classId!==clsVal) return; const key=info.sid||info.name; if(key&&!seen.has(String(key))){seen.add(String(key));stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")});}});
-    rpSetOptions(stuSel,stuOpts,"جميع الطلاب");
+    roster.forEach(u=>{
+      const key=String(u.studentId||u.id||u.name||"").trim();
+      if(!key||seen.has(key)) return;
+      seen.add(key);
+      stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")});
+    });
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      if(clsVal && String(info.classId||r.classId||"")!==String(clsVal)) return;
+      const key=String(info.sid||r.studentNumber||r.studentId||r.studentUserId||info.name||"").trim();
+      if(key&&!seen.has(key)){
+        seen.add(key);
+        stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")});
+      }
+    });
+    stuOpts.sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    rpSetOptions(stuSel,stuOpts,"اختر الطالب / جميع الطلاب");
+
     const taskLabelMap=new Map();
     function addTaskOption(label){
       label=String(label||"").trim();
       if(!label) return;
-      // The teacher should see task names only. Never show Firebase ids or task ids in the menu.
       if(label==="reading-progress-task-1") label="Reading Progress Task";
       const key=rpNorm(label);
       if(!key) return;
       if(!taskLabelMap.has(key)) taskLabelMap.set(key,{value:"label::"+key,label:label});
     }
     (tasks||[]).forEach(t=>addTaskOption(t.title||t.name||t.taskTitle||t.taskName));
-    (all||[]).forEach(r=>addTaskOption(taskLabel(r)));
+    (all||[]).forEach(r=>addTaskOption(taskLabel(r)||r.taskTitle||r.title||r.taskName));
     const taskOpts=Array.from(taskLabelMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
-    rpSetOptions(taskSel,taskOpts,"جميع المهام / الاختبارات");
+    rpSetOptions(taskSel,taskOpts,"اختر المهمة / جميع المهام");
   }
   function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl||(r.audioChunked&&r.audioChunkCount))); }
   function rpAnalysisState(r){ return String((r&&r.analysisStatus)||"").trim().toLowerCase(); }
@@ -12094,7 +12119,7 @@ document.addEventListener("click", function(e){
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
     try{ if(typeof window.rpRunTeacherAutoNowSilent==="function" && (!window.__rpAutoLastRun || Date.now()-window.__rpAutoLastRun>8000)){ window.__rpAutoLastRun=Date.now(); setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},80); } }catch(_e){}
-    rpRefreshRosters(false);
+    try{ await rpRefreshRosters(true); }catch(_e){ try{ rpRefreshRosters(false); }catch(__e){} }
     let allLocalRaw=recordsFastWithBackgroundSync();
     try{ if(Date.now()-__rpLastCloudSyncAt>5000) allLocalRaw=await syncCloudIntoLocal(); }catch(_syncErr){ console.warn("RP119 initial cloud sync failed", _syncErr); }
     const allLocal=allLocalRaw.filter(rpRecordVisible);
