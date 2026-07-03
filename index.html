@@ -10,6 +10,8 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP173_REAL_AUDIO_DURATION_FIRST_REANALYZE_WCPM_FIX_20260703 -->
+<!-- RP172_LATEST_PENDING_AFTER_FINAL_AND_AUDIO_DURATION_WCPM_20260703 -->
 <!-- RP171_ACTUAL_READING_TIME_WCPM_TRIM_SILENCE_20260703 -->
 <!-- RP170_SHORT_TEXT_FAIR_WCPM_SCORING_20260703 -->
 <!-- RP169_NO_FULL_SCORE_FOR_SLOW_PERFECT_READING_20260703 -->
@@ -1367,16 +1369,18 @@ function rpSecondsFromSubmission(s){
 function rpComputedWcpmFromSubmission(s){
   if(!s) return null;
   const an=s.analysis||{};
-  const stored=rpValidWcpm(an.wcpm);
-  if(stored!==null && stored>0) return stored;
-  const stored2=rpValidWcpm(s.wcpm);
-  if(stored2!==null && stored2>0) return stored2;
+  // RP173: display WCPM must be recalculated from correct words + saved reading seconds first.
+  // Do NOT let an old stored WCPM=22 override a later corrected 31s/41s duration.
   const correct=rpMetricFromSubmission(s,"correctWords");
   const secs=rpSecondsFromSubmission(s);
   if(correct!==null && secs!==null && secs>0){
     const calc=rpValidWcpm(Math.round(Number(correct)/(secs/60)));
     if(calc!==null && calc>0) return calc;
   }
+  const stored=rpValidWcpm(an.wcpm);
+  if(stored!==null && stored>0) return stored;
+  const stored2=rpValidWcpm(s.wcpm);
+  if(stored2!==null && stored2>0) return stored2;
   return null;
 }
 
@@ -1814,18 +1818,27 @@ async function rpApplyFinalDecisionToStudentTask(s, status, reason){
 }
 
 function rpLatestEffectiveAttempt(list){
-  const arr=(list||[]).filter(r=>r && rpAttemptState(r)!=="deleted").sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
+  const arr=(list||[]).filter(r=>r && rpAttemptState(r)!==="deleted");
   if(!arr.length) return null;
-  // RP167: a teacher final decision must beat any submitted/pending copy.
-  // If a student has one accepted and one rejected attempt, show the newest final teacher decision, not a stale pending upload.
-  function decisionTime(r){
-    const raw=r&&(r.rejectedAt||r.acceptedAt||r.approvedAt||r.reviewedAt||r.teacherReviewedAt||r.updatedAt||r.submittedAt||r.createdAt||r.timestamp);
-    const n=Date.parse(raw||"");
-    return Number.isFinite(n)?n:rpAttemptTimeMs(r);
+  // RP172: final teacher decisions win only over older pending copies.
+  // If the student submits a NEW attempt after the latest accepted/rejected decision, show Pending again.
+  function parseMs(raw){ const n=Date.parse(raw||""); return Number.isFinite(n)?n:0; }
+  function submitTime(r){ return parseMs(r&&(r.submittedAt||r.createdAt||r.timestamp||r.uploadedAt||r.recordedAt)); }
+  function decisionTime(r){ return parseMs(r&&(r.rejectedAt||r.acceptedAt||r.approvedAt||r.reviewedAt||r.teacherReviewedAt||r.updatedAt)) || submitTime(r) || rpAttemptTimeMs(r); }
+  const finals=arr.filter(r=>{const st=rpAttemptState(r); return st==="accepted" || st==="rejected" || st==="retake";})
+                  .sort((a,b)=>decisionTime(a)-decisionTime(b));
+  const pendings=arr.filter(r=>rpAttemptState(r)==="pending")
+                    .sort((a,b)=>(submitTime(a)||rpAttemptTimeMs(a))-(submitTime(b)||rpAttemptTimeMs(b)));
+  const latestFinal=finals.length?finals[finals.length-1]:null;
+  const latestPending=pendings.length?pendings[pendings.length-1]:null;
+  if(latestFinal && latestPending){
+    const pt=submitTime(latestPending)||rpAttemptTimeMs(latestPending);
+    const ft=decisionTime(latestFinal)||rpAttemptTimeMs(latestFinal);
+    if(pt>ft+1500) return latestPending;
+    return latestFinal;
   }
-  const finals=arr.filter(r=>{const st=rpAttemptState(r); return st==="accepted" || st==="rejected" || st==="retake";});
-  if(finals.length) return finals.sort((a,b)=>decisionTime(a)-decisionTime(b))[finals.length-1];
-  return arr[arr.length-1];
+  if(latestFinal) return latestFinal;
+  return arr.slice().sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b))[arr.length-1];
 }
 
 function rpGenerateText(level, lines){
@@ -10937,6 +10950,86 @@ document.addEventListener("click", function(e){
   function refText(r){
     return cleanRefCandidate(r&&r.referenceText) || cleanRefCandidate(r&&r.text) || cleanRefCandidate(r&&r.taskText) || defaultRefText();
   }
+
+  // RP172: Analyze Saved Recording must not fall back to 60 seconds.
+  // Resolve the actual audio duration from the saved webm/audio when seconds are missing.
+  async function rpRecordBlobForTiming(r){
+    try{
+      if(r && r.audioId){ const item=await getAudio(r.audioId); if(item&&item.blob) return item.blob; }
+      const chunkDataUrl=(typeof rpResolveAudioDataUrl==="function")?await rpResolveAudioDataUrl(r).catch(()=>""):"";
+      if(chunkDataUrl) return await (await fetch(chunkDataUrl)).blob();
+      if(r && r.audioDataUrl) return await (await fetch(r.audioDataUrl)).blob();
+      if(r && r.audioUrl) return await (await fetch(r.audioUrl)).blob();
+    }catch(e){}
+    return null;
+  }
+  async function rpAudioElementDurationSeconds(blob){
+    return new Promise(resolve=>{
+      try{
+        if(!blob) return resolve(0);
+        const url=URL.createObjectURL(blob);
+        const a=new Audio(); let done=false;
+        function finish(v){ if(done) return; done=true; try{URL.revokeObjectURL(url);}catch(_){} const n=Number(v); resolve(Number.isFinite(n)&&n>0?n:0); }
+        a.preload="metadata";
+        a.onloadedmetadata=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); else setTimeout(()=>finish(a.duration||0),500); };
+        a.ondurationchange=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); };
+        a.onerror=()=>finish(0);
+        setTimeout(()=>finish(a.duration||0),3000);
+        a.src=url;
+      }catch(e){ resolve(0); }
+    });
+  }
+  async function rpTrimmedAudioReadingSeconds(blob){
+    try{
+      const AudioCtx=window.AudioContext||window.webkitAudioContext;
+      if(!blob || !AudioCtx) return 0;
+      const buf=await blob.arrayBuffer();
+      const ctx=new AudioCtx();
+      let audio;
+      try{ audio=await ctx.decodeAudioData(buf.slice(0)); }catch(e){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const sr=audio.sampleRate||44100, len=audio.length||0;
+      if(!len){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const ch=[]; for(let c=0;c<audio.numberOfChannels;c++) ch.push(audio.getChannelData(c));
+      const win=Math.max(256,Math.round(sr*0.05));
+      const rms=[];
+      for(let i=0;i<len;i+=win){
+        let sum=0,count=0,end=Math.min(len,i+win);
+        for(let j=i;j<end;j++){ let v=0; for(let c=0;c<ch.length;c++) v+=ch[c][j]||0; v/=Math.max(1,ch.length); sum+=v*v; count++; }
+        rms.push(Math.sqrt(sum/Math.max(1,count)));
+      }
+      try{ctx.close&&ctx.close();}catch(_){}
+      if(!rms.length) return 0;
+      const sorted=rms.slice().sort((a,b)=>a-b), noise=sorted[Math.floor(sorted.length*.25)]||0, peak=sorted[sorted.length-1]||0;
+      const threshold=Math.max(0.010, noise*2.6, peak*0.06);
+      let first=-1,last=-1;
+      for(let i=0;i<rms.length;i++){ if(rms[i]>=threshold){ first=i; break; } }
+      for(let i=rms.length-1;i>=0;i--){ if(rms[i]>=threshold){ last=i; break; } }
+      if(first<0||last<first) return 0;
+      const full=audio.duration||len/sr;
+      const start=Math.max(0, first*win/sr - .15);
+      const end=Math.min(full, (last+1)*win/sr + .15);
+      const reading=end-start;
+      if(!Number.isFinite(reading)||reading<=0) return 0;
+      return Math.max(1,Math.round(reading));
+    }catch(e){ return 0; }
+  }
+  async function rpResolveAnalyzeSeconds(r){
+    // RP173: for Analyze Saved Recording, trust the audio file first.
+    // Old submissions often contain seconds=60, which made every 22-word recording show 22 WCPM.
+    const blob=await rpRecordBlobForTiming(r);
+    if(blob){
+      const trimmed=await rpTrimmedAudioReadingSeconds(blob);
+      if(trimmed>0) return trimmed;
+      const dur=await rpAudioElementDurationSeconds(blob);
+      if(dur>0) return Math.round(dur);
+    }
+    // Only if the audio cannot be decoded/read, use stored values.
+    const explicit=[r&&r.actualReadingSeconds,r&&r.effectiveReadingSeconds,r&&r.readingSeconds,r&&r.analysis&&r.analysis.actualReadingSeconds,r&&r.analysis&&r.analysis.effectiveReadingSeconds,r&&r.analysis&&r.analysis.readingSeconds];
+    for(const v of explicit){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    const fallback=[r&&r.seconds,r&&r.durationSeconds,r&&r.audioDuration,r&&r.recordingSeconds,r&&r.duration,r&&r.analysis&&r.analysis.seconds,r&&r.analysis&&r.analysis.durationSeconds,r&&r.analysis&&r.analysis.audioDuration];
+    for(const v of fallback){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    return 0;
+  }
   function score(ref,spoken,seconds=60){
     const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
     const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
@@ -10960,7 +11053,7 @@ document.addEventListener("click", function(e){
 
     // RP169: WCPM is only the measured speed. A perfect word match must NOT force fluency/score to 100.
     // Target speed depends on text length: short tasks are more forgiving, normal RP tasks require real pace.
-    const speedTarget = total<=8 ? 45 : (total<=14 ? 60 : 90);
+    const speedTarget = total<=30 ? 60 : (total<=50 ? 75 : 90);
     let speedScore=Math.max(0,Math.min(100,Math.round(wcpm/speedTarget*100)));
     const completion=total?Math.round(correct/total*100):0;
 
@@ -10976,7 +11069,8 @@ document.addEventListener("click", function(e){
     // Hard cap by speed: slow perfect reading remains accurate, but not fluent/high-scored.
     function capByWcpm(v){
       if(!Number.isFinite(Number(wcpm))) return v;
-      if(total<=8) return Math.min(v, wcpm<25?78:(wcpm<35?88:100));
+      if(total<=30) return Math.min(v, wcpm<25?82:(wcpm<35?86:(wcpm<45?90:(wcpm<60?94:100))));
+      if(total<=50) return Math.min(v, wcpm<30?78:(wcpm<45?86:(wcpm<60?92:100)));
       if(wcpm<30) return Math.min(v,70);
       if(wcpm<45) return Math.min(v,80);
       if(wcpm<60) return Math.min(v,88);
@@ -10985,7 +11079,8 @@ document.addEventListener("click", function(e){
     }
     function fluencyCapByWcpm(v){
       if(!Number.isFinite(Number(wcpm))) return v;
-      if(total<=8) return Math.min(v, wcpm<25?65:(wcpm<35?80:100));
+      if(total<=30) return Math.min(v, wcpm<25?62:(wcpm<35?72:(wcpm<45?80:(wcpm<60?90:100))));
+      if(total<=50) return Math.min(v, wcpm<30?60:(wcpm<45?76:(wcpm<60?88:100)));
       if(wcpm<30) return Math.min(v,55);
       if(wcpm<45) return Math.min(v,70);
       if(wcpm<60) return Math.min(v,82);
@@ -11019,8 +11114,10 @@ document.addEventListener("click", function(e){
     await renderCards();
     try{
       const text=await transcribeRecord(r);
-      const res=score(refText(r),text,r.seconds||r.duration||60);
-      const saved=await updateRecord(id,{...res,transcript:text,analysisStatus:"Completed"});
+      const secs=await rpResolveAnalyzeSeconds(r);
+      if(!secs || secs<=0) throw new Error("Could not read recording duration. Ask student to submit again or enter a teacher score manually.");
+      const res=score(refText(r),text,secs);
+      const saved=await updateRecord(id,{...res,analysis:{...res,seconds:secs,readingSeconds:secs,actualReadingSeconds:secs,effectiveReadingSeconds:secs},transcript:text,seconds:secs,durationSeconds:secs,readingSeconds:secs,actualReadingSeconds:secs,effectiveReadingSeconds:secs,analysisStatus:"Completed"});
       if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%");
     }catch(err){
       const em=String(err&&err.message||err||"");
@@ -11950,6 +12047,46 @@ document.addEventListener("click", function(e){
     if(r.audioUrl){ return await (await fetch(r.audioUrl)).blob(); }
     throw new Error('No audio file in submission');
   }
+
+  async function audioElementDurationSeconds(blob){
+    return new Promise(resolve=>{
+      try{
+        if(!blob) return resolve(0);
+        const url=URL.createObjectURL(blob); const a=new Audio(); let done=false;
+        function finish(v){ if(done) return; done=true; try{URL.revokeObjectURL(url);}catch(_){} const n=Number(v); resolve(Number.isFinite(n)&&n>0?n:0); }
+        a.preload='metadata'; a.onloadedmetadata=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); else setTimeout(()=>finish(a.duration||0),500); };
+        a.ondurationchange=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); };
+        a.onerror=()=>finish(0); setTimeout(()=>finish(a.duration||0),3000); a.src=url;
+      }catch(e){ resolve(0); }
+    });
+  }
+  async function trimmedAudioReadingSeconds(blob){
+    try{
+      const AudioCtx=window.AudioContext||window.webkitAudioContext; if(!blob||!AudioCtx) return 0;
+      const buf=await blob.arrayBuffer(); const ctx=new AudioCtx(); let audio;
+      try{ audio=await ctx.decodeAudioData(buf.slice(0)); }catch(e){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const sr=audio.sampleRate||44100, len=audio.length||0; if(!len){try{ctx.close&&ctx.close();}catch(_){} return 0;}
+      const ch=[]; for(let c=0;c<audio.numberOfChannels;c++) ch.push(audio.getChannelData(c));
+      const win=Math.max(256,Math.round(sr*.05)), rms=[];
+      for(let i=0;i<len;i+=win){let sum=0,count=0,end=Math.min(len,i+win);for(let j=i;j<end;j++){let v=0;for(let c=0;c<ch.length;c++)v+=ch[c][j]||0;v/=Math.max(1,ch.length);sum+=v*v;count++;}rms.push(Math.sqrt(sum/Math.max(1,count)));}
+      try{ctx.close&&ctx.close();}catch(_){} if(!rms.length) return 0;
+      const sorted=rms.slice().sort((a,b)=>a-b), noise=sorted[Math.floor(sorted.length*.25)]||0, peak=sorted[sorted.length-1]||0;
+      const threshold=Math.max(.010,noise*2.6,peak*.06); let first=-1,last=-1;
+      for(let i=0;i<rms.length;i++){if(rms[i]>=threshold){first=i;break;}} for(let i=rms.length-1;i>=0;i--){if(rms[i]>=threshold){last=i;break;}}
+      if(first<0||last<first) return 0; const full=audio.duration||len/sr; const start=Math.max(0,first*win/sr-.15); const end=Math.min(full,(last+1)*win/sr+.15);
+      const reading=end-start; return (!Number.isFinite(reading)||reading<=0)?0:Math.max(1,Math.round(reading));
+    }catch(e){ return 0; }
+  }
+  async function resolveAnalysisSeconds(r){
+    // RP173: audio duration must win over stale stored defaults such as 60 seconds.
+    let blob=null; try{ blob=await blobFromRecord(r); }catch(e){}
+    if(blob){ const trimmed=await trimmedAudioReadingSeconds(blob); if(trimmed>0) return trimmed; const dur=await audioElementDurationSeconds(blob); if(dur>0) return Math.round(dur); }
+    const explicit=[r&&r.actualReadingSeconds,r&&r.effectiveReadingSeconds,r&&r.readingSeconds,r&&r.analysis&&r.analysis.actualReadingSeconds,r&&r.analysis&&r.analysis.effectiveReadingSeconds,r&&r.analysis&&r.analysis.readingSeconds];
+    for(const v of explicit){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    const vals=[r&&r.seconds,r&&r.durationSeconds,r&&r.audioDuration,r&&r.recordingSeconds,r&&r.duration,r&&r.analysis&&r.analysis.seconds,r&&r.analysis&&r.analysis.durationSeconds,r&&r.analysis&&r.analysis.audioDuration];
+    for(const v of vals){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    return 0;
+  }
   async function transcribe(r){
     const k=key();
     if(!k) throw new Error('OpenAI key missing');
@@ -11984,9 +12121,14 @@ document.addEventListener("click", function(e){
     const accuracy=Math.max(0,Math.min(100,Math.round(correct/Math.max(1,a.length||total)*100)));
     const sec=Number(seconds)||0;
     const wcpm=sec>0?Math.round(correct/(sec/60)):null;
-    const speedScore=wcpm==null?0:Math.max(0,Math.min(100,Math.round(wcpm/30*100)));
-    let fluency=Math.max(0,Math.min(100,Math.round(accuracy*0.75 + speedScore*0.25 - repeated*2)));
-    let finalScore=Math.max(0,Math.min(100,Math.round(accuracy*0.70 + fluency*0.10 + speedScore*0.10 - Math.min(20,(missing*12+extra*4+repeated*3)*0.25))));
+    const target=(a.length||total)<=30?60:((a.length||total)<=50?75:90);
+    const speedScore=wcpm==null?0:Math.max(0,Math.min(100,Math.round(wcpm/target*100)));
+    let fluency=Math.max(0,Math.min(100,Math.round(accuracy*0.55 + speedScore*0.35 + Math.min(10, wcpm/8) - repeated*2)));
+    let finalScore=Math.max(0,Math.min(100,Math.round(accuracy*0.55 + fluency*0.20 + speedScore*0.15 - Math.min(20,(missing*12+extra*4+repeated*3)*0.25))));
+    function cap(v){ const n=a.length||total; if(n<=30) return Math.min(v, wcpm<25?82:(wcpm<35?86:(wcpm<45?90:(wcpm<60?94:100)))); if(n<=50) return Math.min(v, wcpm<30?78:(wcpm<45?86:(wcpm<60?92:100))); if(wcpm<30)return Math.min(v,70); if(wcpm<45)return Math.min(v,80); if(wcpm<60)return Math.min(v,88); return v; }
+    function fcap(v){ const n=a.length||total; if(n<=30) return Math.min(v, wcpm<25?62:(wcpm<35?72:(wcpm<45?80:(wcpm<60?90:100)))); if(n<=50) return Math.min(v, wcpm<30?60:(wcpm<45?76:(wcpm<60?88:100))); if(wcpm<30)return Math.min(v,55); if(wcpm<45)return Math.min(v,70); if(wcpm<60)return Math.min(v,82); return v; }
+    fluency=Math.max(0,Math.min(100,Math.round(fcap(fluency))));
+    finalScore=Math.max(0,Math.min(100,Math.round(cap(finalScore))));
     return {accuracy,rawAccuracy:accuracy,wcpm,fluency,speedScore,finalScore,score:finalScore,aiScore:finalScore,mistakeCount:missing+extra+repeated,mistakes:missing+extra+repeated,missing,extra,repeated,correctWords:correct,totalWords:a.length||total,analysisStatus:'Completed'};
   }
   async function getTaskText(db, r){
@@ -12027,9 +12169,11 @@ document.addEventListener("click", function(e){
         try{
           const transcript=await transcribe(r);
           const ref=await getTaskText(db,r);
-          const res=score(ref, transcript, r.seconds||r.duration||60);
+          const seconds=await resolveAnalysisSeconds(r);
+          if(!seconds || seconds<=0) throw new Error('Could not read recording duration. Ask student to submit again or enter a teacher score manually.');
+          const res=score(ref, transcript, seconds);
           const now=new Date().toISOString();
-          const patch={...res, analysis:res, transcript, status:'pending_review', analyzedAt:now, updatedAt:now, teacherAutoAnalyzed:true, teacherAutoVersion:'direct-20260611'};
+          const patch={...res, analysis:{...res,seconds:seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds}, transcript, status:'pending_review', seconds:seconds, durationSeconds:seconds, readingSeconds:seconds, actualReadingSeconds:seconds, effectiveReadingSeconds:seconds, analyzedAt:now, updatedAt:now, teacherAutoAnalyzed:true, teacherAutoVersion:'direct-20260703-rp173'};
           await db.collection('readingSubmissions').doc(r.id).set(patch,{merge:true});
           updateLocal(r.id, patch);
           ok++;
