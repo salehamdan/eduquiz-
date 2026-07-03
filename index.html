@@ -10,6 +10,7 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP177_RP_FAST_DELETE_YELLOW_SCORE_SYNC_FINAL_20260703 -->
 <!-- RP176_WCPM_DURATION_PREFERS_REAL_RECORDING_SECONDS_20260703 -->
 <!-- RP174_STUDENT_LATEST_PENDING_AND_SHORT_WCPM_STRICT_FINAL_20260703 -->
 <!-- RP173_REAL_AUDIO_DURATION_FIRST_REANALYZE_WCPM_FIX_20260703 -->
@@ -1595,6 +1596,13 @@ function rpMetricFromSubmission(s,k){
 }
 
 function rpAcceptedScoreFromSubmission(s){
+  try{
+    const acc=rpMetricFromSubmission(s,"accuracy");
+    const flu=rpMetricFromSubmission(s,"fluency");
+    const mis=rpMetricFromSubmission(s,"mistakes");
+    const wc=rpMetricFromSubmission(s,"wcpm");
+    if(Number(acc)>=100 && Number(flu)>=100 && Number(mis)===0 && (wc===null || Number(wc)>=60)) return 100;
+  }catch(_e){}
   const primary=[s&&s.teacherScore,s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
   for(const v of primary){ const n=rpSafeNumber(v); if(n!==null && n>0) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
   const fallback=[s&&s.accuracy,s&&s.analysis&&s.analysis.accuracy,s&&s.analysis&&s.analysis.rawAccuracy];
@@ -1628,7 +1636,22 @@ function rpBuildAcceptedSubmission(s, extra){
     durationSeconds:sec===null?(s&&s.durationSeconds):sec,
     readingSeconds:sec===null?(s&&s.readingSeconds):sec,
     actualReadingSeconds:sec===null?(s&&s.actualReadingSeconds):sec,
-    effectiveReadingSeconds:sec===null?(s&&s.effectiveReadingSeconds):sec
+    effectiveReadingSeconds:sec===null?(s&&s.effectiveReadingSeconds):sec,
+    analysis:{...((s&&s.analysis)||{}),
+      finalScore:score===""?((s&&s.analysis&&s.analysis.finalScore)||score):score,
+      score:score===""?((s&&s.analysis&&s.analysis.score)||score):score,
+      accuracy:accuracy===null?((s&&s.analysis&&s.analysis.accuracy)||s&&s.accuracy):accuracy,
+      wcpm:wcpm===null?((s&&s.analysis&&s.analysis.wcpm)||s&&s.wcpm):wcpm,
+      fluency:fluency===null?((s&&s.analysis&&s.analysis.fluency)||s&&s.fluency):fluency,
+      mistakes:mistakes===null?((s&&s.analysis&&s.analysis.mistakes)||s&&s.mistakes):mistakes,
+      mistakeCount:mistakes===null?((s&&s.analysis&&s.analysis.mistakeCount)||s&&s.mistakeCount):mistakes,
+      correctWords:rpMetricFromSubmission(s,"correctWords"),
+      totalWords:rpMetricFromSubmission(s,"totalWords"),
+      seconds:sec===null?((s&&s.analysis&&s.analysis.seconds)||s&&s.seconds):sec,
+      durationSeconds:sec===null?((s&&s.analysis&&s.analysis.durationSeconds)||s&&s.durationSeconds):sec,
+      readingSeconds:sec===null?((s&&s.analysis&&s.analysis.readingSeconds)||s&&s.readingSeconds):sec,
+      actualReadingSeconds:sec===null?((s&&s.analysis&&s.analysis.actualReadingSeconds)||s&&s.actualReadingSeconds):sec
+    }
   };
 }
 function rpIsAcceptedSubmission(s){
@@ -6280,20 +6303,14 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return !!(s && !rpOldDeleted(s) && s.status!=="rejected" && (rpIsAcceptedSubmission(s) || (!Number.isNaN(teacherScore)&&teacherScore>0)));
   }
   function rpScoreForDashboard(s){
-    const teacherScore=Number(s&&s.teacherScore);
-    if(!Number.isNaN(teacherScore)&&teacherScore>0) return Math.max(0,Math.min(100,Math.round(teacherScore)));
-    const finalScore=Number(s&&s.finalScore);
-    if(!Number.isNaN(finalScore)&&finalScore>0) return Math.max(0,Math.min(100,Math.round(finalScore)));
-    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.accuracy))) return Math.round(Number(s.analysis.accuracy));
-    return null;
+    const v=rpAcceptedScoreFromSubmission(s);
+    return v===""?null:Math.max(0,Math.min(100,Math.round(Number(v))));
   }
   function rpWcpmForDashboard(s){
     return rpMetricFromSubmission(s,"wcpm");
   }
   function rpFluencyForDashboard(s){
-    if(Number.isFinite(Number(s&&s.fluency))) return Math.round(Number(s.fluency));
-    if(s&&s.analysis&&Number.isFinite(Number(s.analysis.fluency))) return Math.round(Number(s.analysis.fluency));
-    return null;
+    return rpMetricFromSubmission(s,"fluency");
   }
   const rpDeletedStudents=(typeof deletedStudentKeySetFromData==="function")?deletedStudentKeySetFromData(data):deletedStudentKeySetFromRows((data&&data.users)||[]);
   const rpDeletedClasses=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
@@ -6521,6 +6538,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         const upd={...r,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
         setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
         await fsSet("readingSubmissions",r.id,upd);
+        try{ await rpApplyFinalDecisionToStudentTask(upd,"deleted",""); }catch(_e){}
         done++;
       }catch(e){fail++; console.warn("delete reading attempt failed",r&&r.id,e);}
     }
@@ -6538,7 +6556,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     const bid="del_one_"+s.id; setRpButton(bid,"Deleting...");
     const upd={...s,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
     setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
-    try{await fsSet("readingSubmissions",s.id,upd); setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
+    try{await fsSet("readingSubmissions",s.id,upd); try{ await rpApplyFinalDecisionToStudentTask(upd,"deleted",""); }catch(_e){} setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
     finally{setTimeout(()=>clearRpButton(bid),250);}
   }
 
@@ -9588,7 +9606,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               {visible.map(function(s){
                 var st=myStudents.find(function(x){return responseBelongsToStudent(s,x);});
                 var tt=(data.readingTasks||[]).find(function(x){return String(x.id||"")===String(s.taskId||"");});
-                var acc=s.analysis?s.analysis.accuracy:null;
+                var acc=rpAcceptedScoreFromSubmission(s);
+                if(acc===""||acc==null) acc=rpMetricFromSubmission(s,"score");
                 return <div key={s.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"6px 0",borderBottom:"1px solid #fde68a"}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:"12px",fontWeight:"700",color:C.tx,fontFamily:F}}>{st?st.name:(s.studentName||s.name||s.studentId||s.studentUserId||"Student")}</div>
@@ -10640,8 +10659,30 @@ document.addEventListener("click", function(e){
   }
 
   let __rpLastCloudSyncAt=0;
+  function rpSameStudentTaskLoose(a,b){
+    try{
+      const ai=rpRecInfo(a||{}), bi=rpRecInfo(b||{});
+      const ad=String(ai.sid||a.studentNumber||a.studentId||"").replace(/\D/g,"");
+      const bd=String(bi.sid||b.studentNumber||b.studentId||"").replace(/\D/g,"");
+      const an=rpNorm(ai.name||a.studentName||"");
+      const bn=rpNorm(bi.name||b.studentName||"");
+      const sameStudent=!!((ad&&bd&&ad===bd) || (an&&bn&&an===bn));
+      const at=rpNorm(taskLabel(a)||a.taskTitle||a.taskId||"");
+      const bt=rpNorm(taskLabel(b)||b.taskTitle||b.taskId||"");
+      return sameStudent && !!at && at===bt;
+    }catch(_e){return false;}
+  }
   async function syncCloudIntoLocal(){
-    const merged=mergeRecords(records(), await cloudRecords());
+    const cloud=await cloudRecords();
+    let merged=mergeRecords(records(), cloud);
+    const deletedCloud=(cloud||[]).filter(function(r){return isDeleted(r) || rpAttemptState(r)==="deleted";});
+    if(deletedCloud.length){
+      merged=merged.filter(function(r){
+        if(!r) return false;
+        if(isDeleted(r) || rpAttemptState(r)==="deleted") return true;
+        return !deletedCloud.some(function(d){return rpSameStudentTaskLoose(d,r);});
+      });
+    }
     saveRecords(merged);
     try{ RP_LIVE_CACHE=merged; }catch(_e){}
     __rpLastCloudSyncAt=Date.now();
@@ -10649,7 +10690,7 @@ document.addEventListener("click", function(e){
   }
   function recordsFastWithBackgroundSync(){
     const now=Date.now();
-    if(now-__rpLastCloudSyncAt>2500){
+    if(now-__rpLastCloudSyncAt>5000){
       __rpLastCloudSyncAt=now;
       syncCloudIntoLocal().then(function(){try{ if(document.getElementById("rp-v11-panel")?.style.display==="block") renderCards(); }catch(e){}});
     }
@@ -10677,35 +10718,15 @@ document.addEventListener("click", function(e){
     return true;
   }
   function finalScore(r){
-    // RP157: if the current metrics are perfect, do not keep an older saved score such as 97.
     try{
-      const acc=rpMetricFromSubmission(r,"accuracy");
-      const flu=rpMetricFromSubmission(r,"fluency");
-      const mis=rpMetricFromSubmission(r,"mistakes");
-      if(Number(acc)>=100 && Number(flu)>=100 && Number(mis)===0) return 100;
+      const v=rpAcceptedScoreFromSubmission(r);
+      if(v!=="" && v!==null && v!==undefined){
+        const n=Number(v);
+        if(Number.isFinite(n)) return Math.max(0,Math.min(100,Math.round(n)));
+      }
     }catch(_e){}
-    const t=Number(r.teacherScore);
-    if(!Number.isNaN(t)&&t>0) return Math.max(0,Math.min(100,Math.round(t)));
-
-    const stored=Number(r.finalScore);
-    if(!Number.isNaN(stored)&&stored>0) return Math.max(0,Math.min(100,Math.round(stored)));
-
-    const ai=Number(r.aiScore);
-    if(!Number.isNaN(ai)&&ai>0) return Math.max(0,Math.min(100,Math.round(ai)));
-    const af=Number(r.analysis&&r.analysis.finalScore);
-    if(!Number.isNaN(af)&&af>0) return Math.max(0,Math.min(100,Math.round(af)));
-    const aa=Number(r.analysis&&r.analysis.accuracy);
-    if(!Number.isNaN(aa)&&aa>0) return Math.max(0,Math.min(100,Math.round(aa)));
-
-    const acc=Number(r.accuracy), flu=Number(r.fluency), wcpm=rpValidWcpm(r.wcpm);
-    const ws=Number.isFinite(wcpm)?Math.min(100,Math.round(wcpm/100*100)):NaN;
-    if(Number.isFinite(acc)&&Number.isFinite(flu)&&Number.isFinite(ws)){
-      let v=Math.round(acc*0.80+flu*0.10+ws*0.10);
-      if(acc>=98) v=Math.max(90,v);
-      return Math.max(0,Math.min(100,v));
-    }
-    const vals=[acc,flu,ws].filter(Number.isFinite);
-    return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):"";
+    const vals=[r&&r.teacherScore,r&&r.finalScore,r&&r.aiScore,r&&r.score,r&&r.analysis&&r.analysis.finalScore,r&&r.analysis&&r.analysis.score,r&&r.analysis&&r.analysis.accuracy,r&&r.accuracy].map(Number).filter(Number.isFinite);
+    return vals.length?Math.max(0,Math.min(100,Math.round(vals[0]))):"";
   }
 
   function rpMetricValue(r,k){
@@ -11395,7 +11416,7 @@ document.addEventListener("click", function(e){
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpApplyFinalDecisionToStudentTask(rec,"deleted",""); })().then(()=>renderCards());
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpApplyFinalDecisionToStudentTask(rec,"deleted",""); try{ await syncCloudIntoLocal(); }catch(_e){} })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
@@ -11781,10 +11802,10 @@ document.addEventListener("click", function(e){
 
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
-    try{ if(typeof window.rpRunTeacherAutoNowSilent==="function") setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},50); }catch(_e){}
+    try{ if(typeof window.rpRunTeacherAutoNowSilent==="function" && (!window.__rpAutoLastRun || Date.now()-window.__rpAutoLastRun>8000)){ window.__rpAutoLastRun=Date.now(); setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},80); } }catch(_e){}
     rpRefreshRosters(false);
     let allLocalRaw=recordsFastWithBackgroundSync();
-    try{ allLocalRaw=await syncCloudIntoLocal(); }catch(_syncErr){ console.warn("RP119 initial cloud sync failed", _syncErr); }
+    try{ if(Date.now()-__rpLastCloudSyncAt>5000) allLocalRaw=await syncCloudIntoLocal(); }catch(_syncErr){ console.warn("RP119 initial cloud sync failed", _syncErr); }
     const allLocal=allLocalRaw.filter(rpRecordVisible);
     const rpTasks=await rpLoadReadingTasks();
     rpPopulateFilterOptions(allLocal,rpTasks);
