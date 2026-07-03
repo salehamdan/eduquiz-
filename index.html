@@ -10,6 +10,7 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP179_RP_EXACT_DELETE_RESTORE_SAFE_20260703 -->
 <!-- RP178_RP_TEACHER_DELETE_TOMBSTONE_NO_REVIVE_20260703 -->
 <!-- RP177_RP_FAST_DELETE_YELLOW_SCORE_SYNC_FINAL_20260703 -->
 <!-- RP176_WCPM_DURATION_PREFERS_REAL_RECORDING_SECONDS_20260703 -->
@@ -1665,9 +1666,16 @@ function rpAttemptTimeMs(r){
   return Number.isFinite(t)?t:0;
 }
 function rpAttemptState(r){
-  if(!r || r.deleted===true) return "deleted";
+  if(!r) return "deleted";
   const vals=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus,r.analysisStatus].map(v=>String(v||"").toLowerCase().trim());
-  if(vals.includes("deleted")) return "deleted";
+  if((r.deleted===true || vals.includes("deleted")) && typeof rpIsExactDeletedAttempt==="function" && rpIsExactDeletedAttempt(r)) return "deleted";
+  if((r.decisionMarker===true || String(r.id||"").indexOf("rp_decision_")===0) && vals.includes("deleted")) return "none";
+  // RP179: old loose deletes from 178 are not trusted because they deleted all attempts for the task.
+  if((r.deleted===true || vals.includes("deleted")) && !(typeof rpIsExactDeletedAttempt==="function" && rpIsExactDeletedAttempt(r))){
+    if(r.acceptedAt || r.approvedAt || r.teacherAccepted || r.teacherApproved || r.accepted || r.approved || r.scoreVisible===true || Number.isFinite(Number(r.teacherScore ?? r.finalScore ?? r.score))) return "accepted";
+    if(r.rejectedAt || r.rejectionReason) return "rejected";
+    return "pending";
+  }
   // RP162: teacher rejection must override any older accepted/pending flag left on the same record.
   if(vals.includes("rejected") || vals.includes("reject")) return "rejected";
   if(vals.includes("accepted") || vals.includes("approved")) return "accepted";
@@ -6536,10 +6544,9 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     let done=0, fail=0;
     for(const r of matches){
       try{
-        const upd={...r,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
+        const upd={...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
         setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
         await fsSet("readingSubmissions",r.id,upd);
-        try{ await rpApplyFinalDecisionToStudentTask(upd,"deleted",""); }catch(_e){}
         done++;
       }catch(e){fail++; console.warn("delete reading attempt failed",r&&r.id,e);}
     }
@@ -6555,9 +6562,9 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     const ok=window.confirm("Delete this attempt from teacher and student results?\n\nStudent: "+(st?st.name:"Student")+"\nTask: "+(t?t.title:"Task")+"\n\nThis will make it excluded from student performance.");
     if(!ok) return;
     const bid="del_one_"+s.id; setRpButton(bid,"Deleting...");
-    const upd={...s,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
+    const upd={...s,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
     setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
-    try{await fsSet("readingSubmissions",s.id,upd); try{ await rpApplyFinalDecisionToStudentTask(upd,"deleted",""); }catch(_e){} setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
+    try{await fsSet("readingSubmissions",s.id,upd); setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
     finally{setTimeout(()=>clearRpButton(bid),250);}
   }
 
@@ -6785,7 +6792,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
     try{["rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","rp_student_attempts"].forEach(k=>{const arr=JSON.parse(localStorage.getItem(k)||"[]"); if(Array.isArray(arr)) out=out.concat(arr);});}catch(e){}
     return out;
   }
-  function isDeleted(r){return !!(r&&(r.deleted===true||r.status==="deleted"));}
+  function isDeleted(r){return !!(r&&(r.rpExactDeleted===true||r.exactAttemptDeleted===true||r.deletedAttemptExact===true||r.deleteScope==="single_attempt"||r.deleteMode==="single_attempt")&&(r.deleted===true||String(r.status||"").toLowerCase()==="deleted"));}
   function isRejected(r){return !!(r&&r.status==="rejected");}
   function isApproved(r){const t=Number(r&&r.teacherScore);return !!(r&&!isDeleted(r)&&!isRejected(r)&&((r.status==="accepted"||r.status==="approved")||(!Number.isNaN(t)&&t>0)));}
   function score(r){const t=Number(r&&r.teacherScore); if(!Number.isNaN(t)&&t>0)return Math.round(Math.max(0,Math.min(100,t))); const f=Number(r&&r.finalScore); if(!Number.isNaN(f)&&f>0)return Math.round(Math.max(0,Math.min(100,f))); const ai=Number(r&&r.aiScore); if(!Number.isNaN(ai)&&ai>0)return Math.round(Math.max(0,Math.min(100,ai))); const a=Number(r&&r.accuracy); if(!Number.isNaN(a)&&a>0)return Math.round(Math.max(0,Math.min(100,a))); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.accuracy)))return Math.round(Number(r.analysis.accuracy)); return null;}
@@ -10523,8 +10530,39 @@ document.addEventListener("click", function(e){
   let rpActiveTab = "waiting";
   let rpInputSaveTimer = null;
   let RP_LIVE_CACHE = [];
-  const RP_DELETED_IDS_KEY = "rp_deleted_attempt_ids_v1";
-  const RP_DELETED_FP_KEY = "rp_deleted_attempt_fingerprints_v1";
+  const RP_DELETED_IDS_KEY = "rp_deleted_attempt_ids_v2_exact";
+  const RP_DELETED_FP_KEY = "rp_deleted_attempt_fingerprints_v2_exact";
+  // RP179: ignore the old loose tombstone cache from 178 because it could mark every attempt
+  // for the same student/task as deleted. From now on deletion is exact per attempt only.
+  try{ localStorage.removeItem("rp_deleted_attempt_ids_v1"); localStorage.removeItem("rp_deleted_attempt_fingerprints_v1"); }catch(_e){}
+  function rpIsExactDeletedAttempt(r){
+    return !!(r && (r.rpExactDeleted===true || r.exactAttemptDeleted===true || r.deletedAttemptExact===true || r.deleteScope==="single_attempt" || r.deleteMode==="single_attempt"));
+  }
+  function rpIsDeleteDecisionMarker(r){
+    try{ return !!(r && (r.decisionMarker===true || String(r.id||"").indexOf("rp_decision_")===0) && String(r.status||"").toLowerCase()==="deleted"); }catch(_e){ return false; }
+  }
+  function rpIsLegacyBroadDeletedAttempt(r){
+    if(!r) return false;
+    const vals=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus,r.analysisStatus].map(function(v){return String(v||"").toLowerCase().trim();});
+    return !!((r.deleted===true || vals.indexOf("deleted")>=0) && !rpIsExactDeletedAttempt(r));
+  }
+  function rpRecoverLegacyBroadDeletedAttempt(r){
+    if(!rpIsLegacyBroadDeletedAttempt(r) || rpIsDeleteDecisionMarker(r)) return r;
+    const c={...(r||{})};
+    delete c.deleted;
+    c.recoveredFromLooseDelete=true;
+    c.visibleToStudent=true;
+    const hadAccepted=!!(c.acceptedAt || c.approvedAt || c.teacherAccepted || c.teacherApproved || c.accepted || c.approved || c.scoreVisible===true);
+    const scoreNum=Number(c.teacherScore ?? c.finalScore ?? c.score ?? (c.analysis&&c.analysis.finalScore));
+    if(hadAccepted || Number.isFinite(scoreNum)){
+      c.status="accepted"; c.reviewStatus="accepted"; c.teacherReview="accepted"; c.teacherReviewStatus="accepted"; c.studentStatus="accepted"; c.analysisStatus="completed"; c.accepted=true; c.approved=true; c.teacherAccepted=true; c.teacherApproved=true; c.pending=false; c.scoreVisible=true;
+    }else if(c.rejectedAt || c.rejectionReason){
+      c.status="rejected"; c.reviewStatus="rejected"; c.teacherReview="rejected"; c.teacherReviewStatus="rejected"; c.studentStatus="rejected"; c.analysisStatus="rejected"; c.accepted=false; c.approved=false; c.pending=false; c.scoreVisible=false;
+    }else{
+      c.status="pending_review"; c.reviewStatus="pending"; c.teacherReview="pending"; c.teacherReviewStatus="pending"; c.studentStatus="pending"; c.analysisStatus=(c.analysis||c.transcript)?"Completed":"Pending"; c.accepted=false; c.approved=false; c.pending=true; c.scoreVisible=false;
+    }
+    return c;
+  }
 
   function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
   function rpDigits(v){ try{return String(v||"").replace(/\D/g,"");}catch(e){return "";} }
@@ -10650,6 +10688,7 @@ document.addEventListener("click", function(e){
 
   function normalizeRecord(r){
     if(!r) return r;
+    r=rpRecoverLegacyBroadDeletedAttempt(r);
     return {
       ...r,
       taskId:r.taskId||taskId(),
@@ -10691,7 +10730,7 @@ document.addEventListener("click", function(e){
       const arr=await fsAll("readingSubmissions");
       // RP117: RB/float drawer must not filter by the old fixed task id.
       // Load every real Reading Progress submission, excluding only audio chunks.
-      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_"));
+      return (arr||[]).filter(r=>r && r.source!=="rp_audio_chunk" && !String(r.id||"").includes("_chunk_") && !(typeof rpIsDeleteDecisionMarker==="function" && rpIsDeleteDecisionMarker(r)));
     }catch(e){
       console.warn("RP cloud read failed", e);
       return [];
@@ -10785,7 +10824,7 @@ document.addEventListener("click", function(e){
     const v=rpMetricFromSubmission(r,k);
     return v===null?"":v;
   }
-  function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted" || rpIsLocallyDeletedAttempt(r))); }
+  function isDeleted(r){ return !!(r && ((rpIsExactDeletedAttempt(r) && (r.deleted===true || String(r.status||"").toLowerCase()==="deleted")) || rpIsLocallyDeletedAttempt(r))); }
   function isRejected(r){ return !!(r && r.status==="rejected"); }
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
   function isTeacherApproved(r){
@@ -10801,7 +10840,7 @@ document.addEventListener("click", function(e){
     const now=new Date().toISOString();
     const base={...(rec||{}), id:String((rec&&rec.id)||"")};
     if(!base.id) return null;
-    const deleted={...base,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
+    const deleted={...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
     rpRememberDeletedAttempt(deleted);
     const a=records().filter(function(r){ return r && String(r.id)!==String(base.id) && !rpIsLocallyDeletedAttempt(r); });
     a.push(deleted);
