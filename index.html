@@ -7,6 +7,8 @@
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
+<!-- RP185_SCORING_RULES_V1_20260704 -->
+<!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
@@ -1257,48 +1259,26 @@ function rpSpeedScoreFromWcpm(wcpm, level, totalWords){
 }
 function rpSpeedScoreCap(wcpm, level, totalWords){
   const n=Number(totalWords);
-  const r=rpSpeedRatioForWcpm(wcpm, level, totalWords);
-  if(!Number.isFinite(n) || n<=0){
-    if(r<=0) return 65;
-    if(r<0.50) return 70;
-    if(r<0.65) return 78;
-    if(r<0.80) return 86;
-    if(r<0.95) return 93;
+  const w=Number(wcpm);
+  if(!Number.isFinite(w) || w<=0) return 70;
+  // RP_SCORING_RULES_V1_202607
+  // Speed is only a cap. It never rescues weak accuracy/completion.
+  // Short: 1–30 words. Medium: 31–80. Long: 81+.
+  if(Number.isFinite(n) && n>0 && n<=30){
+    if(w<25) return 75;
+    if(w<35) return 82;
+    if(w<50) return 90;
     return 100;
   }
-  // RP174: very short text is not punished like a long text, but a 22-word
-  // recording read word-by-word in 33–41 seconds must not receive 93–97.
-  // Use absolute WCPM tiers for short passages instead of the old blended ratio.
-  if(n<=30){
-    const w=Number(wcpm);
-    if(!Number.isFinite(w) || w<=0) return 82;
-    if(w<25) return 82;
-    if(w<35) return 86;
-    if(w<45) return 90;
-    if(w<60) return 94;
+  if(Number.isFinite(n) && n<=80){
+    if(w<35) return 70;
+    if(w<50) return 82;
+    if(w<75) return 92;
     return 100;
   }
-  if(n<=50){
-    if(r<=0) return 80;
-    if(r<0.50) return 84;
-    if(r<0.65) return 89;
-    if(r<0.80) return 94;
-    if(r<0.95) return 97;
-    return 100;
-  }
-  if(n<=80){
-    if(r<=0) return 72;
-    if(r<0.50) return 78;
-    if(r<0.65) return 84;
-    if(r<0.80) return 90;
-    if(r<0.95) return 95;
-    return 100;
-  }
-  if(r<=0) return 65;
-  if(r<0.50) return 70;
-  if(r<0.65) return 78;
-  if(r<0.80) return 86;
-  if(r<0.95) return 93;
+  if(w<45) return 70;
+  if(w<60) return 82;
+  if(w<90) return 92;
   return 100;
 }
 function rpCapBySpeed(value, wcpm, level, totalWords){
@@ -1310,15 +1290,77 @@ function rpCompletionScoreCap(correctWords, totalWords){
   const c=Number(correctWords), t=Number(totalWords);
   if(!Number.isFinite(c) || !Number.isFinite(t) || t<=0) return 100;
   const ratio=Math.max(0, Math.min(1, c/t));
-  // RP184: speed/WCPM must not rescue an incomplete reading.
-  // Example: 8/22 words = 36% completion, so the final score cap is 35%.
-  if(ratio < 0.30) return 25;
-  if(ratio < 0.40) return 35;
+  // RP_SCORING_RULES_V1_202607 — completion caps by passage length.
+  if(t<=30){
+    if(ratio < 0.30) return 25;
+    if(ratio < 0.40) return 35;
+    if(ratio < 0.50) return 40;
+    if(ratio < 0.60) return 45;
+    if(ratio < 0.75) return 60;
+    if(ratio < 0.90) return 75;
+    if(ratio < 1.00) return 90;
+    return 100;
+  }
+  if(t<=80){
+    if(ratio < 0.40) return 35;
+    if(ratio < 0.60) return 55;
+    if(ratio < 0.75) return 70;
+    if(ratio < 0.90) return 85;
+    if(ratio < 1.00) return 93;
+    return 100;
+  }
   if(ratio < 0.50) return 40;
-  if(ratio < 0.60) return 55;
-  if(ratio < 0.75) return 70;
-  if(ratio < 0.90) return 85;
+  if(ratio < 0.70) return 60;
+  if(ratio < 0.85) return 78;
+  if(ratio < 0.95) return 90;
+  if(ratio < 1.00) return 95;
   return 100;
+}
+function rpMistakeScoreCap(mistakes, totalWords){
+  const m=Number(mistakes), t=Number(totalWords);
+  if(!Number.isFinite(m) || m<=0) return 100;
+  if(!Number.isFinite(t) || t<=0) return 100;
+  // RP_SCORING_RULES_V1_202607 — errors are stricter in short texts.
+  if(t<=30){
+    if(m===1) return 95;
+    if(m===2) return 90;
+    if(m===3) return 84;
+    if(m<=5) return 78;
+    if(m<=8) return 63;
+    return 45;
+  }
+  const pctErr=(m/t)*100;
+  if(t<=80){
+    if(pctErr<=3) return 100;
+    if(pctErr<=8) return 90;
+    if(pctErr<=15) return 78;
+    if(pctErr<=25) return 65;
+    return 50;
+  }
+  if(pctErr<=3) return 100;
+  if(pctErr<=7) return 92;
+  if(pctErr<=12) return 85;
+  if(pctErr<=20) return 72;
+  return 60;
+}
+function rpCapByMistakes(value, mistakes, totalWords){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return value;
+  return Math.max(0, Math.min(100, Math.round(Math.min(n, rpMistakeScoreCap(mistakes, totalWords)))));
+}
+function rpApplyScoringRulesV1(value, meta){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return value;
+  const correct=meta&&meta.correctWords;
+  const total=meta&&meta.totalWords;
+  const mistakes=meta&&meta.mistakes;
+  const wcpm=meta&&meta.wcpm;
+  const level=(meta&&meta.level)||"beginner";
+  let out=Math.max(0, Math.min(100, Math.round(n)));
+  out=rpCapByCompletion(out, correct, total);
+  out=rpCapByMistakes(out, mistakes, total);
+  out=rpCapBySpeed(out, wcpm, level, total);
+  return Math.max(0, Math.min(100, Math.round(out)));
 }
 function rpCapByCompletion(value, correctWords, totalWords){
   const n=Number(value);
@@ -1381,11 +1423,8 @@ function rpAnalyze(reference, transcript, seconds, level){
   let finalScore=Math.max(0,Math.min(100,Math.round(
     baseAccuracy*0.42 + orderMatch*0.16 + completion*0.12 + fluency*0.18 + speedScore*0.12 - repetitionPenalty - reversePenalty
   )));
-  finalScore=rpCapBySpeed(finalScore, wcpm, level, ref.length);
-  // RP184: if the student reads only part of the passage, final score is capped by completion.
-  // This prevents a fast partial recording from getting an inflated score.
-  finalScore=rpCapByCompletion(finalScore, correct, ref.length);
-  // accuracy is pure word accuracy. finalScore is the overall grade after order/repetition/speed penalties.
+  finalScore=rpApplyScoringRulesV1(finalScore,{correctWords:correct,totalWords:ref.length,mistakes:mistakeCount,wcpm,level});
+  // accuracy is pure word accuracy. finalScore is the overall grade after order/repetition/speed/errors/completion caps.
   const accuracy=baseAccuracy;
   return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionPenalty,reversePenalty,reverseMatch,seconds:Math.round(safeSeconds)};
 }
@@ -1583,6 +1622,14 @@ function rpCompletionFromSubmission(s){
     return {correct:c,total:t};
   }catch(e){return {correct:null,total:null};}
 }
+function rpMistakeCountFromSubmission(s){
+  try{
+    const an=(s&&s.analysis)||{};
+    const direct=[an.mistakeCount, an.mistakes, s&&s.mistakeCount, s&&s.mistakes];
+    for(const v of direct){ const n=rpSafeNumber(v); if(n!==null && n>=0) return Math.round(n); }
+    return ((an.missing||[]).length)+((an.extra||[]).length)+((an.substitutions||[]).length)+((an.repeated||[]).length);
+  }catch(e){ return null; }
+}
 function rpSpeedAdjustedMetric(s, k, val){
   if(!s) return val;
   const wcpm=rpComputedWcpmFromSubmission(s);
@@ -1595,7 +1642,8 @@ function rpSpeedAdjustedMetric(s, k, val){
   }
   if(k==="score"){
     const comp=rpCompletionFromSubmission(s);
-    out=rpCapByCompletion(out, comp.correct, comp.total);
+    const mistakes=rpMistakeCountFromSubmission(s);
+    out=rpApplyScoringRulesV1(out,{correctWords:comp.correct,totalWords:comp.total||totalWords,mistakes,wcpm,level});
   }
   return out;
 }
