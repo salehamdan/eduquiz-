@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v161</title>
+<title>EduQuiz — Smart Assessment v165</title>
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
+<!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
 <!-- RP159_REJECT_DELETE_STUDENT_SYNC_OVERVIEW_PANEL_20260703 -->
 <!-- RP161_STUDENT_DIRECT_REJECT_DELETE_LIVE_SYNC_20260703 -->
@@ -1522,48 +1523,100 @@ async function rpSaveStudentDecisionMarker(s, status, reason){
 
 
 async function rpApplyFinalDecisionToStudentTask(s, status, reason){
-  // RP164: final teacher decision must close ALL duplicate pending records for the same student + task.
-  // Earlier builds changed one record only; the student card then picked another stale Pending record and stayed Waiting.
+  // RP165: professional fix.
+  // The teacher card can be built from normalized/local records, while the student page reads Firestore submissions.
+  // Therefore rejection/deletion must be applied by a resolved identity:
+  // student number/name + task id/title, not only the clicked document id.
   const cleanStatus=String(status||"rejected").toLowerCase();
   const now=new Date().toISOString();
+  function norm(v){ return String(v||"").toLowerCase().replace(/\s+/g," ").trim(); }
   function digits(v){ try{return String(v||"").replace(/\D/g,"");}catch(e){return "";} }
-  function vals(x){ return [x&&x.studentId,x&&x.studentNumber,x&&x.studentUserId,x&&x.userId,x&&x.uid,x&&x.ownerStudentId,x&&x.ownerId,x&&x.studentEmail].filter(Boolean).map(v=>String(v)); }
+  function safeInfo(x){
+    try{ if(typeof rpRecInfo==="function"){ const inf=rpRecInfo(x||{}); if(inf) return inf; } }catch(_e){}
+    return {};
+  }
+  function safeTaskLabel(x){
+    try{ if(typeof taskLabel==="function"){ const v=taskLabel(x||{}); if(v) return String(v); } }catch(_e){}
+    return String((x&&(x.taskTitle||x.title||x.taskName||x.assignmentTitle||x.assignment||x.taskId))||"");
+  }
+  function safeTaskId(x){
+    try{ if(typeof rpTaskIdOf==="function"){ const v=rpTaskIdOf(x||{}); if(v) return String(v); } }catch(_e){}
+    return String((x&&(x.taskId||x.taskKey||x.assignmentId))||"");
+  }
+  function resolveRecord(x){
+    const inf=safeInfo(x||{});
+    const sid=String((x&&(x.studentNumber||x.studentNo||x.studentId||x.studentUserId||x.userId||x.uid)) || inf.sid || "").trim();
+    const name=String((x&&(x.studentName||x.name)) || inf.name || "").trim();
+    const tid=safeTaskId(x||{});
+    const ttl=String((x&&(x.taskTitle||x.title||x.taskName||x.assignmentTitle||x.assignment)) || safeTaskLabel(x||{}) || "").trim();
+    return {
+      ...(x||{}),
+      taskId: tid || (x&&x.taskId) || "",
+      taskTitle: ttl || (x&&x.taskTitle) || "",
+      studentId: (x&&x.studentId) || sid || "",
+      studentNumber: (x&&(x.studentNumber||x.studentNo)) || digits(sid) || sid || "",
+      studentUserId: (x&&(x.studentUserId||x.userId||x.uid)) || (String(sid).startsWith("student_")?sid:""),
+      studentName: (x&&x.studentName) || name || ""
+    };
+  }
+  const target=resolveRecord(s||{});
+  function studentVals(x){
+    const inf=safeInfo(x||{});
+    return [x&&x.studentId,x&&x.studentNumber,x&&x.studentNo,x&&x.studentUserId,x&&x.userId,x&&x.uid,x&&x.ownerStudentId,x&&x.ownerId,x&&x.studentEmail,inf&&inf.sid]
+      .filter(Boolean).map(v=>String(v));
+  }
+  function studentNames(x){
+    const inf=safeInfo(x||{});
+    return [x&&x.studentName,x&&x.name,inf&&inf.name].filter(Boolean).map(norm).filter(Boolean);
+  }
   function sameStudent(a,b){
-    const av=vals(a), bv=vals(b);
+    const av=studentVals(a), bv=studentVals(b);
     if(av.some(x=>bv.includes(x))) return true;
     const ad=av.map(digits).filter(Boolean), bd=bv.map(digits).filter(Boolean);
     if(ad.some(x=>bd.includes(x))) return true;
-    const an=String((a&&(a.studentName||a.name))||"").trim();
-    const bn=String((b&&(b.studentName||b.name))||"").trim();
-    return !!(an && bn && an===bn);
+    const an=studentNames(a), bn=studentNames(b);
+    return an.some(x=>bn.includes(x));
   }
-  function sameTask(a,b){ return String((a&&a.taskId)||"") && String((a&&a.taskId)||"")===String((b&&b.taskId)||""); }
+  function taskVals(x){
+    const id=safeTaskId(x||{});
+    return [id,x&&x.taskId,x&&x.taskKey,x&&x.assignmentId].filter(Boolean).map(v=>String(v));
+  }
+  function taskNames(x){
+    return [x&&x.taskTitle,x&&x.title,x&&x.taskName,x&&x.assignmentTitle,x&&x.assignment,safeTaskLabel(x||{})].filter(Boolean).map(norm).filter(Boolean);
+  }
+  function sameTask(a,b){
+    const av=taskVals(a), bv=taskVals(b);
+    if(av.length && bv.length && av.some(x=>bv.includes(x))) return true;
+    const an=taskNames(a), bn=taskNames(b);
+    return an.length && bn.length && an.some(x=>bn.includes(x));
+  }
   function finalPatch(x){
-    if(cleanStatus==="deleted") return {...x,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
-    if(cleanStatus==="retake_allowed" || cleanStatus==="retake") return {...x,status:"retake_allowed",reviewStatus:"retake_allowed",teacherReview:"retake_allowed",teacherReviewStatus:"retake_allowed",studentStatus:"retake_allowed",analysisStatus:"retake_allowed",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,reviewedAt:now,updatedAt:now,teacherNotes:reason||x.teacherNotes||""};
-    return rpBuildRejectedSubmission(x, reason||"");
+    const base=resolveRecord({...target,...(x||{})});
+    if(cleanStatus==="deleted") return {...base,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
+    if(cleanStatus==="retake_allowed" || cleanStatus==="retake") return {...base,status:"retake_allowed",reviewStatus:"retake_allowed",teacherReview:"retake_allowed",teacherReviewStatus:"retake_allowed",studentStatus:"retake_allowed",analysisStatus:"retake_allowed",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,reviewedAt:now,updatedAt:now,teacherNotes:reason||base.teacherNotes||""};
+    return rpBuildRejectedSubmission(base, reason||"");
   }
-  const marker= cleanStatus==="deleted" ? rpBuildStudentDecisionMarker(s,"deleted",reason||"") : rpBuildStudentDecisionMarker(s,"rejected",reason||"");
+  const marker= cleanStatus==="deleted" ? rpBuildStudentDecisionMarker(target,"deleted",reason||"") : rpBuildStudentDecisionMarker(target,"rejected",reason||"");
   let changed=0;
   try{
-    if(typeof fsSet==="function" && s&&s.id){ await fsSet("readingSubmissions", s.id, finalPatch(s)); changed++; }
-  }catch(e){ console.warn("RP164 direct decision write failed", e&&e.message); }
+    if(typeof fsSet==="function" && target&&target.id){ await fsSet("readingSubmissions", target.id, finalPatch(target)); changed++; }
+  }catch(e){ console.warn("RP165 direct decision write failed", e&&e.message); }
   try{
     if(typeof db!=="undefined" && db && db.collection){
       const snap=await db.collection("readingSubmissions").get();
       const jobs=[];
       snap.forEach(function(doc){
-        const r={id:doc.id,...(doc.data?doc.data():{})};
-        if(sameTask(r,s) && sameStudent(r,s)){ jobs.push(fsSet("readingSubmissions", doc.id, finalPatch(r))); }
+        const r=resolveRecord({id:doc.id,...(doc.data?doc.data():{})});
+        if(sameTask(r,target) && sameStudent(r,target)){ jobs.push(fsSet("readingSubmissions", doc.id, finalPatch(r))); }
       });
       const res=await Promise.allSettled(jobs);
       changed += res.filter(x=>x.status==="fulfilled").length;
     }
-  }catch(e){ console.warn("RP164 bulk decision scan failed", e&&e.message); }
-  try{ await rpSaveStudentDecisionMarker(s, cleanStatus==="deleted"?"deleted":"rejected", reason||""); }catch(e){}
+  }catch(e){ console.warn("RP165 bulk decision scan failed", e&&e.message); }
+  try{ await rpSaveStudentDecisionMarker(target, cleanStatus==="deleted"?"deleted":"rejected", reason||""); changed++; }catch(e){}
   try{
     if(typeof records==="function" && typeof saveRecords==="function"){
-      const arr=(records()||[]).map(function(r){ return (sameTask(r,s)&&sameStudent(r,s)) ? finalPatch(r) : r; });
+      const arr=(records()||[]).map(function(r){ return (sameTask(r,target)&&sameStudent(r,target)) ? finalPatch(r) : r; });
       arr.push(marker);
       saveRecords(arr);
     }
@@ -1574,7 +1627,7 @@ async function rpApplyFinalDecisionToStudentTask(s, status, reason){
       keys.forEach(function(k){
         try{
           const arr=JSON.parse(localStorage.getItem(k)||"[]");
-          if(Array.isArray(arr)){ localStorage.setItem(k, JSON.stringify(arr.map(function(r){ return (sameTask(r,s)&&sameStudent(r,s)) ? finalPatch(r) : r; }))); }
+          if(Array.isArray(arr)){ localStorage.setItem(k, JSON.stringify(arr.map(function(r){ return (sameTask(r,target)&&sameStudent(r,target)) ? finalPatch(r) : r; }))); }
         }catch(_e){}
       });
     }
@@ -5473,6 +5526,16 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if(!cut) return true;
     return rpRecordTime(r)>cut;
   }
+  function rpTaskNorm(v){ return String(v||"").toLowerCase().replace(/\s+/g," ").trim(); }
+  function rpSameTaskForStudentRecord(r,t){
+    if(!r || !t) return false;
+    const recordIds=[r.taskId,r.taskKey,r.assignmentId].filter(Boolean).map(v=>String(v));
+    const taskIds=[t.id,t.taskId,t.taskKey,t.assignmentId].filter(Boolean).map(v=>String(v));
+    if(recordIds.length && taskIds.length && recordIds.some(v=>taskIds.includes(v))) return true;
+    const recordNames=[r.taskTitle,r.title,r.taskName,r.assignmentTitle,r.assignment].filter(Boolean).map(rpTaskNorm);
+    const taskNames=[t.title,t.taskTitle,t.name,t.taskName,t.assignmentTitle,t.assignment].filter(Boolean).map(rpTaskNorm);
+    return recordNames.length && taskNames.length && recordNames.some(v=>taskNames.includes(v));
+  }
   function rpLocalAttemptsForTask(taskId){
     let out=[];
     try{
@@ -5535,7 +5598,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     // Reject/delete from the teacher can be saved under the same attempt id OR under a cloud-only record.
     // In both cases, do not let old localStorage pending attempts or local attempt counters keep the
     // student card stuck on "Waiting for teacher analysis".
-    const cloudAll=subs.filter(function(s){return s && String(s.taskId||"")===String(t.id||"") && afterReset(s,t.id);});
+    const cloudAll=subs.filter(function(s){return s && rpSameTaskForStudentRecord(s,t) && afterReset(s,t.id);});
     const cloudDeletedIds=new Set(cloudAll.filter(function(s){return s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted";}).map(function(s){return String(s.id||"");}));
     const cloudById={};
     cloudAll.forEach(function(s){ if(s&&s.id) cloudById[String(s.id)]={...(cloudById[String(s.id)]||{}),...s}; });
@@ -5646,7 +5709,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     all.sort((a,b)=>(Date.parse(a.createdAt||a.submittedAt||a.updatedAt||"")||0)-(Date.parse(b.createdAt||b.submittedAt||b.updatedAt||"")||0));
     const last=all.length?all[all.length-1]:null;
     const accepted=all.filter(a=>rpIsAcceptedSubmission(a));
-    const rejected=all.filter(a=>String(a.status||"").toLowerCase()==="rejected").length;
+    const rejected=all.filter(a=>rpAttemptState(a)==="rejected").length;
     const scores=accepted.map(rpStudentScore).filter(x=>x!==null);
     const lastScore=last?rpStudentScore(last):null;
     const best=scores.length?Math.max(...scores):null;
