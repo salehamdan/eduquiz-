@@ -14,6 +14,7 @@
 <!-- RP179_RP_EXACT_DELETE_RESTORE_SAFE_20260703 -->
 <!-- RP178_RP_TEACHER_DELETE_TOMBSTONE_NO_REVIVE_20260703 -->
 <!-- RP177_RP_FAST_DELETE_YELLOW_SCORE_SYNC_FINAL_20260703 -->
+<!-- RP184_COMPLETION_CAP_LOW_PARTIAL_READING_SCORE_20260703 -->
 <!-- RP176_WCPM_DURATION_PREFERS_REAL_RECORDING_SECONDS_20260703 -->
 <!-- RP174_STUDENT_LATEST_PENDING_AND_SHORT_WCPM_STRICT_FINAL_20260703 -->
 <!-- RP173_REAL_AUDIO_DURATION_FIRST_REANALYZE_WCPM_FIX_20260703 -->
@@ -1305,6 +1306,25 @@ function rpCapBySpeed(value, wcpm, level, totalWords){
   if(!Number.isFinite(n)) return value;
   return Math.max(0, Math.min(100, Math.round(Math.min(n, rpSpeedScoreCap(wcpm, level, totalWords)))));
 }
+function rpCompletionScoreCap(correctWords, totalWords){
+  const c=Number(correctWords), t=Number(totalWords);
+  if(!Number.isFinite(c) || !Number.isFinite(t) || t<=0) return 100;
+  const ratio=Math.max(0, Math.min(1, c/t));
+  // RP184: speed/WCPM must not rescue an incomplete reading.
+  // Example: 8/22 words = 36% completion, so the final score cap is 35%.
+  if(ratio < 0.30) return 25;
+  if(ratio < 0.40) return 35;
+  if(ratio < 0.50) return 40;
+  if(ratio < 0.60) return 55;
+  if(ratio < 0.75) return 70;
+  if(ratio < 0.90) return 85;
+  return 100;
+}
+function rpCapByCompletion(value, correctWords, totalWords){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return value;
+  return Math.max(0, Math.min(100, Math.round(Math.min(n, rpCompletionScoreCap(correctWords, totalWords)))));
+}
 function rpFluencyCapBySpeed(value, wcpm, level, totalWords){
   const n=Number(value);
   if(!Number.isFinite(n)) return value;
@@ -1362,6 +1382,9 @@ function rpAnalyze(reference, transcript, seconds, level){
     baseAccuracy*0.42 + orderMatch*0.16 + completion*0.12 + fluency*0.18 + speedScore*0.12 - repetitionPenalty - reversePenalty
   )));
   finalScore=rpCapBySpeed(finalScore, wcpm, level, ref.length);
+  // RP184: if the student reads only part of the passage, final score is capped by completion.
+  // This prevents a fast partial recording from getting an inflated score.
+  finalScore=rpCapByCompletion(finalScore, correct, ref.length);
   // accuracy is pure word accuracy. finalScore is the overall grade after order/repetition/speed penalties.
   const accuracy=baseAccuracy;
   return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionPenalty,reversePenalty,reverseMatch,seconds:Math.round(safeSeconds)};
@@ -1543,15 +1566,38 @@ function rpTotalWordsFromSubmission(s){
     return w>0?w:null;
   }catch(e){return null;}
 }
+function rpCompletionFromSubmission(s){
+  try{
+    const an=(s&&s.analysis)||{};
+    const num=function(v){ const n=rpSafeNumber(v); return n===null?null:Math.round(n); };
+    let c=null, t=null;
+    const cVals=[an.correctWords, s&&s.correctWords, an.wordsCorrect, s&&s.wordsCorrect];
+    for(const v of cVals){ const n=num(v); if(n!==null && n>=0){ c=n; break; } }
+    const tVals=[an.totalWords, s&&s.totalWords, an.wordsTotal, s&&s.wordsTotal];
+    for(const v of tVals){ const n=num(v); if(n!==null && n>0){ t=n; break; } }
+    if(t===null) t=rpTotalWordsFromSubmission(s);
+    if(c===null){
+      const acc=num(an.rawAccuracy)!=null?num(an.rawAccuracy):(num(an.accuracy)!=null?num(an.accuracy):num(s&&s.rawAccuracy)!=null?num(s&&s.rawAccuracy):num(s&&s.accuracy));
+      if(acc!==null && t) c=Math.round(t*Math.max(0,Math.min(100,acc))/100);
+    }
+    return {correct:c,total:t};
+  }catch(e){return {correct:null,total:null};}
+}
 function rpSpeedAdjustedMetric(s, k, val){
   if(!s) return val;
   const wcpm=rpComputedWcpmFromSubmission(s);
-  if(wcpm===null) return val;
   const level=rpLevelFromSubmission(s);
   const totalWords=rpTotalWordsFromSubmission(s);
-  if(k==="fluency") return rpFluencyCapBySpeed(val, wcpm, level, totalWords);
-  if(k==="score") return rpCapBySpeed(val, wcpm, level, totalWords);
-  return val;
+  let out=val;
+  if(wcpm!==null){
+    if(k==="fluency") out=rpFluencyCapBySpeed(val, wcpm, level, totalWords);
+    if(k==="score") out=rpCapBySpeed(val, wcpm, level, totalWords);
+  }
+  if(k==="score"){
+    const comp=rpCompletionFromSubmission(s);
+    out=rpCapByCompletion(out, comp.correct, comp.total);
+  }
+  return out;
 }
 
 function rpMetricFromSubmission(s,k){
