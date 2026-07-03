@@ -9,6 +9,7 @@
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
 <!-- RP185_SCORING_RULES_V1_20260704 -->
 <!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
+<!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
@@ -6050,7 +6051,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return !last || rpAttemptState(last)==="pending";
   }
   const [task,setTask]=useState(null); const [recentSubmit,setRecentSubmit]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
-  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [modelRate,setModelRate]=useState(0.85); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false);
+  const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [modelRate,setModelRate]=useState(0.85); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false); const recTokenRef=useRef(""); const transcriptTokenRef=useRef("");
   useEffect(()=>{
     const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },5000);
     return ()=>clearInterval(timer);
@@ -6098,7 +6099,10 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if(task && !canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
     if(modelPlaying || (window.speechSynthesis&&window.speechSynthesis.speaking)){setMsg("Stop the model audio first, then start recording.");return;}
     if(!rpCanRecord()){setMsg("Recording is not supported in this browser. Use Chrome on Android if possible.");return;}
-    setRecentSubmit(null); setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId("rec_"+Date.now()+"_"+Math.random().toString(36).slice(2));chunksRef.current=[];voiceRef.current=false;
+    const newRecId="rec_"+Date.now()+"_"+Math.random().toString(36).slice(2);
+    recTokenRef.current=newRecId; transcriptTokenRef.current="";
+    try{ if(recRef.current && recRef.current.stop) recRef.current.stop(); }catch(_e){}
+    setRecentSubmit(null); setMsg("");setBlob(null);setAudioUrl("");setTranscript("");setSeconds(0);setSentBlobKey("");setRecordingId(newRecId);chunksRef.current=[];voiceRef.current=false;
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
     try{
       const AC=window.AudioContext||window.webkitAudioContext;
@@ -6111,7 +6115,15 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:16000}:undefined); mediaRef.current=mr;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunksRef.current.push(e.data);};
     mr.onstop=()=>{stream.getTracks().forEach(x=>x.stop()); try{audioCtxRef.current&&audioCtxRef.current.close();}catch(e){} const b=new Blob(chunksRef.current,{type:mime||"audio/webm"}); setBlob(b); setAudioUrl(URL.createObjectURL(b)); setMsg("تم إيقاف التسجيل. استمع للتسجيل قبل الإرسال أو أعد التسجيل.");};
-    recRef.current=rpStartRecognition(t=>{setTranscript(t); if(String(t||"").trim().split(/\s+/).length>=2) voiceRef.current=true;});
+    recRef.current=rpStartRecognition(t=>{
+      // RP186: isolate live transcript per recording. Late SpeechRecognition callbacks from an old
+      // recorder must not be merged into the current attempt. This prevents old phrases such as
+      // "I like to have fun with my friends" from appearing in a new recording.
+      if(recTokenRef.current!==newRecId) return;
+      transcriptTokenRef.current=newRecId;
+      setTranscript(String(t||"").trim());
+      if(String(t||"").trim().split(/\s+/).length>=2) voiceRef.current=true;
+    });
     mr.start(1000); setRecording(true);
     let elapsed=0, strongVoiceSeconds=0;
     tRef.current=setInterval(()=>{
@@ -6140,6 +6152,8 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     try{ if(audioUrl) URL.revokeObjectURL(audioUrl); }catch(e){}
     setBlob(null);
     setAudioUrl("");
+    try{ if(recRef.current && recRef.current.stop) recRef.current.stop(); }catch(_e){}
+    recTokenRef.current=""; transcriptTokenRef.current="";
     setTranscript("");
     setSeconds(0);
     setSentBlobKey("");
@@ -6159,7 +6173,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const beforeCount=attemptsForTask(task).length;
     const id=uid();
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
-    var tx=String(transcript||"").trim();
+    var tx=(transcriptTokenRef.current && transcriptTokenRef.current===recordingId)?String(transcript||"").trim():"";
     const fullRecordedSeconds=Math.max(Number(seconds)||0, await rpGetBlobDurationSeconds(blob));
     let actualReadingSeconds=await rpEstimateActualReadingSecondsFromBlob(blob);
     if(!actualReadingSeconds || actualReadingSeconds<=0) actualReadingSeconds=fullRecordedSeconds;
@@ -10638,16 +10652,15 @@ document.addEventListener("click", function(e){
       const ids=rpDeletedIdSet();
       rpDeletionIdsFor(r).forEach(function(x){ ids.add(String(x)); });
       rpWriteSet(RP_DELETED_IDS_KEY,ids);
-      const fp=rpDeletionFingerprint(r);
-      if(fp){ const fps=rpDeletedFpSet(); fps.add(fp); rpWriteSet(RP_DELETED_FP_KEY,fps); }
+      // RP186: no fingerprint tombstone for single-attempt delete. Fingerprints are too broad.
     }catch(e){}
   }
   function rpIsLocallyDeletedAttempt(r){
     try{
+      // RP186: exact delete means exact attempt id only. Do NOT hide by student/task fingerprint,
+      // because that can remove several attempts for the same student and same task.
       const ids=rpDeletedIdSet();
-      if(rpDeletionIdsFor(r).some(function(x){return ids.has(String(x));})) return true;
-      const fp=rpDeletionFingerprint(r);
-      return !!(fp && rpDeletedFpSet().has(fp));
+      return rpDeletionIdsFor(r).some(function(x){return ids.has(String(x));});
     }catch(e){return false;}
   }
 
@@ -11060,18 +11073,30 @@ document.addEventListener("click", function(e){
     return !!(r && !isDeleted(r) && !isRejected(r) && isTeacherApproved(r) && finalScore(r)!=="");
   }
   async function rpDeleteAttemptPermanent(rec){
-    const now=new Date().toISOString();
     const base={...(rec||{}), id:String((rec&&rec.id)||"")};
     if(!base.id) return null;
-    const deleted={...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
-    rpRememberDeletedAttempt(deleted);
-    const a=records().filter(function(r){ return r && String(r.id)!==String(base.id) && !rpIsLocallyDeletedAttempt(r); });
-    a.push(deleted);
-    saveRecords(a);
-    try{ await cloudSaveRecord(deleted); }catch(e){}
-    try{ if(typeof fsSet==="function") await fsSet("readingSubmissions", deleted.id, deleted); }catch(e){}
-    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:deleted.id,status:"deleted"}})); }catch(_e){}
-    return deleted;
+    // RP186: Delete Attempt is exact-id only. It does not call any broad student/task decision,
+    // and it does not use fingerprints that could hide sibling attempts.
+    rpRememberDeletedAttempt(base);
+    const current=recordsLive().concat(records());
+    const keepMap=new Map();
+    current.forEach(function(r){
+      const id=String(r&& (r.id||r._id) || "");
+      if(!id || id===base.id) return;
+      if(rpIsLocallyDeletedAttempt(r)) return;
+      keepMap.set(id,{...r,id:id});
+    });
+    const keep=Array.from(keepMap.values());
+    saveRecords(keep);
+    try{
+      if(typeof fsDel==="function") await fsDel("readingSubmissions", base.id);
+      else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(base.id).delete();
+      else await cloudSaveRecord({...base,rpExactDeleted:true,exactAttemptDeleted:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",deleted:true,visibleToStudent:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    }catch(e){
+      try{ await cloudSaveRecord({...base,rpExactDeleted:true,exactAttemptDeleted:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",deleted:true,visibleToStudent:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); }catch(_e){}
+    }
+    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:base.id,status:"deleted_exact"}})); }catch(_e){}
+    return base;
   }
 
   async function updateRecord(id,updates){
@@ -11749,7 +11774,7 @@ document.addEventListener("click", function(e){
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await rpDeleteAttemptPermanent(rec); try{ await syncCloudIntoLocal(); }catch(_e){} })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await rpDeleteAttemptPermanent(rec); })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
