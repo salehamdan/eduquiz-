@@ -10,6 +10,7 @@
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
 <!-- RP164_REJECT_BULK_CLOSE_DUPLICATE_PENDING_STUDENT_TASK_20260703 -->
+<!-- RP178_RP_TEACHER_DELETE_TOMBSTONE_NO_REVIVE_20260703 -->
 <!-- RP177_RP_FAST_DELETE_YELLOW_SCORE_SYNC_FINAL_20260703 -->
 <!-- RP176_WCPM_DURATION_PREFERS_REAL_RECORDING_SECONDS_20260703 -->
 <!-- RP174_STUDENT_LATEST_PENDING_AND_SHORT_WCPM_STRICT_FINAL_20260703 -->
@@ -10522,8 +10523,53 @@ document.addEventListener("click", function(e){
   let rpActiveTab = "waiting";
   let rpInputSaveTimer = null;
   let RP_LIVE_CACHE = [];
+  const RP_DELETED_IDS_KEY = "rp_deleted_attempt_ids_v1";
+  const RP_DELETED_FP_KEY = "rp_deleted_attempt_fingerprints_v1";
 
   function readJSON(k,f){ try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(f));}catch(e){return f;} }
+  function rpDigits(v){ try{return String(v||"").replace(/\D/g,"");}catch(e){return "";} }
+  function rpDeletedIdSet(){ try{return new Set(JSON.parse(localStorage.getItem(RP_DELETED_IDS_KEY)||"[]").map(String));}catch(e){return new Set();} }
+  function rpDeletedFpSet(){ try{return new Set(JSON.parse(localStorage.getItem(RP_DELETED_FP_KEY)||"[]").map(String));}catch(e){return new Set();} }
+  function rpWriteSet(key,set){ try{ localStorage.setItem(key, JSON.stringify(Array.from(set).filter(Boolean).slice(-2000))); }catch(e){} }
+  function rpDeletionIdsFor(r){
+    const out=[];
+    try{
+      [r&&r.id,r&&r.originalAttemptId,r&&r.attemptId,r&&r.submissionId].forEach(function(x){ if(x) out.push(String(x)); });
+    }catch(e){}
+    return Array.from(new Set(out));
+  }
+  function rpDeletionFingerprint(r){
+    if(!r) return "";
+    let sid="";
+    try{
+      const inf=(typeof rpRecInfo==="function")?rpRecInfo(r):{};
+      sid=rpDigits(inf&&inf.sid) || rpDigits(r.studentNumber||r.studentNo||r.studentId||r.studentUserId||r.userId||r.uid||"") || String(r.studentName||r.name||"").trim().toLowerCase();
+    }catch(e){ sid=rpDigits(r.studentNumber||r.studentId||"") || String(r.studentName||r.name||"").trim().toLowerCase(); }
+    let task="";
+    try{ task=String((typeof taskLabel==="function"?taskLabel(r):"") || r.taskTitle || r.title || r.taskId || "").trim().toLowerCase(); }catch(e){ task=String(r.taskTitle||r.title||r.taskId||"").trim().toLowerCase(); }
+    const submitted=String(r.submittedAt||r.createdAt||r.timestamp||r.recordedAt||r.uploadedAt||"").trim();
+    const audio=String(r.audioId||r.audioSize||((r.audioDataUrl||"").length)||r.audioUrl||"").trim();
+    if(!sid && !task && !submitted && !audio) return "";
+    return [sid,task,submitted,audio].join("|");
+  }
+  function rpRememberDeletedAttempt(r){
+    try{
+      const ids=rpDeletedIdSet();
+      rpDeletionIdsFor(r).forEach(function(x){ ids.add(String(x)); });
+      rpWriteSet(RP_DELETED_IDS_KEY,ids);
+      const fp=rpDeletionFingerprint(r);
+      if(fp){ const fps=rpDeletedFpSet(); fps.add(fp); rpWriteSet(RP_DELETED_FP_KEY,fps); }
+    }catch(e){}
+  }
+  function rpIsLocallyDeletedAttempt(r){
+    try{
+      const ids=rpDeletedIdSet();
+      if(rpDeletionIdsFor(r).some(function(x){return ids.has(String(x));})) return true;
+      const fp=rpDeletionFingerprint(r);
+      return !!(fp && rpDeletedFpSet().has(fp));
+    }catch(e){return false;}
+  }
+
   function writeJSON(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
   function records(){
     let cur = readJSON(RP_KEY, null);
@@ -10623,14 +10669,20 @@ document.addEventListener("click", function(e){
     function put(r){
       if(!r||!r.id) return;
       const nr=normalizeRecord(r);
+      if(isDeleted(nr) || rpAttemptState(nr)==="deleted"){
+        rpRememberDeletedAttempt(nr);
+      }
+      // RP178: once the teacher deletes an attempt, never let an old cloud/local copy revive it
+      // after app close or Firebase re-sync. Only the deleted tombstone itself may remain hidden.
+      if(rpIsLocallyDeletedAttempt(nr) && !(isDeleted(nr) || rpAttemptState(nr)==="deleted")) return;
       const old=map[nr.id];
-      if(!old || recordTime(nr)>=recordTime(old)){
+      if(!old || recordTime(nr)>=recordTime(old) || isDeleted(nr)){
         map[nr.id]={...(old||{}),...nr};
       }
     }
     (local||[]).forEach(put);
     (remote||[]).forEach(put);
-    return Object.values(map);
+    return Object.values(map).filter(function(r){ return r && !(rpIsLocallyDeletedAttempt(r) && !(isDeleted(r)||rpAttemptState(r)==="deleted")); });
   }
 
   async function cloudRecords(){
@@ -10674,15 +10726,15 @@ document.addEventListener("click", function(e){
   }
   async function syncCloudIntoLocal(){
     const cloud=await cloudRecords();
+    (cloud||[]).forEach(function(r){ if(isDeleted(r) || rpAttemptState(r)==="deleted") rpRememberDeletedAttempt(r); });
     let merged=mergeRecords(records(), cloud);
-    const deletedCloud=(cloud||[]).filter(function(r){return isDeleted(r) || rpAttemptState(r)==="deleted";});
-    if(deletedCloud.length){
-      merged=merged.filter(function(r){
-        if(!r) return false;
-        if(isDeleted(r) || rpAttemptState(r)==="deleted") return true;
-        return !deletedCloud.some(function(d){return rpSameStudentTaskLoose(d,r);});
-      });
-    }
+    // RP178: final local/cloud tombstones are applied by exact attempt id/fingerprint, not by loose student+task,
+    // so deleted attempts do not return, while future new attempts for the same task still appear normally.
+    merged=merged.filter(function(r){
+      if(!r) return false;
+      if(isDeleted(r) || rpAttemptState(r)==="deleted") return true;
+      return !rpIsLocallyDeletedAttempt(r);
+    });
     saveRecords(merged);
     try{ RP_LIVE_CACHE=merged; }catch(_e){}
     __rpLastCloudSyncAt=Date.now();
@@ -10733,7 +10785,7 @@ document.addEventListener("click", function(e){
     const v=rpMetricFromSubmission(r,k);
     return v===null?"":v;
   }
-  function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted")); }
+  function isDeleted(r){ return !!(r && (r.deleted===true || r.status==="deleted" || rpIsLocallyDeletedAttempt(r))); }
   function isRejected(r){ return !!(r && r.status==="rejected"); }
   function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
   function isTeacherApproved(r){
@@ -10745,6 +10797,21 @@ document.addEventListener("click", function(e){
     // submitted / retake_allowed / rejected / deleted لا تدخل في المتوسط.
     return !!(r && !isDeleted(r) && !isRejected(r) && isTeacherApproved(r) && finalScore(r)!=="");
   }
+  async function rpDeleteAttemptPermanent(rec){
+    const now=new Date().toISOString();
+    const base={...(rec||{}), id:String((rec&&rec.id)||"")};
+    if(!base.id) return null;
+    const deleted={...base,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
+    rpRememberDeletedAttempt(deleted);
+    const a=records().filter(function(r){ return r && String(r.id)!==String(base.id) && !rpIsLocallyDeletedAttempt(r); });
+    a.push(deleted);
+    saveRecords(a);
+    try{ await cloudSaveRecord(deleted); }catch(e){}
+    try{ if(typeof fsSet==="function") await fsSet("readingSubmissions", deleted.id, deleted); }catch(e){}
+    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:deleted.id,status:"deleted"}})); }catch(_e){}
+    return deleted;
+  }
+
   async function updateRecord(id,updates){
     const a=records(), i=a.findIndex(r=>r.id===id);
     if(i>=0){
@@ -11416,7 +11483,7 @@ document.addEventListener("click", function(e){
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpApplyFinalDecisionToStudentTask(rec,"deleted",""); try{ await syncCloudIntoLocal(); }catch(_e){} })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await rpDeleteAttemptPermanent(rec); try{ await syncCloudIntoLocal(); }catch(_e){} })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
