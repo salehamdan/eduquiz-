@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <title>EduQuiz — Smart Assessment v161</title>
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
+<!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP159_REJECT_DELETE_STUDENT_SYNC_OVERVIEW_PANEL_20260703 -->
 <!-- RP161_STUDENT_DIRECT_REJECT_DELETE_LIVE_SYNC_20260703 -->
 <!-- RP_FLOATING_DRAWER_PENDING_ARCHIVE_ALL_20260605 -->
@@ -1470,6 +1471,52 @@ function rpBuildRejectedSubmission(s, reason){
     updatedAt:now,
     rejectionReason:reason||((s&&s.rejectionReason)||"")
   };
+}
+
+
+function rpBuildStudentDecisionMarker(s, status, reason){
+  const now=new Date().toISOString();
+  const sid=String((s&&(s.studentId||s.studentNumber||s.studentUserId||s.userId||s.uid||s.ownerStudentId||s.ownerId))||"").trim();
+  const task=String((s&&s.taskId)||"").trim();
+  const cleanStatus=String(status||"rejected").toLowerCase();
+  const safeKey=(task||"task").replace(/[^A-Za-z0-9_-]/g,"_")+"_"+(sid||"student").replace(/[^A-Za-z0-9_-]/g,"_");
+  const id="rp_decision_"+safeKey+"_"+cleanStatus;
+  const base={...(s||{})};
+  return {
+    ...base,
+    id,
+    originalAttemptId:(s&&(s.id||s.originalAttemptId))||"",
+    decisionMarker:true,
+    taskId:task,
+    studentId:sid||(s&&s.studentId)||"",
+    studentNumber:(s&&(s.studentNumber||s.studentId))||sid||"",
+    studentUserId:(s&&(s.studentUserId||s.userId||s.uid))||sid||"",
+    status:cleanStatus,
+    reviewStatus:cleanStatus,
+    teacherReview:cleanStatus,
+    teacherReviewStatus:cleanStatus,
+    studentStatus:cleanStatus,
+    analysisStatus:cleanStatus,
+    pending:false,
+    accepted:false,
+    approved:false,
+    teacherAccepted:false,
+    teacherApproved:false,
+    visibleToStudent:true,
+    scoreVisible:false,
+    updatedAt:now,
+    reviewedAt:now,
+    rejectedAt:cleanStatus==="rejected"?now:(base.rejectedAt||""),
+    deletedAt:cleanStatus==="deleted"?now:(base.deletedAt||""),
+    rejectionReason:reason||base.rejectionReason||""
+  };
+}
+
+async function rpSaveStudentDecisionMarker(s, status, reason){
+  const marker=rpBuildStudentDecisionMarker(s,status,reason||"");
+  try{ if(typeof fsSet==="function") await fsSet("readingSubmissions", marker.id, marker); }catch(e){ console.warn("RP163 marker fsSet failed", e&&e.message); }
+  try{ if(typeof cloudSaveRecord==="function") await cloudSaveRecord(marker); }catch(e){ console.warn("RP163 marker cloudSave failed", e&&e.message); }
+  return marker;
 }
 
 function rpLatestEffectiveAttempt(list){
@@ -5447,7 +5494,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const cloudPendingAfterTerminal=cloudAll.some(function(s){
       return rpAttemptState(s)==="pending" && (!newestTerminalTime || (rpSubmitTime(s)||0)>newestTerminalTime+1000);
     });
-    const cloud=Object.values(cloudById).filter(function(s){return s && s.deleted!==true && String(s.status||"").toLowerCase()!=="deleted" && rpAttemptState(s)!=="deleted";});
+    const cloud=Object.values(cloudById).filter(function(s){
+      if(!s || s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted") return false;
+      // RP163: if a teacher final decision exists, any older pending cloud record is stale and must not keep the student card waiting.
+      if(terminalCloud.length && rpAttemptState(s)==="pending" && (rpSubmitTime(s)||0) <= newestTerminalTime + 60000) return false;
+      return true;
+    });
     const local=rpLocalAttemptsForTask(t.id).filter(function(r){
       const id=String(r&&r.id||"");
       if(id && cloudDeletedIds.has(id)) return false;
@@ -6252,7 +6304,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
-            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");const marker=rpBuildStudentDecisionMarker(s,"rejected",reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd,marker]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);await rpSaveStudentDecisionMarker(s,"rejected",reason||"");try{await reload();}catch(e){}setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
@@ -9155,7 +9207,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
                   <button onClick={async function(){await fsSet("readingSubmissions",s.id,rpBuildAcceptedSubmission(s));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
-                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,rpBuildRejectedSubmission(s,reason||""));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
+                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,rpBuildRejectedSubmission(s,reason||""));await rpSaveStudentDecisionMarker(s,"rejected",reason||"");await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
               {extra>0&&!pendingExpanded&&<button onClick={function(){setPendingExpanded(true);}} style={{marginTop:"6px",fontSize:"11px",color:C.p,background:"none",border:"none",cursor:"pointer",fontWeight:"700",fontFamily:F}}>+ {extra} more...</button>}
@@ -10852,7 +10904,7 @@ document.addEventListener("click", function(e){
       if(del){
         if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        updateRecord(del,{deleted:true,status:"deleted"}).then(()=>renderCards());
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await updateRecord(del,{deleted:true,status:"deleted"}); await rpSaveStudentDecisionMarker(rec,"deleted",""); })().then(()=>renderCards());
         return;
       }
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
@@ -10862,7 +10914,13 @@ document.addEventListener("click", function(e){
         if(st==="retake_allowed"&&!confirm("السماح للطالب بالتسجيل مرة أخرى؟"))return;
         if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
-        const action=(st==="accepted") ? acceptRecordFull(rid) : updateRecord(rid,{status:st,deleted:false});
+        let action;
+        if(st==="accepted") action=acceptRecordFull(rid);
+        else if(st==="rejected"){
+          const reason=window.prompt("سبب الرفض (اختياري):","")||"";
+          const upd=rpBuildRejectedSubmission(rec||{id:rid},reason);
+          action=(async function(){ await updateRecord(rid,upd); await rpSaveStudentDecisionMarker(rec||upd,"rejected",reason); })();
+        } else action=updateRecord(rid,{status:st,deleted:false});
         action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
