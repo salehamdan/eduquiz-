@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <title>EduQuiz — Smart Assessment v165</title>
+<!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
@@ -1500,14 +1501,15 @@ function rpBuildStudentDecisionMarker(s, status, reason){
     studentStatus:cleanStatus,
     analysisStatus:cleanStatus,
     pending:false,
-    accepted:false,
-    approved:false,
-    teacherAccepted:false,
-    teacherApproved:false,
-    visibleToStudent:true,
-    scoreVisible:false,
+    accepted:cleanStatus==="accepted"||cleanStatus==="approved",
+    approved:cleanStatus==="accepted"||cleanStatus==="approved",
+    teacherAccepted:cleanStatus==="accepted"||cleanStatus==="approved",
+    teacherApproved:cleanStatus==="accepted"||cleanStatus==="approved",
+    visibleToStudent:cleanStatus!=="deleted",
+    scoreVisible:cleanStatus==="accepted"||cleanStatus==="approved",
     updatedAt:now,
     reviewedAt:now,
+    acceptedAt:(cleanStatus==="accepted"||cleanStatus==="approved")?now:(base.acceptedAt||base.approvedAt||""),
     rejectedAt:cleanStatus==="rejected"?now:(base.rejectedAt||""),
     deletedAt:cleanStatus==="deleted"?now:(base.deletedAt||""),
     rejectionReason:reason||base.rejectionReason||""
@@ -1593,10 +1595,11 @@ async function rpApplyFinalDecisionToStudentTask(s, status, reason){
   function finalPatch(x){
     const base=resolveRecord({...target,...(x||{})});
     if(cleanStatus==="deleted") return {...base,status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:false,scoreVisible:false,deletedAt:now,reviewedAt:now,updatedAt:now};
+    if(cleanStatus==="accepted" || cleanStatus==="approved") return rpBuildAcceptedSubmission(base,{status:"accepted",reviewStatus:"accepted",teacherReview:"accepted",teacherReviewStatus:"accepted",studentStatus:"accepted",analysisStatus:"completed",pending:false,deleted:false});
     if(cleanStatus==="retake_allowed" || cleanStatus==="retake") return {...base,status:"retake_allowed",reviewStatus:"retake_allowed",teacherReview:"retake_allowed",teacherReviewStatus:"retake_allowed",studentStatus:"retake_allowed",analysisStatus:"retake_allowed",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,reviewedAt:now,updatedAt:now,teacherNotes:reason||base.teacherNotes||""};
     return rpBuildRejectedSubmission(base, reason||"");
   }
-  const marker= cleanStatus==="deleted" ? rpBuildStudentDecisionMarker(target,"deleted",reason||"") : rpBuildStudentDecisionMarker(target,"rejected",reason||"");
+  const marker= cleanStatus==="deleted" ? rpBuildStudentDecisionMarker(target,"deleted",reason||"") : (cleanStatus==="accepted"||cleanStatus==="approved" ? rpBuildStudentDecisionMarker(target,"accepted",reason||"") : rpBuildStudentDecisionMarker(target,"rejected",reason||""));
   let changed=0;
   try{
     if(typeof fsSet==="function" && target&&target.id){ await fsSet("readingSubmissions", target.id, finalPatch(target)); changed++; }
@@ -1613,7 +1616,7 @@ async function rpApplyFinalDecisionToStudentTask(s, status, reason){
       changed += res.filter(x=>x.status==="fulfilled").length;
     }
   }catch(e){ console.warn("RP165 bulk decision scan failed", e&&e.message); }
-  try{ await rpSaveStudentDecisionMarker(target, cleanStatus==="deleted"?"deleted":"rejected", reason||""); changed++; }catch(e){}
+  try{ await rpSaveStudentDecisionMarker(target, cleanStatus==="deleted"?"deleted":((cleanStatus==="accepted"||cleanStatus==="approved")?"accepted":"rejected"), reason||""); changed++; }catch(e){}
   try{
     if(typeof records==="function" && typeof saveRecords==="function"){
       const arr=(records()||[]).map(function(r){ return (sameTask(r,target)&&sameStudent(r,target)) ? finalPatch(r) : r; });
@@ -5612,9 +5615,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       return Number.isFinite(n)?n:(rpAttemptTimeMs(s)||0);
     }
     function rpSubmitTime(s){
-      const raw=s&&(s.submittedAt||s.createdAt||s.updatedAt||s.timestamp);
+      // RP166: submitted time must not use updatedAt. Teacher accept/reject updates updatedAt,
+      // and old pending copies may receive a fresh updatedAt during merge, causing them to look newer.
+      // Only a true new student submission may beat a final teacher decision.
+      const raw=s&&(s.submittedAt||s.createdAt||s.timestamp);
       const n=Date.parse(raw||"");
-      return Number.isFinite(n)?n:(rpAttemptTimeMs(s)||0);
+      return Number.isFinite(n)?n:0;
     }
     const newestTerminalTime=terminalCloud.length?Math.max.apply(null,terminalCloud.map(function(s){return rpDecisionTime(s)||0;})):0;
     const cloudPendingAfterTerminal=cloudAll.some(function(s){
@@ -5622,8 +5628,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     });
     const cloud=Object.values(cloudById).filter(function(s){
       if(!s || s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted") return false;
-      // RP163: if a teacher final decision exists, any older pending cloud record is stale and must not keep the student card waiting.
-      if(terminalCloud.length && rpAttemptState(s)==="pending" && (rpSubmitTime(s)||0) <= newestTerminalTime + 60000) return false;
+      // RP166: once teacher has a final decision for this student's task, old pending copies must never win.
+      // Allow pending only when it has a real submittedAt/createdAt/timestamp after that final decision.
+      if(terminalCloud.length && rpAttemptState(s)==="pending" && (!(rpSubmitTime(s)||0) || (rpSubmitTime(s)||0) <= newestTerminalTime + 5000)) return false;
       return true;
     });
     const local=rpLocalAttemptsForTask(t.id).filter(function(r){
@@ -5637,7 +5644,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       // device-only pending marker recreate "Waiting for teacher analysis" for the student.
       // A genuinely new attempt is allowed only when Firebase also has a newer pending submission.
       if(terminalCloud.length && (localState==="pending" || localState==="none") && !cloudPendingAfterTerminal) return false;
-      if(terminalCloud.length && (localState==="pending" || localState==="none") && (!localSubmitTime || localSubmitTime <= newestTerminalTime + 60000)) return false;
+      if(terminalCloud.length && (localState==="pending" || localState==="none") && (!localSubmitTime || localSubmitTime <= newestTerminalTime + 5000)) return false;
       return true;
     });
     const map={};
@@ -6429,7 +6436,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSrc&&rpAudioSaved&&<span style={{fontSize:"10px",color:C.w,fontWeight:800}}>Audio saved — loading…</span>}
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
-            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await rpApplyFinalDecisionToStudentTask(upd,"accepted","");}catch(e){}try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");const marker=rpBuildStudentDecisionMarker(s,"rejected",reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd,marker]));setMsg("Updating... Rejecting all matching attempts");try{const res=await rpApplyFinalDecisionToStudentTask(s,"rejected",reason||"");try{await reload();}catch(e){}setMsg("❌ Rejected and synced: "+(st?st.name:"student")+" ("+((res&&res.changed)||1)+" records)");}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
@@ -9332,7 +9339,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.taskTitle||"Reading Task"} · {s.createdAt}</div>
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
-                  <button onClick={async function(){await fsSet("readingSubmissions",s.id,rpBuildAcceptedSubmission(s));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
+                  <button onClick={async function(){const acc=rpBuildAcceptedSubmission(s); await fsSet("readingSubmissions",s.id,acc); try{await rpApplyFinalDecisionToStudentTask(acc,"accepted","");}catch(e){} await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
                   <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await rpApplyFinalDecisionToStudentTask(s,"rejected",reason||"");await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
@@ -11307,6 +11314,9 @@ document.addEventListener("click", function(e){
     if(i>=0) local[i]={...local[i],...accepted}; else local.push(accepted);
     saveRecords(local);
     await cloudSaveRecord(accepted);
+    // RP166: accepting one visible record must close stale duplicate Pending records for the same student + task,
+    // otherwise the student page may still pick a duplicated pending copy as the latest status.
+    try{ await rpApplyFinalDecisionToStudentTask(accepted,"accepted",""); }catch(e){ console.warn("RP166 bulk accept sync failed", e&&e.message); }
     try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:id,status:"accepted"}})); }catch(_e){}
     return accepted;
   }
