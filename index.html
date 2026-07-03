@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v159</title>
+<title>EduQuiz — Smart Assessment v161</title>
+<!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP159_REJECT_DELETE_STUDENT_SYNC_OVERVIEW_PANEL_20260703 -->
+<!-- RP161_STUDENT_DIRECT_REJECT_DELETE_LIVE_SYNC_20260703 -->
 <!-- RP_FLOATING_DRAWER_PENDING_ARCHIVE_ALL_20260605 -->
 <!-- RP_FILTER_ADDON_SAFE_20260606 -->
 <!-- ROSTER_LOGIN_CLASS_ALIAS_FIX_20260606 -->
@@ -1431,18 +1433,45 @@ function rpAttemptTimeMs(r){
 }
 function rpAttemptState(r){
   if(!r || r.deleted===true) return "deleted";
-  const vals=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus].map(v=>String(v||"").toLowerCase().trim());
+  const vals=[r.status,r.reviewStatus,r.teacherReview,r.teacherReviewStatus,r.studentStatus,r.analysisStatus].map(v=>String(v||"").toLowerCase().trim());
   if(vals.includes("deleted")) return "deleted";
+  // RP162: teacher rejection must override any older accepted/pending flag left on the same record.
+  if(vals.includes("rejected") || vals.includes("reject")) return "rejected";
   if(vals.includes("accepted") || vals.includes("approved")) return "accepted";
-  if(vals.includes("rejected")) return "rejected";
   if(vals.includes("retake_allowed") || vals.includes("retake") || vals.includes("returned")) return "retake";
-  if(vals.some(v=>["submitted","pending","pending_review","waiting","waiting_teacher","waiting_for_teacher"].includes(v))) return "pending";
+  if(vals.some(v=>["submitted","pending","pending_review","waiting","waiting_teacher","waiting_for_teacher","queued_for_analysis"].includes(v))) return "pending";
   const an=String((r.analysisStatus||r.analysis)||"").toLowerCase();
+  if(an.includes("reject")) return "rejected";
   if(an.includes("queued") || an.includes("waiting") || an.includes("pending") || an.includes("completed") || r.audioUrl || r.audioDataUrl || r.audioChunked || r.transcript || r.analysis) return "pending";
   return "none";
 }
 function rpIsPendingReviewSubmission(r){ return rpAttemptState(r)==="pending"; }
 function rpIsPreviousReviewSubmission(r){ const st=rpAttemptState(r); return st==="accepted" || st==="rejected" || st==="retake"; }
+function rpBuildRejectedSubmission(s, reason){
+  const now=new Date().toISOString();
+  return {
+    ...(s||{}),
+    id:(s&&s.id)||uid(),
+    status:"rejected",
+    reviewStatus:"rejected",
+    teacherReview:"rejected",
+    teacherReviewStatus:"rejected",
+    studentStatus:"rejected",
+    analysisStatus:"rejected",
+    pending:false,
+    accepted:false,
+    approved:false,
+    teacherAccepted:false,
+    teacherApproved:false,
+    visibleToStudent:true,
+    scoreVisible:false,
+    rejectedAt:now,
+    reviewedAt:now,
+    updatedAt:now,
+    rejectionReason:reason||((s&&s.rejectionReason)||"")
+  };
+}
+
 function rpLatestEffectiveAttempt(list){
   const arr=(list||[]).filter(r=>r && rpAttemptState(r)!=="deleted").sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
   if(!arr.length) return null;
@@ -5286,11 +5315,36 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if(!x) return false;
     const myIds=[String(user.id||""),String(user.studentId||""),String(user.email||"")].filter(Boolean);
     const myDigits=eqDigits(user.studentId||user.id||"");
-    const vals=[x.studentId,x.studentNumber,x.studentUserId,x.userId,x.uid,x.studentEmail].filter(Boolean).map(v=>String(v));
+    const vals=[x.studentId,x.studentNumber,x.studentUserId,x.userId,x.uid,x.studentEmail,x.ownerStudentId,x.ownerId].filter(Boolean).map(v=>String(v));
     if(vals.some(v=>myIds.includes(v))) return true;
     if(myDigits && vals.map(eqDigits).filter(Boolean).includes(myDigits)) return true;
+    // Some older RP records keep the numeric student id inside the document id only.
+    const docDigits=eqDigits(x.id||x.docId||"");
+    if(myDigits && docDigits && docDigits.includes(myDigits)) return true;
     return false;
   }
+
+  // RP161: direct student listener.
+  // The student card must not wait for the general app cache/reload when the teacher rejects or deletes.
+  // Firebase decisions are merged into localRpSubmissions immediately and then win inside attemptsForTask().
+  useEffect(()=>{
+    if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
+    let alive=true, unsub=null;
+    try{
+      unsub=db.collection("readingSubmissions").onSnapshot(function(snap){
+        if(!alive) return;
+        const arr=[];
+        snap.forEach(function(doc){
+          const item={id:doc.id,...(doc.data?doc.data():{})};
+          if(rpBelongsToCurrentStudent(item)) arr.push(item);
+        });
+        arr.sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
+        setLocalRpSubmissions(arr);
+      }, function(err){ console.warn("RP161 student direct sync unavailable", err&&err.message); });
+    }catch(e){ console.warn("RP161 student direct sync failed", e&&e.message); }
+    return function(){ alive=false; try{unsub&&unsub();}catch(_e){} };
+  },[user&&user.id,user&&user.studentId,user&&user.email]);
+
   const subs=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
   const resets=(data.readingAttemptResets||[]);
   function resetCutoffForTask(taskId){
@@ -5379,7 +5433,20 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       const st=rpAttemptState(s);
       return st==="accepted" || st==="rejected" || st==="retake" || st==="deleted";
     });
-    const newestTerminalTime=terminalCloud.length?Math.max.apply(null,terminalCloud.map(function(s){return rpAttemptTimeMs(s)||0;})):0;
+    function rpDecisionTime(s){
+      const raw=s&&(s.rejectedAt||s.reviewedAt||s.deletedAt||s.acceptedAt||s.approvedAt||s.updatedAt||s.submittedAt||s.createdAt||s.timestamp);
+      const n=Date.parse(raw||"");
+      return Number.isFinite(n)?n:(rpAttemptTimeMs(s)||0);
+    }
+    function rpSubmitTime(s){
+      const raw=s&&(s.submittedAt||s.createdAt||s.updatedAt||s.timestamp);
+      const n=Date.parse(raw||"");
+      return Number.isFinite(n)?n:(rpAttemptTimeMs(s)||0);
+    }
+    const newestTerminalTime=terminalCloud.length?Math.max.apply(null,terminalCloud.map(function(s){return rpDecisionTime(s)||0;})):0;
+    const cloudPendingAfterTerminal=cloudAll.some(function(s){
+      return rpAttemptState(s)==="pending" && (!newestTerminalTime || (rpSubmitTime(s)||0)>newestTerminalTime+1000);
+    });
     const cloud=Object.values(cloudById).filter(function(s){return s && s.deleted!==true && String(s.status||"").toLowerCase()!=="deleted" && rpAttemptState(s)!=="deleted";});
     const local=rpLocalAttemptsForTask(t.id).filter(function(r){
       const id=String(r&&r.id||"");
@@ -5387,9 +5454,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       // If Firebase has the same attempt, use the Firebase version because it may be rejected/accepted/deleted.
       if(id && cloudById[id]) return false;
       const localState=rpAttemptState(r);
-      const localTime=rpAttemptTimeMs(r)||0;
-      // If a teacher terminal decision exists after this local marker, suppress the old local pending marker.
-      if(terminalCloud.length && (localState==="pending" || localState==="none") && (!localTime || localTime <= newestTerminalTime + 15000)) return false;
+      const localSubmitTime=rpSubmitTime(r)||0;
+      // RP162: once the teacher has rejected/deleted/accepted an attempt in Firebase, never let an old
+      // device-only pending marker recreate "Waiting for teacher analysis" for the student.
+      // A genuinely new attempt is allowed only when Firebase also has a newer pending submission.
+      if(terminalCloud.length && (localState==="pending" || localState==="none") && !cloudPendingAfterTerminal) return false;
+      if(terminalCloud.length && (localState==="pending" || localState==="none") && (!localSubmitTime || localSubmitTime <= newestTerminalTime + 60000)) return false;
       return true;
     });
     const map={};
@@ -6182,7 +6252,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {!rpAudioSaved&&<span style={{fontSize:"10px",color:C.d,fontWeight:800}}>No audio</span>}
             {!s.analysis&&<Btn size="sm" color={C.p} disabled={!!rpBusy["analyze_"+s.id]} onClick={function(){analyze(s);}}>{rpBusy["analyze_"+s.id]||"🔍 Analyze"}</Btn>}
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildAcceptedSubmission(s);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("✅ Approved: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
-            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"rejected",reviewStatus:"rejected",teacherReview:"rejected",teacherReviewStatus:"rejected",studentStatus:"rejected",analysisStatus:"rejected",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,rejectedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
+            {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const upd=rpBuildRejectedSubmission(s,reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Rejecting");try{await fsSet("readingSubmissions",s.id,upd);try{await reload();}catch(e){}setMsg("❌ Rejected: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
@@ -9085,7 +9155,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   </div>
                   {acc!==null&&<span style={{fontSize:"13px",fontWeight:"900",color:gc(acc),fontFamily:F}}>{acc}%</span>}
                   <button onClick={async function(){await fsSet("readingSubmissions",s.id,rpBuildAcceptedSubmission(s));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#dcfce7",color:"#166534",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>✅</button>
-                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,{...s,status:"rejected",reviewStatus:"rejected",teacherReview:"rejected",teacherReviewStatus:"rejected",studentStatus:"rejected",analysisStatus:"rejected",pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,visibleToStudent:true,scoreVisible:false,rejectedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),rejectionReason:reason||"",updatedAt:new Date().toISOString()});await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
+                  <button onClick={async function(){var reason=window.prompt("سبب الرفض (اختياري):");await fsSet("readingSubmissions",s.id,rpBuildRejectedSubmission(s,reason||""));await reload();}} style={{padding:"5px 10px",borderRadius:"7px",border:"none",background:"#fee2e2",color:"#991b1b",fontWeight:"800",fontSize:"11px",cursor:"pointer"}}>❌</button>
                 </div>;
               })}
               {extra>0&&!pendingExpanded&&<button onClick={function(){setPendingExpanded(true);}} style={{marginTop:"6px",fontSize:"11px",color:C.p,background:"none",border:"none",cursor:"pointer",fontWeight:"700",fontFamily:F}}>+ {extra} more...</button>}
@@ -10232,7 +10302,12 @@ document.addEventListener("click", function(e){
         } else if(updates.status==="submitted" || updates.status==="pending" || updates.status==="pending_review"){
           m.status="pending_review"; m.reviewStatus="pending"; m.teacherReview="pending"; m.teacherReviewStatus="pending"; m.studentStatus="pending"; m.visibleToStudent=true; m.scoreVisible=false;
         } else if(updates.status==="rejected"){
-          m.reviewStatus="rejected"; m.teacherReview="rejected"; m.teacherReviewStatus="rejected"; m.studentStatus="rejected";
+          m.status="rejected"; m.reviewStatus="rejected"; m.teacherReview="rejected"; m.teacherReviewStatus="rejected"; m.studentStatus="rejected";
+          m.analysisStatus="rejected"; m.pending=false; m.accepted=false; m.approved=false; m.teacherAccepted=false; m.teacherApproved=false;
+          m.visibleToStudent=true; m.scoreVisible=false; m.rejectedAt=m.rejectedAt||m.updatedAt;
+        } else if(updates.status==="deleted"){
+          m.status="deleted"; m.deleted=true; m.reviewStatus="deleted"; m.teacherReview="deleted"; m.teacherReviewStatus="deleted"; m.studentStatus="deleted";
+          m.visibleToStudent=false; m.scoreVisible=false; m.deletedAt=m.deletedAt||m.updatedAt;
         } else if(updates.status==="retake_allowed"){
           m.reviewStatus="retake_allowed"; m.teacherReview="retake_allowed"; m.teacherReviewStatus="retake_allowed"; m.studentStatus="retake_allowed";
         }
