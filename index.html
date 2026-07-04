@@ -17,6 +17,7 @@
 <!-- RP198_ANCHOR_MISSING_TOLERANT_FAIR_SCORE_20260704 -->
 <!-- RP199_STUDENT_COLORED_ANALYSIS_BEFORE_ACCEPT_20260704 -->
 <!-- RP201_SAFE_QUEUE_ALL_ONE_BY_ONE_STUDENT_COLORED_20260704 -->
+<!-- RP202_FLOATING_DRAWER_CLASS_STUDENT_FILTERS_SHOW_MORE_20260705 -->
 <!-- RP200_STUDENT_PREVIEW_AND_SAFE_ANALYSIS_QUEUE_20260704 -->
 <!-- RP197_ANCHOR_MAIN_READING_EXTRA_INTRO_OUTRO_FAIR_SCORE_20260704 -->
 <!-- RP196_RP_FULL_READING_EXTRA_NO_15_CAP_20260704 -->
@@ -11008,6 +11009,7 @@ document.addEventListener("click", function(e){
   let panelMade = false;
   let rpActiveTab = "waiting";
   let rpInputSaveTimer = null;
+  let rpDrawerVisibleLimit = 10;
   let RP_LIVE_CACHE = [];
   const RP_DELETED_IDS_KEY = "rp_deleted_attempt_ids_v2_exact";
   const RP_DELETED_FP_KEY = "rp_deleted_attempt_fingerprints_v2_exact";
@@ -12107,7 +12109,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP119 live Firebase link: Pending / Previous / All</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP202 filters: Class / Student / Task / Status / Search / Show more</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -12120,8 +12122,24 @@ document.addEventListener("click", function(e){
       <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:12px">
         <select id="rp-v11-class" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع الفصول</option></select>
         <select id="rp-v11-student" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع الطلاب</option></select>
+        <select id="rp-v11-status" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800">
+          <option value="">كل الحالات داخل التبويب</option>
+          <option value="needs_analysis">يحتاج تحليل</option>
+          <option value="analyzed">محلل ينتظر القبول</option>
+          <option value="pending">منتظر/مرسل</option>
+          <option value="accepted">مقبول</option>
+          <option value="rejected">مرفوض</option>
+          <option value="retake">إعادة مسموحة</option>
+        </select>
         <input id="rp-v11-search" type="text" placeholder="بحث سريع: اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:0">
         <select id="rp-v11-task" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع المهام / الاختبارات</option></select>
+        <select id="rp-v11-sort" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800">
+          <option value="newest">الأحدث أولاً</option>
+          <option value="oldest">الأقدم أولاً</option>
+          <option value="name">اسم الطالب</option>
+          <option value="score_high">الأعلى درجة</option>
+          <option value="score_low">الأقل درجة</option>
+        </select>
         <div style="display:flex;gap:7px;flex-wrap:wrap">
           <button id="rp-v11-clear-filters" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#64748b;color:white;font-weight:800">مسح الفلاتر</button>
           <button id="rp-v11-refresh" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">تحديث</button>
@@ -12131,7 +12149,7 @@ document.addEventListener("click", function(e){
           <button id="rp-v11-hard-purge-all" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7f1d1d;color:white;font-weight:1000">🧹 حذف كل تسجيلات RP</button>
         </div>
       </div>
-      <div id="rp-v11-cards" style="display:grid;gap:12px"></div>`;
+      <div id="rp-v11-cards" style="display:grid;gap:12px"></div><div id="rp-v11-more-wrap" style="margin-top:10px"></div>`;
     (document.getElementById("root")||document.body).appendChild(panel);
     const fab=document.createElement("button");
     fab.id="rp-floating-button-20260605";
@@ -12148,6 +12166,7 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-hide"){panel.style.display="none";return;}
       if(id==="rp-v11-hard-purge"||id==="rp-v11-hard-purge-all"){ await rpHardPurgeAllRecords(); return; }
       if(id==="rp-v11-target-delete"){ await rpHardDeleteByCurrentFilters(); return; }
+      if(id==="rp-v11-show-more"){ rpDrawerVisibleLimit += 10; renderCards(); return; }
       if(id==="rp-v11-refresh"){e.target.textContent="Updating..."; syncCloudIntoLocal().then(()=>renderCards()).finally(()=>{e.target.textContent="تحديث";}); return;}
       if(id==="rp-v11-restore-old"){
         alert("تم تعطيل استعادة التسجيلات القديمة حتى لا ترجع بيانات أحمد/حسن القديمة إلى RP.");
@@ -12156,8 +12175,11 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-clear-filters"){
         document.getElementById("rp-v11-class").value="";
         document.getElementById("rp-v11-student").value="";
+        const stSel=document.getElementById("rp-v11-status"); if(stSel) stSel.value="";
         const srch=document.getElementById("rp-v11-search"); if(srch) srch.value="";
         document.getElementById("rp-v11-task").value="";
+        const sortSel=document.getElementById("rp-v11-sort"); if(sortSel) sortSel.value="newest";
+        rpDrawerVisibleLimit=10;
         renderCards();
         return;
       }
@@ -12221,8 +12243,16 @@ document.addEventListener("click", function(e){
       }
     });
     panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid)a[i].teacherScore=e.target.value; if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
-    panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search")renderCards();});
-    panel.addEventListener("change",e=>{if(e.target.id==="rp-v11-class"||e.target.id==="rp-v11-student"||e.target.id==="rp-v11-task")renderCards();});
+    panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search"){rpDrawerVisibleLimit=10;renderCards();}});
+    panel.addEventListener("change",e=>{
+      if(e.target.id==="rp-v11-class"){
+        const stu=document.getElementById("rp-v11-student"); if(stu) stu.value="";
+        rpDrawerVisibleLimit=10; renderCards(); return;
+      }
+      if(e.target.id==="rp-v11-student"||e.target.id==="rp-v11-task"||e.target.id==="rp-v11-status"||e.target.id==="rp-v11-sort"){
+        rpDrawerVisibleLimit=10; renderCards();
+      }
+    });
     renderCards();
   }
 
@@ -12435,6 +12465,13 @@ document.addEventListener("click", function(e){
     const classOpts=Array.from(classMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
     rpSetOptions(classSel,classOpts,"اختر الصف / جميع الفصول");
 
+    const attemptCountByStudent=new Map();
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      if(clsVal && String(info.classId||r.classId||"")!==String(clsVal)) return;
+      const keys=[info.sid, info.u&&info.u.id, r.studentId, r.studentUserId, r.userId, info.name].filter(Boolean).map(String);
+      keys.forEach(k=>attemptCountByStudent.set(k,(attemptCountByStudent.get(k)||0)+1));
+    });
     const roster=rpRosterBase().filter(u=>!clsVal || String(u.classId||"")===String(clsVal));
     const seen=new Set();
     const stuOpts=[];
@@ -12442,7 +12479,8 @@ document.addEventListener("click", function(e){
       const key=String(u.studentId||u.id||u.name||"").trim();
       if(!key||seen.has(key)) return;
       seen.add(key);
-      stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")});
+      const cnt=attemptCountByStudent.get(String(u.studentId||"")) || attemptCountByStudent.get(String(u.id||"")) || attemptCountByStudent.get(String(u.name||"")) || 0;
+      stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")+(cnt?" — "+cnt+" محاولة":"")});
     });
     (all||[]).forEach(r=>{
       const info=rpRecInfo(r);
@@ -12450,7 +12488,8 @@ document.addEventListener("click", function(e){
       const key=String(info.sid||r.studentNumber||r.studentId||r.studentUserId||info.name||"").trim();
       if(key&&!seen.has(key)){
         seen.add(key);
-        stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")});
+        const cnt=attemptCountByStudent.get(String(key)) || 0;
+        stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")+(cnt?" — "+cnt+" محاولة":"")});
       }
     });
     stuOpts.sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
@@ -12590,9 +12629,11 @@ document.addEventListener("click", function(e){
     const arr=recordsLive().filter(rpRecordVisible);
     const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
     const stuVal=String(document.getElementById("rp-v11-student")?.value||"");
+    const statusVal=String(document.getElementById("rp-v11-status")?.value||"");
     const searchQ=rpNorm(document.getElementById("rp-v11-search")?.value||"");
     const taskVal=String(document.getElementById("rp-v11-task")?.value||"");
-    return arr.filter(r=>{
+    const sortVal=String(document.getElementById("rp-v11-sort")?.value||"newest");
+    const filtered=arr.filter(r=>{
       if(!rpRecordVisible(r)) return false;
       if(isDeleted(r)) return false;
       const info=rpRecInfo(r);
@@ -12604,9 +12645,25 @@ document.addEventListener("click", function(e){
       const okStu=!stuVal || String(info.sid)===stuVal || String(info.u&&info.u.id)===stuVal || rpNorm(info.name)===rpNorm(stuVal) || stuText.includes(rpNorm(stuVal));
       const okSearch=!searchQ || stuText.includes(searchQ);
       const okTask=!taskVal || (String(taskVal).startsWith("label::") ? labelNorm===String(taskVal).slice(7) : (recTaskVal===taskVal || taskText.includes(rpNorm(taskVal))));
+      const state=rpAttemptState(r);
+      const okStatus=!statusVal ||
+        (statusVal==="needs_analysis" && needsAnalysisRecord(r)) ||
+        (statusVal==="analyzed" && state==="pending" && isAnalyzedRecord(r)) ||
+        (statusVal==="pending" && state==="pending") ||
+        (statusVal==="accepted" && state==="accepted") ||
+        (statusVal==="rejected" && state==="rejected") ||
+        (statusVal==="retake" && state==="retake");
       const okTab=(rpActiveTab==="all" || (rpActiveTab==="previous" ? isPreviousRp(r) : isWaitingForTeacher(r)));
-      return okClass && okStu && okSearch && okTask && okTab;
+      return okClass && okStu && okSearch && okTask && okStatus && okTab;
     });
+    filtered.sort((a,b)=>{
+      if(sortVal==="oldest") return recordTime(a)-recordTime(b);
+      if(sortVal==="name") return String(rpRecInfo(a).name||"").localeCompare(String(rpRecInfo(b).name||""),'ar');
+      if(sortVal==="score_high") return Number(finalScore(b)||-1)-Number(finalScore(a)||-1);
+      if(sortVal==="score_low") return Number(finalScore(a)||999)-Number(finalScore(b)||999);
+      return recordTime(b)-recordTime(a);
+    });
+    return filtered;
   }
 
   async function renderCards(){
@@ -12622,13 +12679,16 @@ document.addEventListener("click", function(e){
     const badge=document.getElementById("rp-floating-count");
     if(badge){badge.textContent=String(waitingAll);badge.style.display=waitingAll?"block":"none";}
     panel.querySelectorAll('[data-rp-tab]').forEach(b=>{const on=b.getAttribute('data-rp-tab')===rpActiveTab;b.style.background=on?'#2563eb':'#e2e8f0';b.style.color=on?'#fff':'#334155';});
-    const shown=await currentVisibleRecords();
-    const completed=shown.filter(isAnalyzedRecord);
-    const counted=shown.filter(isCountableAttempt);
+    const shownAll=await currentVisibleRecords();
+    const shown=shownAll.slice(0, rpDrawerVisibleLimit);
+    const completed=shownAll.filter(isAnalyzedRecord);
+    const counted=shownAll.filter(isCountableAttempt);
     const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)),0)/counted.length):"-";
     const label=rpActiveTab==="waiting"?"المنتظر للتقييم":rpActiveTab==="previous"?"التسجيلات السابقة":"كل التسجيلات";
-    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px"><div style="padding:9px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:900;font-size:12px">${label}: ${shown.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:900;font-size:12px">منتظر الكل: ${waitingAll}</div><div style="padding:9px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:900;font-size:12px">محلل: ${completed.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:900;font-size:12px">متوسط المقبول: ${avg}${avg==="-"?"":"%"}</div></div>`;
+    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px"><div style="padding:9px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:900;font-size:12px">${label}: ${shownAll.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:900;font-size:12px">منتظر الكل: ${waitingAll}</div><div style="padding:9px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:900;font-size:12px">محلل: ${completed.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:900;font-size:12px">متوسط المقبول: ${avg}${avg==="-"?"":"%"}</div><div style="padding:9px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:900;font-size:12px">المعروض الآن: ${shown.length} / ${shownAll.length}</div></div>`;
     const cards=document.getElementById("rp-v11-cards");
+    const moreWrap=document.getElementById("rp-v11-more-wrap");
+    if(moreWrap){ moreWrap.innerHTML = shownAll.length>shown.length ? `<button id="rp-v11-show-more" type="button" style="width:100%;padding:12px;border:0;border-radius:12px;background:#0f172a;color:white;font-weight:900">عرض 10 محاولات أخرى (${shown.length} / ${shownAll.length})</button>` : (shownAll.length?`<div style="text-align:center;color:#64748b;font-size:12px;font-weight:800;padding:8px">تم عرض كل النتائج المطابقة للفلاتر.</div>`:""); }
     if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b;text-align:center;font-weight:800">لا توجد تسجيلات في هذا التبويب أو حسب الفلاتر الحالية.</div>`;return;}
     let out="";
     for(const r of shown){
