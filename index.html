@@ -14,6 +14,7 @@
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
+<!-- RP198_ANCHOR_MISSING_TOLERANT_FAIR_SCORE_20260704 -->
 <!-- RP197_ANCHOR_MAIN_READING_EXTRA_INTRO_OUTRO_FAIR_SCORE_20260704 -->
 <!-- RP196_RP_FULL_READING_EXTRA_NO_15_CAP_20260704 -->
 <!-- RP195_SAFE_EXTRA_SCORE_NO_SCRIPT_ERROR_20260704 -->
@@ -1542,24 +1543,34 @@ function rpTranscriptColorAnalysis(reference, transcript){
   // an intro such as "I am very happy..." from corrupting the main sequence.
   function bestMainStart(){
     if(!refNorm.length || !got.length) return 0;
-    var best={start:0,count:0,span:9999};
-    var maxGap = refNorm.length<=30 ? 3 : 5;
+    var best={start:0,count:0,span:9999, firstRun:0};
+    var maxGap = refNorm.length<=30 ? 4 : 6;
     for(var s=0; s<got.length; s++){
       if(!got[s] || got[s].norm!==refNorm[0]) continue;
-      var ri=0, gi=s, count=0, last=s;
+      var ri=0, gi=s, count=0, last=s, firstRun=0, misses=0;
       while(ri<refNorm.length && gi<got.length){
         var found=-1;
         var lim=Math.min(got.length-1, gi+maxGap);
         for(var k=gi; k<=lim; k++){
           if(got[k] && got[k].norm===refNorm[ri]){ found=k; break; }
         }
-        if(found<0) break;
-        count++; last=found; ri++; gi=found+1;
+        if(found>=0){
+          count++; last=found; gi=found+1; ri++;
+          if(count===firstRun+1) firstRun=count;
+        }else{
+          // RP198: tolerate a missed/substituted reference word while locating the
+          // real assigned-text segment. A single word such as friends→room must not
+          // make the intro become part of the reading sequence.
+          misses++; ri++;
+          if(misses>Math.max(3, Math.ceil(refNorm.length*0.18)) && count<Math.ceil(refNorm.length*0.45)) break;
+        }
       }
       var span=last-s;
-      if(count>best.count || (count===best.count && span<best.span)) best={start:s,count:count,span:span};
+      if(count>best.count || (count===best.count && firstRun>best.firstRun) || (count===best.count && firstRun===best.firstRun && span<best.span)){
+        best={start:s,count:count,span:span,firstRun:firstRun};
+      }
     }
-    var need=Math.min(refNorm.length, Math.max(5, Math.ceil(refNorm.length*0.60)));
+    var need=Math.min(refNorm.length, Math.max(5, Math.ceil(refNorm.length*0.55)));
     return best.count>=need ? best.start : 0;
   }
   var anchorStart=bestMainStart();
@@ -1736,25 +1747,27 @@ function rpAnalyze(reference, transcript, seconds, level){
   // extra words before/after the reference text. Reverse caps are only for severe
   // real backward reading inside the reference sequence.
   const completionRatio=ref.length ? (correct/ref.length) : 0;
-  const highCompletionExtraSpeech = extraCount>0 && ref.length>0 && completionRatio>=0.90 && missingCount<=1 && wrongCount===0;
-  const severeReverse = !highCompletionExtraSpeech && (backwardCount>=Math.max(3,Math.ceil(ref.length*0.18))
+  const mostlyCompleteExtraSpeech = extraCount>0 && ref.length>0 && completionRatio>=0.85 && missingCount<=Math.max(2,Math.ceil(ref.length*0.10)) && wrongCount<=1;
+  const highCompletionExtraSpeech = mostlyCompleteExtraSpeech && completionRatio>=0.90;
+  const severeReverse = !mostlyCompleteExtraSpeech && (backwardCount>=Math.max(3,Math.ceil(ref.length*0.18))
     || (backwardCount>0 && completionRatio<0.75)
     || (backwardCount>=2 && missingCount>=Math.ceil(ref.length*0.25)));
-  const severeOutOfOrder = !highCompletionExtraSpeech && outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.20)) && completionRatio<0.95;
+  const severeOutOfOrder = !mostlyCompleteExtraSpeech && outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.20)) && completionRatio<0.95;
 
-  if(highCompletionExtraSpeech){
+  if(mostlyCompleteExtraSpeech){
     const extraRatio=extraCount/ref.length;
     let fairFloor;
     if(ref.length<=30){
-      fairFloor = extraRatio>=0.45 ? 65 : (extraRatio>=0.25 ? 70 : 75);
+      fairFloor = extraRatio>=0.70 ? 58 : (extraRatio>=0.50 ? 62 : (extraRatio>=0.30 ? 68 : 74));
+      if(completionRatio>=0.95) fairFloor += 4;
     }else if(ref.length<=80){
-      fairFloor = extraRatio>=0.35 ? 70 : (extraRatio>=0.20 ? 75 : 80);
+      fairFloor = extraRatio>=0.55 ? 64 : (extraRatio>=0.35 ? 70 : (extraRatio>=0.20 ? 76 : 82));
     }else{
-      fairFloor = extraRatio>=0.30 ? 75 : (extraRatio>=0.15 ? 80 : 84);
+      fairFloor = extraRatio>=0.45 ? 70 : (extraRatio>=0.30 ? 76 : (extraRatio>=0.15 ? 82 : 86));
     }
-    // Keep slow reading/repetition caps meaningful, but never allow extra speech alone
-    // to make a complete or near-complete reading look like a failed attempt.
-    finalScore=Math.max(finalScore, fairFloor);
+    // RP198: extra introduction/outro still lowers the grade, but it must not
+    // overpower a mostly complete assigned-text reading.
+    finalScore=Math.max(finalScore, Math.max(0, Math.min(100, Math.round(fairFloor))));
   }
 
   if(severeReverse) finalScore=Math.min(finalScore, ref.length<=30?35:(ref.length<=80?45:55));
