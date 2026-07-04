@@ -9,6 +9,7 @@
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
 <!-- RP185_SCORING_RULES_V1_20260704 -->
 <!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
+<!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
@@ -1349,6 +1350,63 @@ function rpCapByMistakes(value, mistakes, totalWords){
   if(!Number.isFinite(n)) return value;
   return Math.max(0, Math.min(100, Math.round(Math.min(n, rpMistakeScoreCap(mistakes, totalWords)))));
 }
+
+function rpFluencyRepetitionCapV1(value, meta){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return value;
+  const total=Number(meta&&meta.totalWords);
+  const correct=Number(meta&&meta.correctWords);
+  const mistakes=Number(meta&&meta.mistakes);
+  const wcpm=Number(meta&&meta.wcpm);
+  const fluency=Number(meta&&meta.fluency);
+  const repetition=Number(meta&&meta.repetitionCount)||0;
+  if(!Number.isFinite(total) || total<=0) return Math.max(0, Math.min(100, Math.round(n)));
+  const completion=(Number.isFinite(correct)?correct:0)/total;
+  let cap=100;
+  // RP_FLUENCY_REPETITION_RULES_V1_202607
+  // Word-by-word reading should not be rescued by WCPM, especially when the text is incomplete or has many errors.
+  if(total<=30){
+    if(completion<0.90 && Number.isFinite(fluency) && fluency<70) cap=Math.min(cap,55);
+    if(completion<0.90 && Number.isFinite(wcpm) && wcpm<55) cap=Math.min(cap,60);
+    if(completion<1.00 && Number.isFinite(mistakes) && mistakes>=6) cap=Math.min(cap,55);
+    if(completion>=1.00 && Number.isFinite(fluency) && fluency<65) cap=Math.min(cap,88);
+    if(repetition>=2) cap=Math.min(cap,85);
+    if(repetition>=4) cap=Math.min(cap,75);
+    if(repetition>=7) cap=Math.min(cap,60);
+  }else if(total<=80){
+    if(Number.isFinite(fluency) && fluency<60 && Number.isFinite(wcpm) && wcpm<50) cap=Math.min(cap,72);
+    else if(Number.isFinite(fluency) && fluency<68 && Number.isFinite(wcpm) && wcpm<50) cap=Math.min(cap,82);
+    if(completion<0.90 && Number.isFinite(fluency) && fluency<65) cap=Math.min(cap,75);
+    if(repetition>=4) cap=Math.min(cap,82);
+    if(repetition>=8) cap=Math.min(cap,70);
+    if(repetition>=12) cap=Math.min(cap,60);
+  }else{
+    if(Number.isFinite(fluency) && fluency<60 && Number.isFinite(wcpm) && wcpm<60) cap=Math.min(cap,78);
+    else if(Number.isFinite(fluency) && fluency<68 && Number.isFinite(wcpm) && wcpm<60) cap=Math.min(cap,86);
+    if(completion<0.95 && Number.isFinite(fluency) && fluency<65) cap=Math.min(cap,82);
+    if(repetition>=6) cap=Math.min(cap,88);
+    if(repetition>=12) cap=Math.min(cap,76);
+    if(repetition>=20) cap=Math.min(cap,65);
+  }
+  return Math.max(0, Math.min(100, Math.round(Math.min(n, cap))));
+}
+function rpRepetitionPenaltyV1(refWords, gotWords){
+  const refCounts={}, gotCounts={};
+  (refWords||[]).forEach(w=>{refCounts[w]=(refCounts[w]||0)+1;});
+  (gotWords||[]).forEach(w=>{gotCounts[w]=(gotCounts[w]||0)+1;});
+  let excess=0;
+  Object.keys(gotCounts).forEach(w=>{ excess += Math.max(0, gotCounts[w]-(refCounts[w]||0)); });
+  let consecutive=0;
+  for(let k=1;k<(gotWords||[]).length;k++){
+    if(gotWords[k]===gotWords[k-1]) consecutive++;
+  }
+  // Repeating a phrase from the beginning after a partial reading is common in stale transcript bugs or student restarts.
+  // Count it as repetition, but never as extra correct words.
+  const firstPhrase=(refWords||[]).slice(0,5).join(' ');
+  const gotText=(gotWords||[]).join(' ');
+  const phraseRepeats=firstPhrase ? Math.max(0, gotText.split(firstPhrase).length-2) : 0;
+  return {excess, consecutive, phraseRepeats, total:excess+consecutive+(phraseRepeats*3)};
+}
 function rpApplyScoringRulesV1(value, meta){
   const n=Number(value);
   if(!Number.isFinite(n)) return value;
@@ -1361,6 +1419,7 @@ function rpApplyScoringRulesV1(value, meta){
   out=rpCapByCompletion(out, correct, total);
   out=rpCapByMistakes(out, mistakes, total);
   out=rpCapBySpeed(out, wcpm, level, total);
+  out=rpFluencyRepetitionCapV1(out, meta||{});
   return Math.max(0, Math.min(100, Math.round(out)));
 }
 function rpCapByCompletion(value, correctWords, totalWords){
@@ -1390,8 +1449,10 @@ function rpFluencyCapBySpeed(value, wcpm, level, totalWords){
 function rpAnalyze(reference, transcript, seconds, level){
   const ref=rpWords(reference), got=rpWords(transcript);
   let i=0,j=0,correct=0,missing=[],extra=[],substitutions=[],repeated=[];
+  const repetitionInfo=rpRepetitionPenaltyV1(ref, got);
+  const refCountsForRepeat={}; ref.forEach(w=>{refCountsForRepeat[w]=(refCountsForRepeat[w]||0)+1;});
   const seen={};
-  got.forEach(w=>{seen[w]=(seen[w]||0)+1;if(seen[w]>1)repeated.push(w);});
+  got.forEach(w=>{seen[w]=(seen[w]||0)+1;if(seen[w]>(refCountsForRepeat[w]||0)) repeated.push(w);});
   while(i<ref.length && j<got.length){
     if(ref[i]===got[j]){correct++;i++;j++;continue;}
     if(ref[i+1]&&ref[i+1]===got[j]){missing.push(ref[i]);i++;continue;}
@@ -1409,7 +1470,8 @@ function rpAnalyze(reference, transcript, seconds, level){
   const reverseMatch=ref.length?Math.round(reverseLcs/ref.length*100):0;
   const reversePenalty=(reverseMatch>orderMatch+20)?Math.min(35,Math.round((reverseMatch-orderMatch)*0.55)):0;
   const completion=ref.length?Math.round(Math.min(correct,ref.length)/ref.length*100):0;
-  const repetitionPenalty=Math.min(25, repeated.length*6);
+  const repetitionCount=Number(repetitionInfo&&repetitionInfo.total)||repeated.length;
+  const repetitionPenalty=Math.min(30, repetitionCount*5);
   const safeSeconds=Number(seconds)||0;
   // RP109: never create fantasy WCPM from 0-second audio.
   const minutes=safeSeconds>0 ? safeSeconds/60 : null;
@@ -1424,10 +1486,10 @@ function rpAnalyze(reference, transcript, seconds, level){
   let finalScore=Math.max(0,Math.min(100,Math.round(
     baseAccuracy*0.42 + orderMatch*0.16 + completion*0.12 + fluency*0.18 + speedScore*0.12 - repetitionPenalty - reversePenalty
   )));
-  finalScore=rpApplyScoringRulesV1(finalScore,{correctWords:correct,totalWords:ref.length,mistakes:mistakeCount,wcpm,level});
+  finalScore=rpApplyScoringRulesV1(finalScore,{correctWords:correct,totalWords:ref.length,mistakes:mistakeCount,wcpm,level,fluency,repetitionCount});
   // accuracy is pure word accuracy. finalScore is the overall grade after order/repetition/speed/errors/completion caps.
   const accuracy=baseAccuracy;
-  return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionPenalty,reversePenalty,reverseMatch,seconds:Math.round(safeSeconds)};
+  return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionCount,repetitionInfo,repetitionPenalty,reversePenalty,reverseMatch,seconds:Math.round(safeSeconds)};
 }
 function rpSafeNumber(v){ const n=Number(v); return Number.isFinite(n)?n:null; }
 function rpValidWcpm(v){
