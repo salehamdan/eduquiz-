@@ -13,6 +13,7 @@
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
+<!-- RP191_COLORED_ANALYSIS_OUT_OF_ORDER_EXTRA_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
@@ -1483,47 +1484,57 @@ function rpDisplayWords(text){
   }).filter(Boolean);
 }
 function rpTranscriptColorAnalysis(reference, transcript){
+  // RP191_COLORED_ANALYSIS_OUT_OF_ORDER_EXTRA_20260704
+  // Display-focused alignment:
+  // - Correct: first valid ordered match from the reference.
+  // - Repeated: a word/phrase that was already correctly read and appears again.
+  // - Out of order: a reference word read in the wrong sequence (reverse/backtracking).
+  // - Extra: words outside the reference text.
+  // - Wrong: close word-form errors such as game/games when not matched.
   var ref=rpDisplayWords(reference), got=rpDisplayWords(transcript);
-  var out=[], i=0, j=0;
-  var summary={correct:0,repeated:0,wrong:0,missing:0,extra:0};
-  function priorContains(w){
-    for(var k=Math.max(0,i-14);k<i;k++){ if(ref[k]&&ref[k].norm===w) return true; }
+  var refNorm=ref.map(function(x){return x.norm;});
+  var gotNorm=got.map(function(x){return x.norm;});
+  var pairs=(typeof rpLcsPairs==='function')?rpLcsPairs(refNorm, gotNorm):[];
+  var matchedRef={}, matchedGot={};
+  pairs.forEach(function(p){ matchedRef[p[0]]=true; matchedGot[p[1]]=true; });
+  var refCounts={};
+  refNorm.forEach(function(w){ refCounts[w]=(refCounts[w]||0)+1; });
+  var refSet={};
+  refNorm.forEach(function(w){ refSet[w]=true; });
+  var out=[];
+  var summary={correct:0,repeated:0,outOfOrder:0,wrong:0,missing:0,extra:0};
+  var seenCorrect={};
+  function push(kind, word, title){
+    out.push({kind:kind, word:String(word||''), title:title||kind});
+    summary[kind]=(summary[kind]||0)+1;
+  }
+  function looseMatchesAny(w){
+    if(!w || typeof rpLooseSameWord!=='function') return false;
+    for(var r=0;r<refNorm.length;r++){
+      if(refNorm[r]!==w && rpLooseSameWord(refNorm[r], w)) return true;
+    }
     return false;
   }
-  function gotHasExpectedSoon(start, expected){
-    for(var z=start; z<Math.min(got.length,start+10); z++){ if(got[z]&&got[z].norm===expected) return true; }
-    return false;
-  }
-  function push(kind, word, title){ out.push({kind:kind, word:String(word||""), title:title||kind}); summary[kind]=(summary[kind]||0)+1; }
-  var guard=0;
-  while(i<ref.length && j<got.length && guard++<5000){
-    var ew=ref[i]&&ref[i].norm, hw=got[j]&&got[j].norm;
-    if(ew===hw){ push('correct', got[j].raw, 'Correct'); i++; j++; continue; }
-    // If there is junk before the first valid match, keep the reference pointer at the start.
-    // This prevents a preface like "My name is..." from turning a later correct phrase into Words: 0/22.
-    if((summary.correct||0)===0 && gotHasExpectedSoon(j+1, ew)){ push('wrong', got[j].raw, 'Wrong / before text'); j++; continue; }
-    // If the heard word belongs to an already passed area of the reference, treat it as rereading/repetition.
-    if(priorContains(hw)){ push('repeated', got[j].raw, 'Repeated / reread'); j++; continue; }
-    // Extra/wrong words before the expected word should not advance the reference if the expected word appears soon.
-    if(gotHasExpectedSoon(j+1, ew)){ push('wrong', got[j].raw, 'Wrong / extra before expected'); j++; continue; }
-    // Missing one reference word, then the heard word resumes correctly.
-    if(ref[i+1] && ref[i+1].norm===hw){ push('missing', ref[i].raw, 'Missing'); i++; continue; }
-    // Extra word before the expected word.
-    if(got[j+1] && got[j+1].norm===ew){ push('extra', got[j].raw, 'Extra'); j++; continue; }
-    // Near word form such as game/games: mark wrong but advance both.
-    if(rpLooseSameWord(ew, hw)){ push('wrong', got[j].raw, 'Wrong: expected '+(ref[i]?ref[i].raw:'')); i++; j++; continue; }
-    // Short lookahead: if heard word appears a little later, mark skipped reference words as missing.
-    var found=-1;
-    for(var a=i+1;a<Math.min(ref.length,i+5);a++){ if(ref[a].norm===hw){ found=a; break; } }
-    if(found>i){ while(i<found){ push('missing', ref[i].raw, 'Missing'); i++; } continue; }
-    // Substitution / wrong word.
-    push('wrong', got[j].raw, 'Wrong: expected '+(ref[i]?ref[i].raw:'')); i++; j++;
-  }
-  while(i<ref.length){ push('missing', ref[i].raw, 'Missing'); i++; }
-  while(j<got.length){
+  for(var j=0;j<got.length;j++){
     var hw=got[j]&&got[j].norm;
-    push(priorContains(hw)?'repeated':'extra', got[j].raw, priorContains(hw)?'Repeated / reread':'Extra');
-    j++;
+    if(matchedGot[j]){
+      push('correct', got[j].raw, 'Correct / in order');
+      seenCorrect[hw]=(seenCorrect[hw]||0)+1;
+      continue;
+    }
+    if(refSet[hw]){
+      if((seenCorrect[hw]||0)>0){
+        push('repeated', got[j].raw, 'Repeated / reread');
+      }else{
+        push('outOfOrder', got[j].raw, 'Out of order / reverse or backtracking');
+      }
+      continue;
+    }
+    if(looseMatchesAny(hw)) push('wrong', got[j].raw, 'Wrong word form');
+    else push('extra', got[j].raw, 'Extra / outside the reference');
+  }
+  for(var i=0;i<ref.length;i++){
+    if(!matchedRef[i]) push('missing', ref[i].raw, 'Missing in correct order');
   }
   return {tokens:out, summary:summary};
 }
@@ -1531,6 +1542,7 @@ function rpTranscriptTokenStyle(kind){
   var base={display:'inline-block',padding:'3px 7px',borderRadius:'8px',margin:'2px',fontSize:'11px',fontWeight:800,lineHeight:'1.4',border:'1px solid transparent'};
   if(kind==='correct') return {...base,background:'#dcfce7',color:'#166534',borderColor:'#bbf7d0'};
   if(kind==='repeated') return {...base,background:'#fef9c3',color:'#854d0e',borderColor:'#fde68a'};
+  if(kind==='outOfOrder') return {...base,background:'#ede9fe',color:'#5b21b6',borderColor:'#c4b5fd'};
   if(kind==='wrong') return {...base,background:'#fecaca',color:'#991b1b',borderColor:'#fca5a5'};
   if(kind==='missing') return {...base,background:'#e5e7eb',color:'#6b7280',borderColor:'#cbd5e1',textDecoration:'line-through'};
   if(kind==='extra') return {...base,background:'#fed7aa',color:'#9a3412',borderColor:'#fdba74'};
@@ -1545,8 +1557,8 @@ function RPColoredTranscript({reference, transcript}){
     <div style={{fontSize:'11px',color:'#475569',background:'#f8fafc',padding:'7px',borderRadius:'9px',marginBottom:'7px',whiteSpace:'pre-wrap'}}>{transcript}</div>
     <div style={{fontSize:'11px',fontWeight:900,color:'#334155',marginBottom:'5px'}}>Colored Analysis</div>
     <div style={{background:'#f8fafc',padding:'7px',borderRadius:'9px',border:'1px solid #e2e8f0'}}>{(a.tokens||[]).map(function(t,idx){return <span key={idx} title={t.title} style={rpTranscriptTokenStyle(t.kind)}>{t.word}</span>;})}</div>
-    <div style={{fontSize:'10px',color:'#475569',fontWeight:800,marginTop:'7px'}}>Correct: {sm.correct||0} | Repeated: {sm.repeated||0} | Wrong: {sm.wrong||0} | Missing: {sm.missing||0} | Extra: {sm.extra||0}</div>
-    <div style={{fontSize:'10px',color:'#64748b',marginTop:'5px'}}>🟩 Correct | 🟨 Repeated | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>
+    <div style={{fontSize:'10px',color:'#475569',fontWeight:800,marginTop:'7px'}}>Correct: {sm.correct||0} | Repeated: {sm.repeated||0} | Out of order: {sm.outOfOrder||0} | Wrong: {sm.wrong||0} | Missing: {sm.missing||0} | Extra: {sm.extra||0}</div>
+    <div style={{fontSize:'10px',color:'#64748b',marginTop:'5px'}}>🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>
   </div>;
 }
 
@@ -1557,6 +1569,7 @@ function rpTranscriptTokenCss(kind){
   var base="display:inline-block;padding:3px 7px;border-radius:8px;margin:2px;font-size:11px;font-weight:800;line-height:1.4;border:1px solid transparent;";
   if(kind==='correct') return base+"background:#dcfce7;color:#166534;border-color:#bbf7d0;";
   if(kind==='repeated') return base+"background:#fef9c3;color:#854d0e;border-color:#fde68a;";
+  if(kind==='outOfOrder') return base+"background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;";
   if(kind==='wrong') return base+"background:#fecaca;color:#991b1b;border-color:#fca5a5;";
   if(kind==='missing') return base+"background:#e5e7eb;color:#6b7280;border-color:#cbd5e1;text-decoration:line-through;";
   if(kind==='extra') return base+"background:#fed7aa;color:#9a3412;border-color:#fdba74;";
@@ -1572,8 +1585,8 @@ function rpColoredTranscriptHtml(reference, transcript){
   return '<div style="padding:9px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155">'
     + '<div style="font-size:12px;font-weight:900;color:#334155;margin-bottom:6px">🧩 Colored Analysis</div>'
     + '<div style="background:#f8fafc;padding:7px;border-radius:9px;border:1px solid #e2e8f0;line-height:1.9">'+tokenHtml+'</div>'
-    + '<div style="font-size:10px;color:#475569;font-weight:900;margin-top:7px">Correct: '+(sm.correct||0)+' | Repeated: '+(sm.repeated||0)+' | Wrong: '+(sm.wrong||0)+' | Missing: '+(sm.missing||0)+' | Extra: '+(sm.extra||0)+'</div>'
-    + '<div style="font-size:10px;color:#64748b;margin-top:5px">🟩 Correct | 🟨 Repeated | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>'
+    + '<div style="font-size:10px;color:#475569;font-weight:900;margin-top:7px">Correct: '+(sm.correct||0)+' | Repeated: '+(sm.repeated||0)+' | Out of order: '+(sm.outOfOrder||0)+' | Wrong: '+(sm.wrong||0)+' | Missing: '+(sm.missing||0)+' | Extra: '+(sm.extra||0)+'</div>'
+    + '<div style="font-size:10px;color:#64748b;margin-top:5px">🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>'
     + '</div>';
 }
 
