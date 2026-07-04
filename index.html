@@ -13,7 +13,7 @@
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
-<!-- RP191_COLORED_ANALYSIS_OUT_OF_ORDER_EXTRA_20260704 -->
+<!-- RP192_REVERSE_BACKWARD_STRICT_ORDER_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
 <!-- RP165_PROFESSIONAL_REJECT_SYNC_BY_RESOLVED_STUDENT_TASK_TITLE_20260703 -->
@@ -1484,26 +1484,21 @@ function rpDisplayWords(text){
   }).filter(Boolean);
 }
 function rpTranscriptColorAnalysis(reference, transcript){
-  // RP191_COLORED_ANALYSIS_OUT_OF_ORDER_EXTRA_20260704
-  // Display-focused alignment:
-  // - Correct: first valid ordered match from the reference.
-  // - Repeated: a word/phrase that was already correctly read and appears again.
-  // - Out of order: a reference word read in the wrong sequence (reverse/backtracking).
-  // - Extra: words outside the reference text.
-  // - Wrong: close word-form errors such as game/games when not matched.
+  // RP192_COLORED_ANALYSIS_REVERSE_BACKWARD_V1_20260704
+  // Correct is strict: exact word must advance in the reference order.
+  // A far jump forward is Out of order; a later move backwards is Reverse/Backward.
   var ref=rpDisplayWords(reference), got=rpDisplayWords(transcript);
   var refNorm=ref.map(function(x){return x.norm;});
-  var gotNorm=got.map(function(x){return x.norm;});
-  var pairs=(typeof rpLcsPairs==='function')?rpLcsPairs(refNorm, gotNorm):[];
-  var matchedRef={}, matchedGot={};
-  pairs.forEach(function(p){ matchedRef[p[0]]=true; matchedGot[p[1]]=true; });
-  var refCounts={};
-  refNorm.forEach(function(w){ refCounts[w]=(refCounts[w]||0)+1; });
-  var refSet={};
-  refNorm.forEach(function(w){ refSet[w]=true; });
+  var refSet={}; var refIndexes={};
+  refNorm.forEach(function(w,i){ refSet[w]=true; (refIndexes[w]||(refIndexes[w]=[])).push(i); });
+  var maxSkip = ref.length<=30 ? 2 : (ref.length<=80 ? 4 : 6);
+  var matchedRef={};
   var out=[];
-  var summary={correct:0,repeated:0,outOfOrder:0,wrong:0,missing:0,extra:0};
+  var summary={correct:0,repeated:0,outOfOrder:0,backward:0,wrong:0,missing:0,extra:0};
+  var next=0;
   var seenCorrect={};
+  var lastDisorderedRef=-1;
+  function same(a,b){ return a===b; }
   function push(kind, word, title){
     out.push({kind:kind, word:String(word||''), title:title||kind});
     summary[kind]=(summary[kind]||0)+1;
@@ -1515,34 +1510,65 @@ function rpTranscriptColorAnalysis(reference, transcript){
     }
     return false;
   }
+  function findAhead(w){
+    var lim=Math.min(refNorm.length-1, next+maxSkip);
+    for(var i=next;i<=lim;i++){
+      if(!matchedRef[i] && same(refNorm[i],w)) return i;
+    }
+    return -1;
+  }
+  function nearestRefIndex(w){
+    var arr=refIndexes[w]||[];
+    if(!arr.length) return -1;
+    var best=arr[0], bestDist=9999;
+    for(var i=0;i<arr.length;i++){
+      var d=Math.abs(arr[i]-next);
+      if(d<bestDist){ best=arr[i]; bestDist=d; }
+    }
+    return best;
+  }
   for(var j=0;j<got.length;j++){
     var hw=got[j]&&got[j].norm;
-    if(matchedGot[j]){
+    if(!hw) continue;
+    var idx=findAhead(hw);
+    if(idx>=0){
       push('correct', got[j].raw, 'Correct / in order');
+      matchedRef[idx]=true;
       seenCorrect[hw]=(seenCorrect[hw]||0)+1;
+      next=idx+1;
+      lastDisorderedRef=-1;
       continue;
     }
     if(refSet[hw]){
-      if((seenCorrect[hw]||0)>0){
+      var ri=nearestRefIndex(hw);
+      var wasAlreadyCorrect=(seenCorrect[hw]||0)>0;
+      if(wasAlreadyCorrect && ri<next){
         push('repeated', got[j].raw, 'Repeated / reread');
+      }else if(ri>=0 && lastDisorderedRef>=0 && ri<lastDisorderedRef){
+        push('backward', got[j].raw, 'Reverse / backward reading');
+      }else if(ri>=0 && ri<next){
+        push('backward', got[j].raw, 'Reverse / moved back in the text');
       }else{
-        push('outOfOrder', got[j].raw, 'Out of order / reverse or backtracking');
+        push('outOfOrder', got[j].raw, 'Out of order / skipped ahead too far');
       }
+      if(ri>=0) lastDisorderedRef=ri;
       continue;
     }
+    lastDisorderedRef=-1;
     if(looseMatchesAny(hw)) push('wrong', got[j].raw, 'Wrong word form');
     else push('extra', got[j].raw, 'Extra / outside the reference');
   }
-  for(var i=0;i<ref.length;i++){
-    if(!matchedRef[i]) push('missing', ref[i].raw, 'Missing in correct order');
+  for(var m=0;m<ref.length;m++){
+    if(!matchedRef[m]) push('missing', ref[m].raw, 'Missing in correct order');
   }
-  return {tokens:out, summary:summary};
+  return {tokens:out, summary:summary, matchedRef:matchedRef};
 }
 function rpTranscriptTokenStyle(kind){
   var base={display:'inline-block',padding:'3px 7px',borderRadius:'8px',margin:'2px',fontSize:'11px',fontWeight:800,lineHeight:'1.4',border:'1px solid transparent'};
   if(kind==='correct') return {...base,background:'#dcfce7',color:'#166534',borderColor:'#bbf7d0'};
   if(kind==='repeated') return {...base,background:'#fef9c3',color:'#854d0e',borderColor:'#fde68a'};
   if(kind==='outOfOrder') return {...base,background:'#ede9fe',color:'#5b21b6',borderColor:'#c4b5fd'};
+  if(kind==='backward') return {...base,background:'#ddd6fe',color:'#4c1d95',borderColor:'#8b5cf6'};
   if(kind==='wrong') return {...base,background:'#fecaca',color:'#991b1b',borderColor:'#fca5a5'};
   if(kind==='missing') return {...base,background:'#e5e7eb',color:'#6b7280',borderColor:'#cbd5e1',textDecoration:'line-through'};
   if(kind==='extra') return {...base,background:'#fed7aa',color:'#9a3412',borderColor:'#fdba74'};
@@ -1557,8 +1583,8 @@ function RPColoredTranscript({reference, transcript}){
     <div style={{fontSize:'11px',color:'#475569',background:'#f8fafc',padding:'7px',borderRadius:'9px',marginBottom:'7px',whiteSpace:'pre-wrap'}}>{transcript}</div>
     <div style={{fontSize:'11px',fontWeight:900,color:'#334155',marginBottom:'5px'}}>Colored Analysis</div>
     <div style={{background:'#f8fafc',padding:'7px',borderRadius:'9px',border:'1px solid #e2e8f0'}}>{(a.tokens||[]).map(function(t,idx){return <span key={idx} title={t.title} style={rpTranscriptTokenStyle(t.kind)}>{t.word}</span>;})}</div>
-    <div style={{fontSize:'10px',color:'#475569',fontWeight:800,marginTop:'7px'}}>Correct: {sm.correct||0} | Repeated: {sm.repeated||0} | Out of order: {sm.outOfOrder||0} | Wrong: {sm.wrong||0} | Missing: {sm.missing||0} | Extra: {sm.extra||0}</div>
-    <div style={{fontSize:'10px',color:'#64748b',marginTop:'5px'}}>🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>
+    <div style={{fontSize:'10px',color:'#475569',fontWeight:800,marginTop:'7px'}}>Correct: {sm.correct||0} | Repeated: {sm.repeated||0} | Out of order: {sm.outOfOrder||0} | Reverse: {sm.backward||0} | Wrong: {sm.wrong||0} | Missing: {sm.missing||0} | Extra: {sm.extra||0}</div>
+    <div style={{fontSize:'10px',color:'#64748b',marginTop:'5px'}}>🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟣 Reverse | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>
   </div>;
 }
 
@@ -1570,6 +1596,7 @@ function rpTranscriptTokenCss(kind){
   if(kind==='correct') return base+"background:#dcfce7;color:#166534;border-color:#bbf7d0;";
   if(kind==='repeated') return base+"background:#fef9c3;color:#854d0e;border-color:#fde68a;";
   if(kind==='outOfOrder') return base+"background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;";
+  if(kind==='backward') return base+"background:#ddd6fe;color:#4c1d95;border-color:#8b5cf6;";
   if(kind==='wrong') return base+"background:#fecaca;color:#991b1b;border-color:#fca5a5;";
   if(kind==='missing') return base+"background:#e5e7eb;color:#6b7280;border-color:#cbd5e1;text-decoration:line-through;";
   if(kind==='extra') return base+"background:#fed7aa;color:#9a3412;border-color:#fdba74;";
@@ -1585,57 +1612,58 @@ function rpColoredTranscriptHtml(reference, transcript){
   return '<div style="padding:9px;border-radius:12px;background:#fff;border:1px solid #e2e8f0;color:#334155">'
     + '<div style="font-size:12px;font-weight:900;color:#334155;margin-bottom:6px">🧩 Colored Analysis</div>'
     + '<div style="background:#f8fafc;padding:7px;border-radius:9px;border:1px solid #e2e8f0;line-height:1.9">'+tokenHtml+'</div>'
-    + '<div style="font-size:10px;color:#475569;font-weight:900;margin-top:7px">Correct: '+(sm.correct||0)+' | Repeated: '+(sm.repeated||0)+' | Out of order: '+(sm.outOfOrder||0)+' | Wrong: '+(sm.wrong||0)+' | Missing: '+(sm.missing||0)+' | Extra: '+(sm.extra||0)+'</div>'
-    + '<div style="font-size:10px;color:#64748b;margin-top:5px">🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>'
+    + '<div style="font-size:10px;color:#475569;font-weight:900;margin-top:7px">Correct: '+(sm.correct||0)+' | Repeated: '+(sm.repeated||0)+' | Out of order: '+(sm.outOfOrder||0)+' | Reverse: '+(sm.backward||0)+' | Wrong: '+(sm.wrong||0)+' | Missing: '+(sm.missing||0)+' | Extra: '+(sm.extra||0)+'</div>'
+    + '<div style="font-size:10px;color:#64748b;margin-top:5px">🟩 Correct | 🟨 Repeated | 🟪 Out of order | 🟣 Reverse | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>'
     + '</div>';
 }
 
 function rpAnalyze(reference, transcript, seconds, level){
   const ref=rpWords(reference), got=rpWords(transcript);
+  // RP192: use the same strict order alignment for scoring and colored display.
+  // A word is correct only when it advances in reference order. Far jumps and reverse reading
+  // do not raise Words/Accuracy.
+  const colorAlign=rpTranscriptColorAnalysis(reference||'', transcript||'');
+  const sm=(colorAlign&&colorAlign.summary)||{};
+  const correct=Number(sm.correct)||0;
+  const missingCount=Number(sm.missing)||0;
+  const extraCount=Number(sm.extra)||0;
+  const wrongCount=Number(sm.wrong)||0;
+  const repeatedCount=Number(sm.repeated)||0;
+  const outOfOrderCount=Number(sm.outOfOrder)||0;
+  const backwardCount=Number(sm.backward)||0;
   let missing=[],extra=[],substitutions=[],repeated=[];
-  const repetitionInfo=rpRepetitionPenaltyV1(ref, got);
-  const refCountsForRepeat={}; ref.forEach(w=>{refCountsForRepeat[w]=(refCountsForRepeat[w]||0)+1;});
-  const seen={};
-  got.forEach(w=>{seen[w]=(seen[w]||0)+1;if(seen[w]>(refCountsForRepeat[w]||0)) repeated.push(w);});
-  // RP190: score from ordered LCS matches so off-text prefaces do not destroy later correct reading.
-  const pairs=rpLcsPairs(ref, got);
-  const correct=pairs.length;
-  const matchedRef=new Set(pairs.map(p=>p[0]));
-  const matchedGot=new Set(pairs.map(p=>p[1]));
-  for(let r=0;r<ref.length;r++){ if(!matchedRef.has(r)) missing.push(ref[r]); }
-  for(let g=0;g<got.length;g++){ if(!matchedGot.has(g)) extra.push(got[g]); }
-  // A compact substitution count is useful for mistake pressure; do not let prefix junk erase correct words.
-  const substitutionCount=Math.min(missing.length, extra.length);
-  for(let q=0;q<substitutionCount;q++){ substitutions.push({expected:missing[q],heard:extra[q]}); }
+  (colorAlign.tokens||[]).forEach(function(t){
+    if(t.kind==='missing') missing.push(String(t.word||'').toLowerCase());
+    if(t.kind==='extra' || t.kind==='wrong' || t.kind==='outOfOrder' || t.kind==='backward') extra.push(String(t.word||'').toLowerCase());
+    if(t.kind==='repeated') repeated.push(String(t.word||'').toLowerCase());
+  });
+  const substitutionCount=Math.min(missingCount, wrongCount+extraCount+outOfOrderCount+backwardCount);
+  for(let q=0;q<substitutionCount;q++){ substitutions.push({expected:missing[q]||'',heard:extra[q]||''}); }
   const baseAccuracy=ref.length?Math.max(0,Math.round(correct/ref.length*100)):0;
-  const uniqueGot=[]; const used={};
-  got.forEach(w=>{used[w]=(used[w]||0)+1; if(used[w]===1) uniqueGot.push(w);});
-  const lcs=rpLcsLength(ref, uniqueGot);
-  const orderMatch=ref.length?Math.round(lcs/ref.length*100):0;
-  const reverseLcs=rpLcsLength(ref, uniqueGot.slice().reverse());
-  const reverseMatch=ref.length?Math.round(reverseLcs/ref.length*100):0;
-  const reversePenalty=(reverseMatch>orderMatch+20)?Math.min(35,Math.round((reverseMatch-orderMatch)*0.55)):0;
+  const orderMatch=baseAccuracy;
+  const reverseMatch=ref.length?Math.round((outOfOrderCount+backwardCount)/ref.length*100):0;
+  const reversePenalty=Math.min(45, Math.round(outOfOrderCount*3 + backwardCount*7));
   const completion=ref.length?Math.round(Math.min(correct,ref.length)/ref.length*100):0;
-  const repetitionCount=Number(repetitionInfo&&repetitionInfo.total)||repeated.length;
+  const repetitionCount=repeatedCount;
+  const repetitionInfo={total:repetitionCount};
   const repetitionPenalty=Math.min(30, repetitionCount*5);
   const safeSeconds=Number(seconds)||0;
-  // RP109: never create fantasy WCPM from 0-second audio.
   const minutes=safeSeconds>0 ? safeSeconds/60 : null;
   const wcpm=minutes ? Math.round(correct/minutes) : null;
   const speedTarget=rpEffectiveSpeedTarget(level, ref.length);
   const speedScore=wcpm==null?0:rpSpeedScoreFromWcpm(wcpm, level, ref.length);
-  const mistakeCount=missing.length+extra.length+substitutions.length+repeated.length;
+  const mistakeCount=missingCount+extraCount+wrongCount+repeatedCount+outOfOrderCount+backwardCount;
   const fluencyBase=Number.isFinite(Number(wcpm))?Number(wcpm):0;
-  let fluency=Math.max(0,Math.min(100,Math.round((baseAccuracy*0.62)+(orderMatch*0.18)+Math.min(12,fluencyBase/5)-Math.min(20,repeated.length*3)-reversePenalty)));
-  // RP168: perfect word accuracy does not mean perfect fluency if the reading is too slow.
+  let fluency=Math.max(0,Math.min(100,Math.round((baseAccuracy*0.62)+(orderMatch*0.18)+Math.min(12,fluencyBase/5)-Math.min(20,repeatedCount*3)-reversePenalty)));
   fluency=rpFluencyCapBySpeed(fluency, wcpm, level, ref.length);
   let finalScore=Math.max(0,Math.min(100,Math.round(
     baseAccuracy*0.42 + orderMatch*0.16 + completion*0.12 + fluency*0.18 + speedScore*0.12 - repetitionPenalty - reversePenalty
   )));
   finalScore=rpApplyScoringRulesV1(finalScore,{correctWords:correct,totalWords:ref.length,mistakes:mistakeCount,wcpm,level,fluency,repetitionCount});
-  // accuracy is pure word accuracy. finalScore is the overall grade after order/repetition/speed/errors/completion caps.
+  if(backwardCount>0) finalScore=Math.min(finalScore, ref.length<=30?15:(ref.length<=80?25:35));
+  else if(outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.2))) finalScore=Math.min(finalScore, ref.length<=30?25:(ref.length<=80?40:50));
   const accuracy=baseAccuracy;
-  return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionCount,repetitionInfo,repetitionPenalty,reversePenalty,reverseMatch,seconds:Math.round(safeSeconds)};
+  return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,missing,extra,substitutions,repeated,repetitionCount,repetitionInfo,repetitionPenalty,reversePenalty,reverseMatch,outOfOrderCount,backwardCount,seconds:Math.round(safeSeconds)};
 }
 function rpSafeNumber(v){ const n=Number(v); return Number.isFinite(n)?n:null; }
 function rpValidWcpm(v){
