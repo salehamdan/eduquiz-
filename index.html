@@ -13,6 +13,7 @@
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
+<!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
 <!-- RP192_REVERSE_BACKWARD_STRICT_ORDER_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
@@ -1499,9 +1500,15 @@ function rpTranscriptColorAnalysis(reference, transcript){
   var seenCorrect={};
   var lastDisorderedRef=-1;
   function same(a,b){ return a===b; }
-  function push(kind, word, title){
-    out.push({kind:kind, word:String(word||''), title:title||kind});
+  function push(kind, word, title, refIndex){
+    out.push({kind:kind, word:String(word||''), title:title||kind, refIndex:(Number.isFinite(Number(refIndex))?Number(refIndex):-1)});
     summary[kind]=(summary[kind]||0)+1;
+  }
+  function setKind(token, newKind, newTitle){
+    if(!token || token.kind===newKind) return;
+    summary[token.kind]=Math.max(0,(summary[token.kind]||0)-1);
+    token.kind=newKind; token.title=newTitle||newKind;
+    summary[newKind]=(summary[newKind]||0)+1;
   }
   function looseMatchesAny(w){
     if(!w || typeof rpLooseSameWord!=='function') return false;
@@ -1532,7 +1539,7 @@ function rpTranscriptColorAnalysis(reference, transcript){
     if(!hw) continue;
     var idx=findAhead(hw);
     if(idx>=0){
-      push('correct', got[j].raw, 'Correct / in order');
+      push('correct', got[j].raw, 'Correct / in order', idx);
       matchedRef[idx]=true;
       seenCorrect[hw]=(seenCorrect[hw]||0)+1;
       next=idx+1;
@@ -1543,23 +1550,46 @@ function rpTranscriptColorAnalysis(reference, transcript){
       var ri=nearestRefIndex(hw);
       var wasAlreadyCorrect=(seenCorrect[hw]||0)>0;
       if(wasAlreadyCorrect && ri<next){
-        push('repeated', got[j].raw, 'Repeated / reread');
+        push('repeated', got[j].raw, 'Repeated / reread', ri);
       }else if(ri>=0 && lastDisorderedRef>=0 && ri<lastDisorderedRef){
-        push('backward', got[j].raw, 'Reverse / backward reading');
+        push('backward', got[j].raw, 'Reverse / backward reading', ri);
       }else if(ri>=0 && ri<next){
-        push('backward', got[j].raw, 'Reverse / moved back in the text');
+        push('backward', got[j].raw, 'Reverse / moved back in the text', ri);
       }else{
-        push('outOfOrder', got[j].raw, 'Out of order / skipped ahead too far');
+        push('outOfOrder', got[j].raw, 'Out of order / skipped ahead too far', ri);
       }
       if(ri>=0) lastDisorderedRef=ri;
       continue;
     }
     lastDisorderedRef=-1;
-    if(looseMatchesAny(hw)) push('wrong', got[j].raw, 'Wrong word form');
-    else push('extra', got[j].raw, 'Extra / outside the reference');
+    if(looseMatchesAny(hw)) push('wrong', got[j].raw, 'Wrong word form', -1);
+    else push('extra', got[j].raw, 'Extra / outside the reference', -1);
   }
+  // RP193: detect real reverse/backward sequences after token classification.
+  // If reference words appear in decreasing reference indexes, they are reverse reading, not ordinary out-of-order.
+  var prevRefToken=null;
+  for(var z=0; z<out.length; z++){
+    var tk=out[z];
+    if(!tk || !Number.isFinite(Number(tk.refIndex)) || Number(tk.refIndex)<0) continue;
+    if(tk.kind==='missing' || tk.kind==='extra' || tk.kind==='wrong') continue;
+    if(prevRefToken && Number(tk.refIndex) < Number(prevRefToken.refIndex)){
+      // Mark the descending pair as backward. This fixes cases such as "Friends, my, with"
+      // and end-to-start reading where the first jumped token was previously only outOfOrder.
+      if(prevRefToken.kind==='correct'){
+        // remove accidental correct match produced after a backward jump
+        matchedRef[prevRefToken.refIndex]=false;
+      }
+      if(tk.kind==='correct'){ matchedRef[tk.refIndex]=false; }
+      setKind(prevRefToken, 'backward', 'Reverse / backward sequence');
+      setKind(tk, 'backward', 'Reverse / backward sequence');
+    }
+    prevRefToken=tk;
+  }
+  // Recompute matchedRef from tokens still marked correct after the reverse pass.
+  matchedRef={};
+  out.forEach(function(t){ if(t && t.kind==='correct' && Number.isFinite(Number(t.refIndex)) && Number(t.refIndex)>=0){ matchedRef[Number(t.refIndex)]=true; } });
   for(var m=0;m<ref.length;m++){
-    if(!matchedRef[m]) push('missing', ref[m].raw, 'Missing in correct order');
+    if(!matchedRef[m]) push('missing', ref[m].raw, 'Missing in correct order', m);
   }
   return {tokens:out, summary:summary, matchedRef:matchedRef};
 }
