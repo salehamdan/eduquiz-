@@ -14,6 +14,7 @@
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
+<!-- RP197_ANCHOR_MAIN_READING_EXTRA_INTRO_OUTRO_FAIR_SCORE_20260704 -->
 <!-- RP196_RP_FULL_READING_EXTRA_NO_15_CAP_20260704 -->
 <!-- RP195_SAFE_EXTRA_SCORE_NO_SCRIPT_ERROR_20260704 -->
 <!-- RP192_REVERSE_BACKWARD_STRICT_ORDER_20260704 -->
@@ -1536,7 +1537,36 @@ function rpTranscriptColorAnalysis(reference, transcript){
     }
     return best;
   }
-  for(var j=0;j<got.length;j++){
+  // RP197: anchor the real reading segment. If the student talks before starting
+  // the assigned text, those intro words are Extra, not Reverse. This prevents
+  // an intro such as "I am very happy..." from corrupting the main sequence.
+  function bestMainStart(){
+    if(!refNorm.length || !got.length) return 0;
+    var best={start:0,count:0,span:9999};
+    var maxGap = refNorm.length<=30 ? 3 : 5;
+    for(var s=0; s<got.length; s++){
+      if(!got[s] || got[s].norm!==refNorm[0]) continue;
+      var ri=0, gi=s, count=0, last=s;
+      while(ri<refNorm.length && gi<got.length){
+        var found=-1;
+        var lim=Math.min(got.length-1, gi+maxGap);
+        for(var k=gi; k<=lim; k++){
+          if(got[k] && got[k].norm===refNorm[ri]){ found=k; break; }
+        }
+        if(found<0) break;
+        count++; last=found; ri++; gi=found+1;
+      }
+      var span=last-s;
+      if(count>best.count || (count===best.count && span<best.span)) best={start:s,count:count,span:span};
+    }
+    var need=Math.min(refNorm.length, Math.max(5, Math.ceil(refNorm.length*0.60)));
+    return best.count>=need ? best.start : 0;
+  }
+  var anchorStart=bestMainStart();
+  for(var pre=0; pre<anchorStart; pre++){
+    if(got[pre] && got[pre].norm) push('extra', got[pre].raw, 'Extra speech before reference text', -1);
+  }
+  for(var j=anchorStart;j<got.length;j++){
     var hw=got[j]&&got[j].norm;
     if(!hw) continue;
     var idx=findAhead(hw);
@@ -1706,12 +1736,13 @@ function rpAnalyze(reference, transcript, seconds, level){
   // extra words before/after the reference text. Reverse caps are only for severe
   // real backward reading inside the reference sequence.
   const completionRatio=ref.length ? (correct/ref.length) : 0;
-  const severeReverse = backwardCount>=Math.max(3,Math.ceil(ref.length*0.18))
+  const highCompletionExtraSpeech = extraCount>0 && ref.length>0 && completionRatio>=0.90 && missingCount<=1 && wrongCount===0;
+  const severeReverse = !highCompletionExtraSpeech && (backwardCount>=Math.max(3,Math.ceil(ref.length*0.18))
     || (backwardCount>0 && completionRatio<0.75)
-    || (backwardCount>=2 && missingCount>=Math.ceil(ref.length*0.25));
-  const severeOutOfOrder = outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.20)) && completionRatio<0.95;
+    || (backwardCount>=2 && missingCount>=Math.ceil(ref.length*0.25)));
+  const severeOutOfOrder = !highCompletionExtraSpeech && outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.20)) && completionRatio<0.95;
 
-  if(extraCount>0 && ref.length>0 && completionRatio>=0.90 && missingCount<=1 && wrongCount===0){
+  if(highCompletionExtraSpeech){
     const extraRatio=extraCount/ref.length;
     let fairFloor;
     if(ref.length<=30){
