@@ -14,6 +14,7 @@
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
+<!-- RP196_RP_FULL_READING_EXTRA_NO_15_CAP_20260704 -->
 <!-- RP195_SAFE_EXTRA_SCORE_NO_SCRIPT_ERROR_20260704 -->
 <!-- RP192_REVERSE_BACKWARD_STRICT_ORDER_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
@@ -1700,11 +1701,33 @@ function rpAnalyze(reference, transcript, seconds, level){
     baseAccuracy*0.42 + orderMatch*0.16 + completion*0.12 + fluency*0.18 + speedScore*0.12 - repetitionPenalty - reversePenalty - extraPenalty
   )));
   finalScore=rpApplyScoringRulesV1(finalScore,{correctWords:correct,totalWords:ref.length,mistakes:mistakeCount,wcpm,level,fluency,repetitionCount});
-  if(extraCount>0 && ref.length>0 && (correct/ref.length)>=0.90 && mistakeCount<=2){
-    finalScore=Math.max(finalScore, ref.length<=30?65:70);
+
+  // RP196: Do not crush a completed reading to 15% just because the student spoke
+  // extra words before/after the reference text. Reverse caps are only for severe
+  // real backward reading inside the reference sequence.
+  const completionRatio=ref.length ? (correct/ref.length) : 0;
+  const severeReverse = backwardCount>=Math.max(3,Math.ceil(ref.length*0.18))
+    || (backwardCount>0 && completionRatio<0.75)
+    || (backwardCount>=2 && missingCount>=Math.ceil(ref.length*0.25));
+  const severeOutOfOrder = outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.20)) && completionRatio<0.95;
+
+  if(extraCount>0 && ref.length>0 && completionRatio>=0.90 && missingCount<=1 && wrongCount===0){
+    const extraRatio=extraCount/ref.length;
+    let fairFloor;
+    if(ref.length<=30){
+      fairFloor = extraRatio>=0.45 ? 65 : (extraRatio>=0.25 ? 70 : 75);
+    }else if(ref.length<=80){
+      fairFloor = extraRatio>=0.35 ? 70 : (extraRatio>=0.20 ? 75 : 80);
+    }else{
+      fairFloor = extraRatio>=0.30 ? 75 : (extraRatio>=0.15 ? 80 : 84);
+    }
+    // Keep slow reading/repetition caps meaningful, but never allow extra speech alone
+    // to make a complete or near-complete reading look like a failed attempt.
+    finalScore=Math.max(finalScore, fairFloor);
   }
-  if(backwardCount>0) finalScore=Math.min(finalScore, ref.length<=30?15:(ref.length<=80?25:35));
-  else if(outOfOrderCount>=Math.max(3,Math.ceil(ref.length*0.2))) finalScore=Math.min(finalScore, ref.length<=30?25:(ref.length<=80?40:50));
+
+  if(severeReverse) finalScore=Math.min(finalScore, ref.length<=30?35:(ref.length<=80?45:55));
+  else if(severeOutOfOrder) finalScore=Math.min(finalScore, ref.length<=30?45:(ref.length<=80?55:65));
   const accuracy=baseAccuracy;
   return {accuracy,rawAccuracy:baseAccuracy,finalScore,score:finalScore,orderMatch,completion,speedScore,speedTarget,wcpm,fluency,correctWords:correct,totalWords:ref.length,mistakeCount,mistakes:mistakeCount,rawMistakeCount,displayMistakes:rawMistakeCount,extraPenalty,missing,extra,substitutions,repeated,repetitionCount,repetitionInfo,repetitionPenalty,reversePenalty,reverseMatch,outOfOrderCount,backwardCount,seconds:Math.round(safeSeconds)};
 }
