@@ -9,6 +9,7 @@
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
 <!-- RP185_SCORING_RULES_V1_20260704 -->
 <!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
+<!-- RP188_TEACHER_COLORED_TRANSCRIPT_REPETITION_202607 -->
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
@@ -1446,6 +1447,71 @@ function rpFluencyCapBySpeed(value, wcpm, level, totalWords){
   else if(Number.isFinite(words) && words<=80) cap=Math.min(cap, 84);
   return Math.max(0, Math.min(100, Math.round(Math.min(n, cap))));
 }
+
+function rpDisplayWords(text){
+  return String(text||"").split(/\s+/).map(function(raw){
+    var clean=String(raw||"").replace(/[“”]/g,'"').replace(/[’]/g,"'").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g,"");
+    var norm=clean.toLowerCase();
+    return clean?{raw:clean,norm:norm}:null;
+  }).filter(Boolean);
+}
+function rpTranscriptColorAnalysis(reference, transcript){
+  var ref=rpDisplayWords(reference), got=rpDisplayWords(transcript);
+  var out=[], i=0, j=0;
+  var summary={correct:0,repeated:0,wrong:0,missing:0,extra:0};
+  function priorContains(w){
+    for(var k=Math.max(0,i-10);k<i;k++){ if(ref[k]&&ref[k].norm===w) return true; }
+    return false;
+  }
+  function push(kind, word, title){ out.push({kind:kind, word:String(word||""), title:title||kind}); summary[kind]=(summary[kind]||0)+1; }
+  var guard=0;
+  while(i<ref.length && j<got.length && guard++<5000){
+    var ew=ref[i]&&ref[i].norm, hw=got[j]&&got[j].norm;
+    if(ew===hw){ push('correct', got[j].raw, 'Correct'); i++; j++; continue; }
+    // If the heard word belongs to an already passed area of the reference, treat it as rereading/repetition.
+    if(priorContains(hw)){ push('repeated', got[j].raw, 'Repeated / reread'); j++; continue; }
+    // Missing one reference word, then the heard word resumes correctly.
+    if(ref[i+1] && ref[i+1].norm===hw){ push('missing', ref[i].raw, 'Missing'); i++; continue; }
+    // Extra word before the expected word.
+    if(got[j+1] && got[j+1].norm===ew){ push('extra', got[j].raw, 'Extra'); j++; continue; }
+    // Short lookahead: if heard word appears a little later, mark skipped reference words as missing.
+    var found=-1;
+    for(var a=i+1;a<Math.min(ref.length,i+5);a++){ if(ref[a].norm===hw){ found=a; break; } }
+    if(found>i){ while(i<found){ push('missing', ref[i].raw, 'Missing'); i++; } continue; }
+    // Substitution / wrong word.
+    push('wrong', got[j].raw, 'Wrong: expected '+(ref[i]?ref[i].raw:'')); i++; j++;
+  }
+  while(i<ref.length){ push('missing', ref[i].raw, 'Missing'); i++; }
+  while(j<got.length){
+    var hw=got[j]&&got[j].norm;
+    push(priorContains(hw)?'repeated':'extra', got[j].raw, priorContains(hw)?'Repeated / reread':'Extra');
+    j++;
+  }
+  return {tokens:out, summary:summary};
+}
+function rpTranscriptTokenStyle(kind){
+  var base={display:'inline-block',padding:'3px 7px',borderRadius:'8px',margin:'2px',fontSize:'11px',fontWeight:800,lineHeight:'1.4',border:'1px solid transparent'};
+  if(kind==='correct') return {...base,background:'#dcfce7',color:'#166534',borderColor:'#bbf7d0'};
+  if(kind==='repeated') return {...base,background:'#fef9c3',color:'#854d0e',borderColor:'#fde68a'};
+  if(kind==='wrong') return {...base,background:'#fecaca',color:'#991b1b',borderColor:'#fca5a5'};
+  if(kind==='missing') return {...base,background:'#e5e7eb',color:'#6b7280',borderColor:'#cbd5e1',textDecoration:'line-through'};
+  if(kind==='extra') return {...base,background:'#fed7aa',color:'#9a3412',borderColor:'#fdba74'};
+  return base;
+}
+function RPColoredTranscript({reference, transcript}){
+  if(!transcript) return null;
+  var a=rpTranscriptColorAnalysis(reference||'', transcript||'');
+  var sm=a.summary||{};
+  return <div style={{marginTop:'8px',padding:'9px',border:'1px solid #e2e8f0',borderRadius:'12px',background:'#ffffff'}}>
+    <div style={{fontSize:'11px',fontWeight:900,color:'#334155',marginBottom:'5px'}}>📝 Student Transcript</div>
+    <div style={{fontSize:'11px',color:'#475569',background:'#f8fafc',padding:'7px',borderRadius:'9px',marginBottom:'7px',whiteSpace:'pre-wrap'}}>{transcript}</div>
+    <div style={{fontSize:'11px',fontWeight:900,color:'#334155',marginBottom:'5px'}}>Colored Analysis</div>
+    <div style={{background:'#f8fafc',padding:'7px',borderRadius:'9px',border:'1px solid #e2e8f0'}}>{(a.tokens||[]).map(function(t,idx){return <span key={idx} title={t.title} style={rpTranscriptTokenStyle(t.kind)}>{t.word}</span>;})}</div>
+    <div style={{fontSize:'10px',color:'#475569',fontWeight:800,marginTop:'7px'}}>Correct: {sm.correct||0} | Repeated: {sm.repeated||0} | Wrong: {sm.wrong||0} | Missing: {sm.missing||0} | Extra: {sm.extra||0}</div>
+    <div style={{fontSize:'10px',color:'#64748b',marginTop:'5px'}}>🟩 Correct | 🟨 Repeated | 🟥 Wrong | ⬜ Missing | 🟧 Extra</div>
+  </div>;
+}
+
 function rpAnalyze(reference, transcript, seconds, level){
   const ref=rpWords(reference), got=rpWords(transcript);
   let i=0,j=0,correct=0,missing=[],extra=[],substitutions=[],repeated=[];
@@ -6842,7 +6908,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
         </div>
-        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={(s.analysis.repeated||[]).length} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}
+        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={Number(s.analysis.repetitionCount??((s.analysis.repeated||[]).length))||0} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}{s.transcript&&<RPColoredTranscript reference={s.referenceText||s.reference||s.text||((t&&t.text)||"")} transcript={s.transcript}/>}
       </div>;
     })}</Card>
   </div>;
