@@ -11,6 +11,7 @@
 <!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
 <!-- RP188_TEACHER_COLORED_TRANSCRIPT_REPETITION_202607 -->
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
+<!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
 <!-- RP162_STUDENT_REJECT_WINS_OVER_STALE_PENDING_20260703 -->
 <!-- RP163_FORCE_STUDENT_REJECT_DECISION_MARKER_20260703 -->
@@ -1222,6 +1223,31 @@ function rpLcsLength(a,b){
   }
   return prev[n]||0;
 }
+
+function rpLcsPairs(a,b){
+  const m=(a||[]).length,n=(b||[]).length;
+  const dp=Array.from({length:m+1},()=>new Array(n+1).fill(0));
+  for(let i=m-1;i>=0;i--){
+    for(let j=n-1;j>=0;j--){
+      dp[i][j]=(a[i]===b[j]) ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j],dp[i][j+1]);
+    }
+  }
+  const pairs=[]; let i=0,j=0;
+  while(i<m && j<n){
+    if(a[i]===b[j]){ pairs.push([i,j]); i++; j++; }
+    else if(dp[i+1][j] >= dp[i][j+1]) i++;
+    else j++;
+  }
+  return pairs;
+}
+function rpLooseSameWord(a,b){
+  a=String(a||'').toLowerCase(); b=String(b||'').toLowerCase();
+  if(!a||!b) return false;
+  if(a===b) return true;
+  function stem(x){ return x.replace(/ies$/,'y').replace(/es$/,'').replace(/s$/,''); }
+  return stem(a)===stem(b);
+}
+
 function rpSpeedTarget(level){
   const l=String(level||"beginner").toLowerCase();
   // RP168: high-school RP should not award full fluency for very slow perfect reading.
@@ -1461,7 +1487,11 @@ function rpTranscriptColorAnalysis(reference, transcript){
   var out=[], i=0, j=0;
   var summary={correct:0,repeated:0,wrong:0,missing:0,extra:0};
   function priorContains(w){
-    for(var k=Math.max(0,i-10);k<i;k++){ if(ref[k]&&ref[k].norm===w) return true; }
+    for(var k=Math.max(0,i-14);k<i;k++){ if(ref[k]&&ref[k].norm===w) return true; }
+    return false;
+  }
+  function gotHasExpectedSoon(start, expected){
+    for(var z=start; z<Math.min(got.length,start+10); z++){ if(got[z]&&got[z].norm===expected) return true; }
     return false;
   }
   function push(kind, word, title){ out.push({kind:kind, word:String(word||""), title:title||kind}); summary[kind]=(summary[kind]||0)+1; }
@@ -1469,12 +1499,19 @@ function rpTranscriptColorAnalysis(reference, transcript){
   while(i<ref.length && j<got.length && guard++<5000){
     var ew=ref[i]&&ref[i].norm, hw=got[j]&&got[j].norm;
     if(ew===hw){ push('correct', got[j].raw, 'Correct'); i++; j++; continue; }
+    // If there is junk before the first valid match, keep the reference pointer at the start.
+    // This prevents a preface like "My name is..." from turning a later correct phrase into Words: 0/22.
+    if((summary.correct||0)===0 && gotHasExpectedSoon(j+1, ew)){ push('wrong', got[j].raw, 'Wrong / before text'); j++; continue; }
     // If the heard word belongs to an already passed area of the reference, treat it as rereading/repetition.
     if(priorContains(hw)){ push('repeated', got[j].raw, 'Repeated / reread'); j++; continue; }
+    // Extra/wrong words before the expected word should not advance the reference if the expected word appears soon.
+    if(gotHasExpectedSoon(j+1, ew)){ push('wrong', got[j].raw, 'Wrong / extra before expected'); j++; continue; }
     // Missing one reference word, then the heard word resumes correctly.
     if(ref[i+1] && ref[i+1].norm===hw){ push('missing', ref[i].raw, 'Missing'); i++; continue; }
     // Extra word before the expected word.
     if(got[j+1] && got[j+1].norm===ew){ push('extra', got[j].raw, 'Extra'); j++; continue; }
+    // Near word form such as game/games: mark wrong but advance both.
+    if(rpLooseSameWord(ew, hw)){ push('wrong', got[j].raw, 'Wrong: expected '+(ref[i]?ref[i].raw:'')); i++; j++; continue; }
     // Short lookahead: if heard word appears a little later, mark skipped reference words as missing.
     var found=-1;
     for(var a=i+1;a<Math.min(ref.length,i+5);a++){ if(ref[a].norm===hw){ found=a; break; } }
@@ -1542,19 +1579,21 @@ function rpColoredTranscriptHtml(reference, transcript){
 
 function rpAnalyze(reference, transcript, seconds, level){
   const ref=rpWords(reference), got=rpWords(transcript);
-  let i=0,j=0,correct=0,missing=[],extra=[],substitutions=[],repeated=[];
+  let missing=[],extra=[],substitutions=[],repeated=[];
   const repetitionInfo=rpRepetitionPenaltyV1(ref, got);
   const refCountsForRepeat={}; ref.forEach(w=>{refCountsForRepeat[w]=(refCountsForRepeat[w]||0)+1;});
   const seen={};
   got.forEach(w=>{seen[w]=(seen[w]||0)+1;if(seen[w]>(refCountsForRepeat[w]||0)) repeated.push(w);});
-  while(i<ref.length && j<got.length){
-    if(ref[i]===got[j]){correct++;i++;j++;continue;}
-    if(ref[i+1]&&ref[i+1]===got[j]){missing.push(ref[i]);i++;continue;}
-    if(got[j+1]&&ref[i]===got[j+1]){extra.push(got[j]);j++;continue;}
-    substitutions.push({expected:ref[i],heard:got[j]});i++;j++;
-  }
-  while(i<ref.length){missing.push(ref[i++]);}
-  while(j<got.length){extra.push(got[j++]);}
+  // RP190: score from ordered LCS matches so off-text prefaces do not destroy later correct reading.
+  const pairs=rpLcsPairs(ref, got);
+  const correct=pairs.length;
+  const matchedRef=new Set(pairs.map(p=>p[0]));
+  const matchedGot=new Set(pairs.map(p=>p[1]));
+  for(let r=0;r<ref.length;r++){ if(!matchedRef.has(r)) missing.push(ref[r]); }
+  for(let g=0;g<got.length;g++){ if(!matchedGot.has(g)) extra.push(got[g]); }
+  // A compact substitution count is useful for mistake pressure; do not let prefix junk erase correct words.
+  const substitutionCount=Math.min(missing.length, extra.length);
+  for(let q=0;q<substitutionCount;q++){ substitutions.push({expected:missing[q],heard:extra[q]}); }
   const baseAccuracy=ref.length?Math.max(0,Math.round(correct/ref.length*100)):0;
   const uniqueGot=[]; const used={};
   got.forEach(w=>{used[w]=(used[w]||0)+1; if(used[w]===1) uniqueGot.push(w);});
