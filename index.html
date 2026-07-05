@@ -18,6 +18,7 @@
 <!-- RP199_STUDENT_COLORED_ANALYSIS_BEFORE_ACCEPT_20260704 -->
 <!-- RP201_SAFE_QUEUE_ALL_ONE_BY_ONE_STUDENT_COLORED_20260704 -->
 <!-- RP203_FLOATING_DRAWER_DISPLAY_FILTERS_ADMIN_SEPARATED_20260705 -->
+<!-- RP204_READING_PERFORMANCE_CLASSES_SYNC_20260705 -->
 <!-- RP202_FLOATING_DRAWER_CLASS_STUDENT_FILTERS_SHOW_MORE_20260705 -->
 <!-- RP200_STUDENT_PREVIEW_AND_SAFE_ANALYSIS_QUEUE_20260704 -->
 <!-- RP197_ANCHOR_MAIN_READING_EXTRA_INTRO_OUTRO_FAIR_SCORE_20260704 -->
@@ -7282,7 +7283,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   function fluency(r){if(Number.isFinite(Number(r&&r.fluency)))return Math.round(Number(r.fluency)); if(r&&r.analysis&&Number.isFinite(Number(r.analysis.fluency)))return Math.round(Number(r.analysis.fluency)); return null;}
   function sname(r){return String(r.studentName||r.name||"Student").trim();}
   function fixedSid(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3136"; return String(r.studentNumber||r.studentId||"").trim();}
-  function cls(r){const n=sname(r).replace(/\s+/g," ").trim(); if(n.includes("أحمد علي الخميس")||n.includes("احمد علي الخميس")||n.toLowerCase().includes("ahmed ali"))return "3/1- 3"; return cleanClassLabel(r.className||r.classId);}
+  function cls(r){try{return recordClassName(r);}catch(e){return cleanClassLabel(r.className||r.classId);}}
   function timeOf(r){return Date.parse(r.updatedAt||r.reviewedAt||r.analyzedAt||r.submittedAt||r.createdAt||"")||0;}
   function avg(a){a=a.filter(x=>x!==null&&x!==undefined&&Number.isFinite(Number(x)));return a.length?Math.round(a.reduce((x,y)=>x+Number(y),0)/a.length):null;}
   function perfLevel(v){if(v===null)return "—"; if(v>=90)return "Excellent"; if(v>=80)return "Very Good"; if(v>=70)return "Good"; if(v>=60)return "Needs Practice"; return "Needs Support";}
@@ -7296,14 +7297,48 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   let all=Object.values(map);
 
   const fixedStudents=myStudents.map(fixAhmedStudent);
-  const classNameById={}; myClasses.forEach(c=>{const clean=cleanClassLabel(c.name||c.id); if(clean)classNameById[c.id]=clean;});
-  const allowedClassLabels=["ثالث أول — 3-1","ثالث ثاني — 3-2","ثالث ثالث — 3-3","ثالث رابع — 3-4","3/1- 3","3/1"].filter(Boolean);
-  const allClassNames=[...new Set([...allowedClassLabels,...raw.map(cls)].map(cleanClassLabel).filter(Boolean))];
-  const studentList=fixedStudents.map(s=>({id:s.studentId||s.id,rawId:s.id,name:s.name,cls:s.fixedClassName||classNameById[s.classId]||cleanClassLabel(s.className||s.classId)}));
+  // RP204: Reading Performance must use the same live Classes source as the Classes/Login/Students pages.
+  // Do not rebuild report filter chips from old attempt labels such as 3/1 or 3/1-3.
+  const actualReportClasses=(typeof eqRealActiveClassesFromData==="function"?eqRealActiveClassesFromData(data||{}):[]).filter(c=>c && c.deleted!==true && c.status!=="deleted");
+  const reportClasses=(actualReportClasses.length?actualReportClasses:myClasses).filter(c=>c && c.deleted!==true && c.status!=="deleted");
+  const activeClassIds=new Set();
+  const classNameById={};
+  reportClasses.forEach(c=>{
+    const cid=(typeof canonicalClassId==="function")?canonicalClassId(c.id||c.classId||c.grade||c.name||c.className||""):String(c.id||c.classId||"").trim();
+    if(!cid) return;
+    activeClassIds.add(cid);
+    classNameById[cid]=cleanClassLabel(c.name||c.className||c.grade||cid);
+    if(c.id) classNameById[c.id]=classNameById[cid];
+    if(c.classId) classNameById[c.classId]=classNameById[cid];
+  });
+  const studentBySid={};
+  fixedStudents.forEach(s=>{const sid=String(s.studentId||s.id||"").trim(); if(sid) studentBySid[sid]=s;});
+  function recordClassId(r){
+    const sid=fixedSid(r);
+    const st=sid?studentBySid[sid]:null;
+    const raw=(st&&(st.classId||st.className||st.class||st.fixedClassName)) || (r&&(r.classId||r.className||r.class||r.grade)) || "";
+    const cid=(typeof canonicalClassId==="function")?canonicalClassId(raw):String(raw||"").trim();
+    return cid||"";
+  }
+  function recordClassName(r){
+    const cid=recordClassId(r);
+    return (cid&&classNameById[cid]) || cleanClassLabel((r&&(r.className||r.classId||r.class||r.grade))||"");
+  }
+  const allClassNames=reportClasses.map(c=>{const cid=(typeof canonicalClassId==="function")?canonicalClassId(c.id||c.classId||c.grade||c.name||c.className||""):String(c.id||c.classId||"").trim(); return {id:cid,name:classNameById[cid]||cleanClassLabel(c.name||c.className||cid)};}).filter(c=>c.id&&c.name);
+  const studentList=fixedStudents.filter(s=>{
+    const cid=(typeof canonicalClassId==="function")?canonicalClassId(s.classId||s.className||s.class||s.fixedClassName||""):String(s.classId||"").trim();
+    return !activeClassIds.size || activeClassIds.has(cid);
+  }).map(s=>{const cid=(typeof canonicalClassId==="function")?canonicalClassId(s.classId||s.className||s.class||s.fixedClassName||""):String(s.classId||"").trim(); return {id:s.studentId||s.id,rawId:s.id,name:s.name,cls:classNameById[cid]||cleanClassLabel(s.className||s.classId)};});
+  const visibleStudentList=selectedClasses.length?studentList.filter(s=>{
+    const st=studentBySid[String(s.id||"").trim()];
+    const cid=st?((typeof canonicalClassId==="function")?canonicalClassId(st.classId||st.className||st.class||st.fixedClassName||""):String(st.classId||"").trim()):"";
+    return selectedClasses.includes(cid);
+  }):studentList;
 
-  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(cls(r))||selectedClasses.includes(cleanClassLabel(r.classId))||selectedClasses.includes(classNameById[r.classId]));
+  if(activeClassIds.size) all=all.filter(r=>activeClassIds.has(recordClassId(r)));
+  if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(recordClassId(r)));
   if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(fixedSid(r))||selectedStudents.includes(r.studentId));
-  if(search.trim()){const q=search.toLowerCase(); all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+cls(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
+  if(search.trim()){const q=search.toLowerCase(); all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+recordClassName(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
 
   const approved=all.filter(isApproved), pending=all.filter(r=>!isApproved(r)&&!isRejected(r)), rejected=all.filter(isRejected);
   const grouped={}; approved.forEach(r=>{const key=fixedSid(r)||sname(r); if(!grouped[key])grouped[key]={name:sname(r),sid:fixedSid(r),cls:cls(r),items:[]}; grouped[key].items.push(r);});
@@ -7336,9 +7371,9 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
           <Btn size="sm" color={C.mu} onClick={clearSelection}>Clear Selection</Btn>
           <Btn size="sm" color={C.d} onClick={clearAll}>Clear All</Btn>
         </div>
-        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Classes</div>
-        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{allClassNames.map(c=><button key={c} onClick={()=>toggle(selectedClasses,setSelectedClasses,c)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c)?C.p:C.br),background:selectedClasses.includes(c)?C.p:"#fff",color:selectedClasses.includes(c)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c}</button>)}</div>
-        {studentSelectOpen&&<div><div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Students</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"140px",overflowY:"auto"}}>{studentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div></div>}
+        <div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Classes — synced from Classes</div>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px"}}>{allClassNames.length?allClassNames.map(c=><button key={c.id} onClick={()=>toggle(selectedClasses,setSelectedClasses,c.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedClasses.includes(c.id)?C.p:C.br),background:selectedClasses.includes(c.id)?C.p:"#fff",color:selectedClasses.includes(c.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{c.name}</button>):<span style={{fontSize:"11px",color:C.mu}}>No active classes found in Classes.</span>}</div>
+        {studentSelectOpen&&<div><div style={{fontSize:"11px",fontWeight:900,color:C.mu,marginTop:"10px"}}>Students</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"6px",maxHeight:"140px",overflowY:"auto"}}>{visibleStudentList.map(s=><button key={s.id} onClick={()=>toggle(selectedStudents,setSelectedStudents,s.id)} style={{padding:"6px 9px",borderRadius:"999px",border:"1px solid "+(selectedStudents.includes(s.id)?C.s:C.br),background:selectedStudents.includes(s.id)?C.s:"#fff",color:selectedStudents.includes(s.id)?"#fff":C.mu,fontWeight:800,fontSize:"10px"}}>{s.name} · {s.id}</button>)}</div></div>}
       </div>}
     </Card>
 
