@@ -7235,6 +7235,8 @@ function cleanClassLabel(v){
 
 function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   const [search,setSearch]=useState("");
+  const [sheetScope,setSheetScope]=useState("period");
+  const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
   const [selectedClasses,setSelectedClasses]=useState([]);
   const [selectedStudents,setSelectedStudents]=useState([]);
   const [filtersOpen,setFiltersOpen]=useState(true);
@@ -7392,6 +7394,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   </div>;
 }
 
+// FOLLOWUP209_GRADE_SHEET_SCREEN_ONLY_20260706
 // FOLLOWUP208_PARTICIPATION_MODAL_SAFE_FIX_20260706
 // FOLLOWUP205_DAILY_PARTICIPATION_PHASE1_20260706
 // Phase 1: Daily follow-up / participation only. It is isolated from RP, Quizzes, Projects, Accept/Reject/Delete.
@@ -7411,6 +7414,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [bulkCount,setBulkCount]=useState(1);
   const [bulkSelected,setBulkSelected]=useState({});
   const [search,setSearch]=useState("");
+  const [sheetScope,setSheetScope]=useState("period");
+  const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
 
   const safeNum=(v,fb)=>{const n=Number(v); return Number.isFinite(n)?n:fb;};
   const fmt=n=>{const x=Number(n); if(!Number.isFinite(x))return "0"; return (Math.round(x*100)/100).toString();};
@@ -7463,11 +7468,13 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   function clearBulkSelection(){setBulkSelected({});}
   function applyBulk(){const n=Math.max(0,safeNum(bulkCount,1)); const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:safeNum(r.participation,0)+n};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تمت إضافة المشاركات للمحددين. اضغط حفظ اليوم لاعتمادها."); setBulkOpen(false);}
   function zeroBulkToday(){const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:0};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تم تصفير مشاركات اليوم للمحددين. اضغط حفظ اليوم لاعتمادها."); setBulkOpen(false);}
-  function periodStats(st){
+  function periodStats(st,scope="period"){
     const sid=st.id; const sn=String(st.studentId||"");
-    const rows=(periodRows||[]).filter(r=>String(r.studentId)===String(sid)||String(r.studentNumber||"")===sn);
+    let rows=(periodRows||[]).filter(r=>String(r.studentId)===String(sid)||String(r.studentNumber||"")===sn);
+    if(scope==="month"){ rows=rows.filter(r=>String(r.date||"").slice(0,7)===sheetMonth); }
     const todayRec={...blank(),...getRec(sid),studentId:sid,date};
-    const byDate={}; rows.forEach(r=>{byDate[r.date||""]=r;}); byDate[date]=todayRec;
+    const byDate={}; rows.forEach(r=>{byDate[r.date||""]=r;});
+    if(scope!=="month" || String(date||"").slice(0,7)===sheetMonth){ byDate[date]=todayRec; }
     const arr=Object.values(byDate);
     const totalPart=arr.reduce((a,r)=>a+safeNum(r.participation,0),0);
     const late=arr.filter(r=>r.attendance==="late").length;
@@ -7516,6 +7523,32 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>متوسط الفترة الحالي: <span style={{color:gc(avgScore*10)}}>{fmt(avgScore)} / {settings.fullScore}</span></div>
         <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={setAllPresent}>✅ الكل حاضر</Btn><Btn size="sm" color={C.p} onClick={openBulk}>➕ إضافة مشاركين اليوم</Btn><Btn size="sm" color={C.mu} onClick={loadFollowupDay}>تحديث</Btn></div>
       </div>
+    </Card>
+    <Card style={{marginBottom:"12px",border:"1px solid #c7d2fe",background:"linear-gradient(180deg,#ffffff,#f8fafc)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"10px"}}>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>📋 كشف الفترة على الشاشة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>عرض أفقي قبل Excel: المشاركة فقط الآن، وتضاف الواجبات وRP والمشاريع والاختبارات لاحقًا.</div></div>
+        <div style={{display:"flex",gap:"7px",alignItems:"center",flexWrap:"wrap"}}>
+          <select value={sheetScope} onChange={e=>setSheetScope(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800}}><option value="period">الفترة كاملة</option><option value="month">شهر محدد</option></select>
+          {sheetScope==="month"&&<input type="month" value={sheetMonth} onChange={e=>setSheetMonth(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800}}/>}
+        </div>
+      </div>
+      <div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff",maxHeight:"460px"}}>
+        <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"980px",width:"100%",fontSize:"12px"}}>
+          <thead><tr style={{background:"#0f172a",color:"#fff"}}>
+            <th style={{position:"sticky",left:0,zIndex:2,background:"#0f172a",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
+            <th style={{padding:"10px",textAlign:"center"}}>ID</th><th style={{padding:"10px",textAlign:"center"}}>المشاركات</th><th style={{padding:"10px",textAlign:"center"}}>تأخير</th><th style={{padding:"10px",textAlign:"center"}}>غياب</th><th style={{padding:"10px",textAlign:"center"}}>كتاب</th><th style={{padding:"10px",textAlign:"center"}}>سلوك</th><th style={{padding:"10px",textAlign:"center"}}>خروج</th><th style={{padding:"10px",textAlign:"center"}}>خصم حضور</th><th style={{padding:"10px",textAlign:"center"}}>خصم آخر</th><th style={{padding:"10px",textAlign:"center"}}>المشاركة / {settings.fullScore}</th>
+          </tr></thead>
+          <tbody>{visibleStudents.map((st,i)=>{const sum=periodStats(st,sheetScope); const pct=(sum.final/Math.max(1,safeNum(settings.fullScore,10)))*100; return <tr key={st.id} style={{background:i%2?"#f8fafc":"#fff"}}>
+            <td style={{position:"sticky",left:0,zIndex:1,background:i%2?"#f8fafc":"#fff",padding:"9px",fontWeight:900,color:C.tx,borderBottom:"1px solid "+C.br}}>{st.name}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,color:C.mu,fontWeight:800}}>{st.studentId||"—"}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900}}>{sum.totalPart} / {settings.requiredParticipation}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.late}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.absent}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.book}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.behavior}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.exit}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.attPen)}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.otherPen)}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>
+          </tr>;})}</tbody>
+        </table>
+      </div>
+      <div style={{fontSize:"11px",color:C.mu,fontWeight:800,marginTop:"8px"}}>هذا الكشف للعرض فقط ولا يغيّر السجلات. التصدير إلى Excel ونور سيكون في مرحلة لاحقة.</div>
     </Card>
     {bulkOpen&&<Card style={{marginBottom:"12px",border:"2px solid "+C.p,background:"#eff6ff"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"14px",color:C.tx}}>➕ إضافة مشاركات جماعية لليوم</strong><button onClick={()=>setBulkOpen(false)} style={{border:"none",background:"transparent",fontSize:"18px",cursor:"pointer"}}>×</button></div>
