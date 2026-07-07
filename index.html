@@ -13,7 +13,7 @@
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
-<!-- FOLLOWUP220_DEFAULT_HIDDEN_SHEET_GRADES_20260707 -->
+<!-- FOLLOWUP221_REFRESH_SAFE_ATTENDANCE_TOGGLE_20260707 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
 <!-- RP198_ANCHOR_MISSING_TOLERANT_FAIR_SCORE_20260704 -->
 <!-- RP199_STUDENT_COLORED_ANALYSIS_BEFORE_ACCEPT_20260704 -->
@@ -7492,7 +7492,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const visibleStudents=classStudents.filter(s=>{const q=search.trim().toLowerCase(); return !q || (String(s.name||"")+" "+String(s.studentId||"")).toLowerCase().includes(q);});
   function settingsId(){return "followup_settings_"+(user&&user.id?user.id:"teacher");}
   function rowId(stId,day=date){return ["df",user&&user.id?user.id:"teacher",term,period,classId,day,stId].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
-  function blank(){return {attendance:"present",participation:0,book:false,behavior:false,exit:false,note:"",manualScore:""};}
+  function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,note:"",manualScore:""};}
   function getRec(sid){return records[sid]||blank();}
   function setRec(sid,patch){setRecords(prev=>({...prev,[sid]:{...blank(),...(prev[sid]||{}),...patch}}));}
 
@@ -7531,7 +7531,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
-      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"present",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
+      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
       const init={}; classStudents.forEach(s=>{init[s.id]={...blank(),...(todays[s.id]||todays[s.studentId]||{})};});
       autosaveSuppressRef.current=true;
       let nextRecords=init;
@@ -7568,7 +7568,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setAutosaveMsg(autoMode?"⏳ جاري الحفظ التلقائي...":"⏳ جاري الحفظ...");
     try{
       await Promise.all(classStudents.map(st=>{
-        const r=getRec(st.id); const row={id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"present",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
+        const r=getRec(st.id); const row={id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
         return fsSet("dailyFollowup",row.id,row);
       }));
       lastDailySavedRef.current=JSON.stringify(records||{});
@@ -7584,8 +7584,27 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function saveDay(){ return saveDayCore(false); }
   async function saveDayAuto(){ return saveDayCore(true); }
-  function setAllPresent(){const next={}; classStudents.forEach(s=>{next[s.id]={...getRec(s.id),attendance:"present"};}); setRecords(prev=>({...prev,...next}));}
-  function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); sel[s.id]=(r.attendance||"present")!=="absent";}); setBulkSelected(sel); setBulkOpen(true);}
+  function setAllPresent(){
+    const allPresent=classStudents.length>0 && classStudents.every(s=>(getRec(s.id).attendance||"")==="present");
+    const next={};
+    classStudents.forEach(s=>{next[s.id]={...getRec(s.id),attendance:allPresent?"":"present"};});
+    setRecords(prev=>({...prev,...next}));
+    setMsg(allPresent?"↩️ تم إلغاء تحديد الحضور الجماعي. اضغط حفظ اليوم لاعتماد التغيير.":"✅ تم تحديد جميع الطلاب حاضرين. اضغط حفظ اليوم لاعتماد التغيير.");
+  }
+  function safeRefreshDay(){
+    const currentJson=JSON.stringify(records||{});
+    const hasUnsaved=currentJson && currentJson!=="{}" && currentJson!==lastDailySavedRef.current;
+    if(hasUnsaved){
+      const ok=window.confirm("⚠️ لديك تغييرات غير محفوظة في متابعة اليوم.
+
+تحديث البيانات سيعيد تحميل آخر نسخة محفوظة وقد تفقد التعديلات غير المحفوظة.
+
+هل تريد المتابعة؟");
+      if(!ok) return;
+    }
+    loadFollowupDay();
+  }
+  function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); sel[s.id]=(r.attendance||"")!=="absent";}); setBulkSelected(sel); setBulkOpen(true);}
   const bulkSelectedCount=classStudents.filter(s=>!!bulkSelected[s.id]).length;
   function clearBulkSelection(){setBulkSelected({});}
   function applyBulk(){const n=Math.max(0,safeNum(bulkCount,1)); const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:safeNum(r.participation,0)+n};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تمت إضافة المشاركات للمحددين. اضغط حفظ اليوم لاعتمادها."); setBulkOpen(false);}
@@ -7611,7 +7630,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     return {totalPart,late,absent,book,behavior,exit,base,attPen,otherPen,final,days:arr.length};
   }
   const summaries=classStudents.map(st=>periodStats(st));
-  const presentCount=classStudents.filter(s=>(getRec(s.id).attendance||"present")==="present").length;
+  const presentCount=classStudents.filter(s=>(getRec(s.id).attendance||"")==="present").length;
   const lateCount=classStudents.filter(s=>getRec(s.id).attendance==="late").length;
   const absentCount=classStudents.filter(s=>getRec(s.id).attendance==="absent").length;
   const avgScore=summaries.length?Math.round((summaries.reduce((a,x)=>a+x.final,0)/summaries.length)*100)/100:0;
@@ -7743,7 +7762,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>متوسط الفترة الحالي: <span style={{color:gc(avgScore*10)}}>{fmt(avgScore)} / {settings.fullScore}</span></div>
-        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={setAllPresent}>✅ الكل حاضر</Btn><Btn size="sm" color={C.p} onClick={openBulk}>➕ إضافة مشاركين اليوم</Btn><Btn size="sm" color={C.mu} onClick={loadFollowupDay}>تحديث</Btn></div>
+        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={setAllPresent}>{classStudents.length>0 && classStudents.every(s=>(getRec(s.id).attendance||"")==="present")?"↩️ إلغاء الكل حاضر":"✅ الكل حاضر"}</Btn><Btn size="sm" color={C.p} onClick={openBulk}>➕ إضافة مشاركين اليوم</Btn><Btn size="sm" color={C.mu} onClick={safeRefreshDay}>🔄 تحديث البيانات</Btn></div>
       </div>
     </Card>
     <Card style={{marginBottom:"12px",border:"1px solid #c7d2fe",background:"linear-gradient(180deg,#ffffff,#f8fafc)"}}>
