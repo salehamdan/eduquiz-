@@ -199,6 +199,7 @@ try{
 }catch(e){}
 </script>
 <!-- SAFE_RESTORE_NO_SW_FIREBASE_FALLBACK -->
+<!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 </head>
 <body>
 <div id="root">
@@ -7275,6 +7276,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   const [search,setSearch]=useState("");
   const [sheetScope,setSheetScope]=useState("period");
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
+  const [gradeSheetOpen,setGradeSheetOpen]=useState(true);
   const [homeworkTasks,setHomeworkTasks]=useState([]);
   const [homeworkScores,setHomeworkScores]=useState({});
   const [homeworkTitle,setHomeworkTitle]=useState("Unit 1 Homework");
@@ -7463,6 +7465,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [sheetScope,setSheetScope]=useState("period");
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
+  const [gradeSheetOpen,setGradeSheetOpen]=useState(true);
   const [homeworkTasks,setHomeworkTasks]=useState([]);
   const [homeworkScores,setHomeworkScores]=useState({});
   const [homeworkTitle,setHomeworkTitle]=useState("Unit 1 Homework");
@@ -7641,7 +7644,14 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setLoading(false);
   }
   function fillTaskFull(task){const next={}; classStudents.forEach(st=>{next[taskScoreKey(task.id,st.id)]={...(homeworkScores[taskScoreKey(task.id,st.id)]||{}),taskId:task.id,studentId:st.id,score:homeworkWeightNum(task)};}); setHomeworkScores(prev=>({...prev,...next}));}
-  function fillTaskZero(task){const next={}; classStudents.forEach(st=>{next[taskScoreKey(task.id,st.id)]={...(homeworkScores[taskScoreKey(task.id,st.id)]||{}),taskId:task.id,studentId:st.id,score:0};}); setHomeworkScores(prev=>({...prev,...next}));}
+  function fillTaskZero(task){
+    const title=(task&&task.title)||"المهمة";
+    const ok=window.confirm("⚠️ تنبيه مهم\n\nسيتم تصفير درجات جميع الطلاب في المهمة:\n"+title+"\n\nهذا التصفير داخل الشاشة فقط الآن، ولن يعتمد في قاعدة البيانات إلا بعد الضغط على حفظ درجات المهمة.\n\nهل تريد المتابعة؟");
+    if(!ok)return;
+    const next={}; classStudents.forEach(st=>{next[taskScoreKey(task.id,st.id)]={...(homeworkScores[taskScoreKey(task.id,st.id)]||{}),taskId:task.id,studentId:st.id,score:0};});
+    setHomeworkScores(prev=>({...prev,...next}));
+    setMsg("⚠️ تم تصفير درجات المهمة على الشاشة. اضغط حفظ درجات المهمة لاعتماد التغيير.");
+  }
   function combinedNeeds(st,scope="period"){
     const p=periodStats(st,scope), h=homeworkSummary(st,scope); const arr=[];
     if(p.totalPart<safeNum(settings.requiredParticipation,8))arr.push("مشاركات ناقصة: "+p.totalPart+"/"+settings.requiredParticipation);
@@ -7684,11 +7694,12 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"10px"}}>
         <div><strong style={{fontSize:"15px",color:C.tx}}>📋 كشف الفترة على الشاشة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>عرض أفقي قبل Excel: المشاركة فقط الآن، وتضاف الواجبات وRP والمشاريع والاختبارات لاحقًا.</div></div>
         <div style={{display:"flex",gap:"7px",alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={()=>setGradeSheetOpen(!gradeSheetOpen)} style={{padding:"8px 10px",border:"1px solid "+C.br,borderRadius:"9px",background:gradeSheetOpen?"#fff7ed":"#eff6ff",color:gradeSheetOpen?"#9a3412":C.p,fontWeight:900,cursor:"pointer"}}>{gradeSheetOpen?"🙈 إخفاء الكشف":"👁️ إظهار الكشف"}</button>
           <select value={sheetScope} onChange={e=>setSheetScope(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800}}><option value="period">الفترة كاملة</option><option value="month">شهر محدد</option></select>
           {sheetScope==="month"&&<input type="month" value={sheetMonth} onChange={e=>setSheetMonth(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800}}/>}
         </div>
       </div>
-      <div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff",maxHeight:"460px"}}>
+      {gradeSheetOpen&&<div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff",maxHeight:"460px"}}>
         <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"980px",width:"100%",fontSize:"12px"}}>
           <thead><tr style={{background:"#0f172a",color:"#fff"}}>
             <th style={{position:"sticky",left:0,zIndex:2,background:"#0f172a",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
@@ -7703,7 +7714,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>{(()=>{const hw=homeworkSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((hw.earned/Math.max(1,settings.homeworkFullScore))*100)}}>{fmt(hw.earned)} / {settings.homeworkFullScore}</td>;})()}<td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontSize:"10px",color:C.mu}}>{combinedNeeds(st,sheetScope).slice(0,4).join("، ")||"✅ مكتمل"}</td>
           </tr>;})}</tbody>
         </table>
-      </div>
+      </div>}
+      {!gradeSheetOpen&&<div style={{padding:"12px",border:"1px dashed "+C.br,borderRadius:"12px",background:"#fff",fontSize:"12px",fontWeight:900,color:C.mu,textAlign:"center"}}>الكشف مخفي الآن. اضغط 👁️ إظهار الكشف لعرض الجدول.</div>}
       <div style={{fontSize:"11px",color:C.mu,fontWeight:800,marginTop:"8px"}}>هذا الكشف للعرض فقط ولا يغيّر السجلات. التصدير إلى Excel ونور سيكون في مرحلة لاحقة.</div>
     </Card>
 
