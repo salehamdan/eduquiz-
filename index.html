@@ -7243,7 +7243,6 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
   const [homeworkTasks,setHomeworkTasks]=useState([]);
   const [homeworkScores,setHomeworkScores]=useState({});
-  const [homeworkSaveMsg,setHomeworkSaveMsg]=useState({});
   const [homeworkTitle,setHomeworkTitle]=useState("Unit 1 Homework");
   const [homeworkType,setHomeworkType]=useState("Homework");
   const [homeworkDate,setHomeworkDate]=useState(isoToday());
@@ -7408,7 +7407,6 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
 }
 
 // FOLLOWUP210_HOMEWORK_WRITING_WEIGHTED_TASKS_20260706
-// FOLLOWUP214_HOMEWORK_SCORE_SAVE_TOAST_VISIBLE_20260707
 // FOLLOWUP209_GRADE_SHEET_SCREEN_ONLY_20260706
 // FOLLOWUP208_PARTICIPATION_MODAL_SAFE_FIX_20260706
 // FOLLOWUP205_DAILY_PARTICIPATION_PHASE1_20260706
@@ -7549,29 +7547,9 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     catch(e){setMsg("⚠️ تعذر حفظ المهمة.");}
   }
   async function saveHomeworkScores(task){
-    if(!task||!task.id)return;
-    const tname=task.title||"المهمة";
-    setLoading(true);
-    setMsg("⏳ حفظ درجات "+tname+"...");
-    setHomeworkSaveMsg(prev=>({...prev,[task.id]:"⏳ جاري حفظ درجات المهمة..."}));
-    try{
-      const savedRows=await Promise.all(classStudents.map(st=>{
-        const val=getTaskScore(task.id,st.id);
-        const id=["fhws",task.id,st.id].map(cleanId).join("_");
-        const row={id,taskId:task.id,teacherId:user.id,term,period,classId,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",score:val===""?"":safeNum(val,0),maxScore:homeworkWeightNum(task),updatedAt:new Date().toISOString()};
-        return fsSet("followupHomeworkScores",id,row).then(()=>row);
-      }));
-      const localMap={};
-      savedRows.forEach(row=>{localMap[String(row.taskId)+"__"+String(row.studentId)]=row;});
-      setHomeworkScores(prev=>({...prev,...localMap}));
-      setMsg("✅ تم حفظ درجات المهمة: "+tname);
-      setHomeworkSaveMsg(prev=>({...prev,[task.id]:"✅ تم حفظ درجات هذه المهمة بنجاح"}));
-      setTimeout(()=>setHomeworkSaveMsg(prev=>{const n={...prev}; if(n[task.id]&&String(n[task.id]).startsWith("✅")) delete n[task.id]; return n;}),4500);
-    }
-    catch(e){
-      setMsg("⚠️ تعذر حفظ درجات المهمة: "+tname);
-      setHomeworkSaveMsg(prev=>({...prev,[task.id]:"⚠️ تعذر حفظ درجات هذه المهمة"}));
-    }
+    if(!task||!task.id)return; setLoading(true); setMsg("⏳ حفظ درجات "+(task.title||"المهمة")+"...");
+    try{await Promise.all(classStudents.map(st=>{const val=getTaskScore(task.id,st.id); const id=["fhws",task.id,st.id].map(cleanId).join("_"); const row={id,taskId:task.id,teacherId:user.id,term,period,classId,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",score:val===""?"":safeNum(val,0),maxScore:homeworkWeightNum(task),updatedAt:new Date().toISOString()}; return fsSet("followupHomeworkScores",id,row);})); await loadFollowupDay(); setMsg("✅ تم حفظ درجات المهمة.");}
+    catch(e){setMsg("⚠️ تعذر حفظ درجات المهمة.");}
     setLoading(false);
   }
   async function deleteHomeworkTask(task){
@@ -7703,7 +7681,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"8px"}}>درجة قسم الواجبات/الكتابة النهائية: <b>{settings.homeworkFullScore}</b>. إذا أردت تغييرها افتح إعدادات الفترة. مجموع أوزان المهام الحالية: <b>{fmt(homeworkTasks.reduce((a,t)=>a+homeworkWeightNum(t),0))}</b> / {settings.homeworkFullScore}.</div>
         {homeworkTasks.length===0?<div style={{marginTop:"10px",fontSize:"12px",color:C.mu,fontWeight:800}}>لا توجد مهام محفوظة لهذه الفترة والفصل حتى الآن.</div>:homeworkTasks.map(task=><div key={task.id} style={{marginTop:"12px",background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"11px"}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{task.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{task.type} · {task.date} · الوزن {fmt(homeworkWeightNum(task))} من {settings.homeworkFullScore}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={()=>fillTaskFull(task)}>إعطاء الجميع كامل</Btn><Btn size="sm" color={C.mu} onClick={()=>fillTaskZero(task)}>تصفير الجميع</Btn><Btn size="sm" color={C.p} onClick={()=>saveHomeworkScores(task)}>💾 حفظ درجات المهمة</Btn><Btn size="sm" color="#7c3aed" onClick={()=>editHomeworkTask(task)}>✏️ تعديل بيانات المهمة</Btn><Btn size="sm" color={C.d} onClick={()=>deleteHomeworkTask(task)}>🗑️ حذف المهمة</Btn></div></div>
-          {homeworkSaveMsg[task.id]&&<div style={{marginTop:"8px",padding:"8px 10px",borderRadius:"10px",fontSize:"12px",fontWeight:900,background:String(homeworkSaveMsg[task.id]).startsWith("✅")?"#f0fdf4":String(homeworkSaveMsg[task.id]).startsWith("⏳")?"#eff6ff":"#fef2f2",border:"1px solid "+(String(homeworkSaveMsg[task.id]).startsWith("✅")?"#86efac":String(homeworkSaveMsg[task.id]).startsWith("⏳")?"#93c5fd":"#fca5a5"),color:String(homeworkSaveMsg[task.id]).startsWith("✅")?C.s:String(homeworkSaveMsg[task.id]).startsWith("⏳")?C.p:C.d}}>{homeworkSaveMsg[task.id]}</div>}
           <div style={{marginTop:"9px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const stt=homeworkStatus(task,st); return <div key={st.id} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"9px",background:stt.bg}}><div style={{display:"flex",justifyContent:"space-between",gap:"7px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""}</div></div><span style={{fontSize:"10px",fontWeight:900,color:stt.color}}>{stt.label}</span></div><div style={{display:"flex",gap:"6px",alignItems:"center",marginTop:"7px"}}><input type="number" step="0.25" min="0" max={homeworkWeightNum(task)} value={getTaskScore(task.id,st.id)} onChange={e=>setTaskScoreLocal(task.id,st.id,e.target.value)} placeholder="لم يسلم" style={{width:"85px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px"}}/><span style={{fontSize:"12px",fontWeight:900,color:C.mu}}> / {fmt(homeworkWeightNum(task))}</span><button onClick={()=>setTaskScoreLocal(task.id,st.id,homeworkWeightNum(task))} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>كامل</button><button onClick={()=>setTaskScoreLocal(task.id,st.id,0)} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>صفر</button></div></div>;})}</div>
         </div>)}
         <Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"13px",color:"#9a3412"}}>🔎 الفروقات والنواقص: مشاركة + واجبات</strong><label style={{fontSize:"12px",fontWeight:900,color:"#9a3412"}}><input type="checkbox" checked={missingOnly} onChange={e=>setMissingOnly(e.target.checked)}/> عرض من عليهم نواقص فقط</label></div><div style={{marginTop:"8px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.filter(st=>!missingOnly||combinedNeeds(st).length).map(st=>{const needs=combinedNeeds(st); const hw=homeworkSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid #fed7aa",borderRadius:"12px",padding:"9px"}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>واجبات: {fmt(hw.earned)} / {settings.homeworkFullScore}</div><div style={{fontSize:"11px",color:needs.length?C.d:C.s,fontWeight:800,marginTop:"5px"}}>{needs.length?needs.slice(0,6).join("، "):"✅ لا توجد فروقات واضحة"}</div></div>;})}</div></Card>
