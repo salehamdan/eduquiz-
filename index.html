@@ -199,6 +199,7 @@ try{
 }catch(e){}
 </script>
 <!-- SAFE_RESTORE_NO_SW_FIREBASE_FALLBACK -->
+<!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 </head>
 <body>
@@ -7474,6 +7475,11 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [homeworkWeight,setHomeworkWeight]=useState(5);
   const [homeworkOpen,setHomeworkOpen]=useState(true);
   const [missingOnly,setMissingOnly]=useState(false);
+  const autosaveTimerRef=useRef(null);
+  const autosaveSuppressRef=useRef(true);
+  const lastDailySavedRef=useRef("");
+  const dailySaveBusyRef=useRef(false);
+  const [autosaveMsg,setAutosaveMsg]=useState("✅ محفوظ");
 
   const safeNum=(v,fb)=>{const n=Number(v); return Number.isFinite(n)?n:fb;};
   const fmt=n=>{const x=Number(n); if(!Number.isFinite(x))return "0"; return (Math.round(x*100)/100).toString();};
@@ -7491,6 +7497,23 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
 
   useEffect(()=>{try{const raw=localStorage.getItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher")); if(raw){const obj=JSON.parse(raw); if(obj){setTerm(obj.term||"term1");setPeriod(obj.period||"p1");setSettings({...settings,...(obj.settings||{})});}}}catch(e){}},[]);
   useEffect(()=>{loadFollowupDay();},[term,period,classId,date]);
+  useEffect(()=>{
+    if(autosaveSuppressRef.current) return;
+    if(classId==="all") return;
+    const json=JSON.stringify(records||{});
+    if(!json || json==="{}" || json===lastDailySavedRef.current) return;
+    try{
+      const draft={teacherId:user&&user.id?user.id:"teacher",term,period,classId,date,records,updatedAt:new Date().toISOString()};
+      localStorage.setItem(draftKey(),JSON.stringify(draft));
+    }catch(e){}
+    setAutosaveMsg("🟡 تغييرات غير محفوظة — سيتم الحفظ تلقائيًا");
+    if(autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current=setTimeout(function(){ saveDayAuto(); },3000);
+    return function(){ if(autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current); };
+  },[records,term,period,classId,date]);
+
+  function draftKey(day=date){return ["eq_followup_daily_draft",user&&user.id?user.id:"teacher",term,period,classId,day].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
+  function clearDailyDraft(){try{localStorage.removeItem(draftKey());}catch(e){}}
 
   async function loadFollowupDay(){
     setLoading(true); setMsg("");
@@ -7509,7 +7532,26 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
       const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"present",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
       const init={}; classStudents.forEach(s=>{init[s.id]={...blank(),...(todays[s.id]||todays[s.studentId]||{})};});
-      setRecords(init);
+      autosaveSuppressRef.current=true;
+      let nextRecords=init;
+      try{
+        const rawDraft=localStorage.getItem(draftKey());
+        if(rawDraft){
+          const draft=JSON.parse(rawDraft);
+          if(draft&&draft.records){
+            const savedJson=JSON.stringify(init);
+            const draftJson=JSON.stringify(draft.records);
+            if(draftJson!==savedJson){
+              const ok=window.confirm("يوجد عمل غير محفوظ لهذا اليوم. هل تريد استرجاعه؟");
+              if(ok){ nextRecords={...init,...draft.records}; setAutosaveMsg("🟡 تم استرجاع مسودة غير محفوظة — اضغط حفظ اليوم لاعتمادها"); }
+              else { localStorage.removeItem(draftKey()); }
+            }
+          }
+        }
+      }catch(e){}
+      setRecords(nextRecords);
+      lastDailySavedRef.current=JSON.stringify(init);
+      setTimeout(function(){ autosaveSuppressRef.current=false; },350);
     }catch(e){setMsg("⚠️ لم أستطع تحميل سجلات المتابعة.");}
     setLoading(false);
   }
@@ -7517,18 +7559,30 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10)},updatedAt:new Date().toISOString()};
     try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات.");}
   }
-  async function saveDay(){
-    if(classId==="all"){alert("اختر فصلًا محددًا قبل الحفظ.");return;}
-    setLoading(true); setMsg("⏳ جاري حفظ متابعة اليوم...");
+  async function saveDayCore(autoMode){
+    if(classId==="all"){ if(!autoMode) alert("اختر فصلًا محددًا قبل الحفظ."); return; }
+    if(dailySaveBusyRef.current) return;
+    dailySaveBusyRef.current=true;
+    if(!autoMode){ setLoading(true); setMsg("⏳ جاري حفظ متابعة اليوم..."); }
+    setAutosaveMsg(autoMode?"⏳ جاري الحفظ التلقائي...":"⏳ جاري الحفظ...");
     try{
       await Promise.all(classStudents.map(st=>{
         const r=getRec(st.id); const row={id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"present",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
         return fsSet("dailyFollowup",row.id,row);
       }));
-      await loadFollowupDay(); setMsg("✅ تم حفظ متابعة اليوم.");
-    }catch(e){setMsg("⚠️ حدث خطأ أثناء الحفظ.");}
-    setLoading(false);
+      lastDailySavedRef.current=JSON.stringify(records||{});
+      clearDailyDraft();
+      setAutosaveMsg("✅ محفوظ تلقائيًا");
+      if(!autoMode){ await loadFollowupDay(); setMsg("✅ تم حفظ متابعة اليوم."); }
+    }catch(e){
+      setAutosaveMsg("⚠️ لم يتم الحفظ — اضغط حفظ يدوي");
+      if(!autoMode) setMsg("⚠️ حدث خطأ أثناء الحفظ.");
+    }
+    if(!autoMode) setLoading(false);
+    dailySaveBusyRef.current=false;
   }
+  async function saveDay(){ return saveDayCore(false); }
+  async function saveDayAuto(){ return saveDayCore(true); }
   function setAllPresent(){const next={}; classStudents.forEach(s=>{next[s.id]={...getRec(s.id),attendance:"present"};}); setRecords(prev=>({...prev,...next}));}
   function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); sel[s.id]=(r.attendance||"present")!=="absent";}); setBulkSelected(sel); setBulkOpen(true);}
   const bulkSelectedCount=classStudents.filter(s=>!!bulkSelected[s.id]).length;
@@ -7669,6 +7723,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       </div>
     </Card>
     {msg&&<div style={{margin:"0 0 10px",fontSize:"12px",fontWeight:900,color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.d:C.mu)}}>{msg}</div>}
+    {classId!=="all"&&<div style={{margin:"0 0 10px",padding:"8px 10px",borderRadius:"10px",background:autosaveMsg.includes("⚠️")?"#fef2f2":(autosaveMsg.includes("🟡")?"#fffbeb":"#ecfdf5"),border:"1px solid "+(autosaveMsg.includes("⚠️")?"#fecaca":(autosaveMsg.includes("🟡")?"#fde68a":"#bbf7d0")),fontSize:"12px",fontWeight:900,color:autosaveMsg.includes("⚠️")?"#991b1b":(autosaveMsg.includes("🟡")?"#92400e":"#166534")}}>{autosaveMsg}</div>}
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:"8px",alignItems:"end"}}>
         <div><Label text="الفصل الدراسي"/><select value={term} onChange={e=>setTerm(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option value="term1">الفصل الأول</option><option value="term2">الفصل الثاني</option><option value="term3">الفصل الثالث</option></select></div>
