@@ -18,6 +18,7 @@
 <!-- RP199_STUDENT_COLORED_ANALYSIS_BEFORE_ACCEPT_20260704 -->
 <!-- RP201_SAFE_QUEUE_ALL_ONE_BY_ONE_STUDENT_COLORED_20260704 -->
 <!-- RP203_FLOATING_DRAWER_DISPLAY_FILTERS_ADMIN_SEPARATED_20260705 -->
+<!-- FOLLOWUP210_HOMEWORK_WRITING_WEIGHTED_TASKS_20260706 -->
 <!-- RP205_FOLLOWUP_DAILY_PARTICIPATION_PHASE1_20260706 -->
 <!-- RP204_READING_PERFORMANCE_CLASSES_SYNC_20260705 -->
 <!-- RP202_FLOATING_DRAWER_CLASS_STUDENT_FILTERS_SHOW_MORE_20260705 -->
@@ -7237,6 +7238,14 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   const [search,setSearch]=useState("");
   const [sheetScope,setSheetScope]=useState("period");
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
+  const [homeworkTasks,setHomeworkTasks]=useState([]);
+  const [homeworkScores,setHomeworkScores]=useState({});
+  const [homeworkTitle,setHomeworkTitle]=useState("Unit 1 Homework");
+  const [homeworkType,setHomeworkType]=useState("Homework");
+  const [homeworkDate,setHomeworkDate]=useState(isoToday());
+  const [homeworkWeight,setHomeworkWeight]=useState(5);
+  const [homeworkOpen,setHomeworkOpen]=useState(true);
+  const [missingOnly,setMissingOnly]=useState(false);
   const [selectedClasses,setSelectedClasses]=useState([]);
   const [selectedStudents,setSelectedStudents]=useState([]);
   const [filtersOpen,setFiltersOpen]=useState(true);
@@ -7394,6 +7403,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   </div>;
 }
 
+// FOLLOWUP210_HOMEWORK_WRITING_WEIGHTED_TASKS_20260706
 // FOLLOWUP209_GRADE_SHEET_SCREEN_ONLY_20260706
 // FOLLOWUP208_PARTICIPATION_MODAL_SAFE_FIX_20260706
 // FOLLOWUP205_DAILY_PARTICIPATION_PHASE1_20260706
@@ -7405,7 +7415,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [period,setPeriod]=useState("p1");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"all");
   const [date,setDate]=useState(isoToday());
-  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25});
+  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10});
   const [records,setRecords]=useState({});
   const [periodRows,setPeriodRows]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -7416,6 +7426,14 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [search,setSearch]=useState("");
   const [sheetScope,setSheetScope]=useState("period");
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
+  const [homeworkTasks,setHomeworkTasks]=useState([]);
+  const [homeworkScores,setHomeworkScores]=useState({});
+  const [homeworkTitle,setHomeworkTitle]=useState("Unit 1 Homework");
+  const [homeworkType,setHomeworkType]=useState("Homework");
+  const [homeworkDate,setHomeworkDate]=useState(isoToday());
+  const [homeworkWeight,setHomeworkWeight]=useState(5);
+  const [homeworkOpen,setHomeworkOpen]=useState(true);
+  const [missingOnly,setMissingOnly]=useState(false);
 
   const safeNum=(v,fb)=>{const n=Number(v); return Number.isFinite(n)?n:fb;};
   const fmt=n=>{const x=Number(n); if(!Number.isFinite(x))return "0"; return (Math.round(x*100)/100).toString();};
@@ -7440,6 +7458,15 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       const all=await fsAll("dailyFollowup");
       const mine=(all||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId)));
       setPeriodRows(mine);
+      try{
+        const tasksAll=await fsAll("followupHomeworkTasks");
+        const tasks=(tasksAll||[]).filter(t=>String(t.teacherId||"")===String(user.id||"") && t.term===term && t.period===period && (classId==="all" || String(t.classId||"")===String(classId)) && t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
+        setHomeworkTasks(tasks);
+        const taskIds=new Set(tasks.map(t=>String(t.id)));
+        const scoresAll=await fsAll("followupHomeworkScores");
+        const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
+        setHomeworkScores(sm);
+      }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
       const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"present",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
       const init={}; classStudents.forEach(s=>{init[s.id]={...blank(),...(todays[s.id]||todays[s.studentId]||{})};});
       setRecords(init);
@@ -7447,7 +7474,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setLoading(false);
   }
   async function saveSettings(){
-    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25)},updatedAt:new Date().toISOString()};
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10)},updatedAt:new Date().toISOString()};
     try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات.");}
   }
   async function saveDay(){
@@ -7493,6 +7520,44 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const lateCount=classStudents.filter(s=>getRec(s.id).attendance==="late").length;
   const absentCount=classStudents.filter(s=>getRec(s.id).attendance==="absent").length;
   const avgScore=summaries.length?Math.round((summaries.reduce((a,x)=>a+x.final,0)/summaries.length)*100)/100:0;
+  function cleanId(x){return String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_");}
+  function taskScoreKey(tid,sid){return String(tid)+"__"+String(sid);}
+  function getTaskScore(tid,sid){const x=homeworkScores[taskScoreKey(tid,sid)]; return x?(x.score===""?"":x.score):"";}
+  function setTaskScoreLocal(tid,sid,val){setHomeworkScores(prev=>({...prev,[taskScoreKey(tid,sid)]:{...(prev[taskScoreKey(tid,sid)]||{}),taskId:tid,studentId:sid,score:val}}));}
+  function homeworkWeightNum(t){return Math.max(0,safeNum(t.weight!==undefined?t.weight:t.maxScore,0));}
+  function homeworkScoreNum(t,st){const v=getTaskScore(t.id,st.id); if(v===""||v===undefined||v===null)return null; const n=Number(v); return Number.isFinite(n)?Math.max(0,Math.min(homeworkWeightNum(t),n)):null;}
+  function homeworkStatus(t,st){const w=homeworkWeightNum(t); const n=homeworkScoreNum(t,st); if(n===null)return {label:"لم يسلم",color:C.d,bg:"#fef2f2"}; if(n<=0)return {label:"لم يسلم",color:C.d,bg:"#fef2f2"}; if(n>=w)return {label:"مكتمل",color:C.s,bg:"#f0fdf4"}; return {label:"ناقص",color:C.w,bg:"#fffbeb"};}
+  function homeworkSummary(st,scope="period"){
+    let tasks=(homeworkTasks||[]); if(scope==="month")tasks=tasks.filter(t=>String(t.date||"").slice(0,7)===sheetMonth);
+    const full=safeNum(settings.homeworkFullScore,10); const totalWeight=tasks.reduce((a,t)=>a+homeworkWeightNum(t),0);
+    const earned=tasks.reduce((a,t)=>a+(homeworkScoreNum(t,st)||0),0);
+    const missing=tasks.filter(t=>homeworkScoreNum(t,st)===null||homeworkScoreNum(t,st)<=0);
+    const partial=tasks.filter(t=>{const n=homeworkScoreNum(t,st), w=homeworkWeightNum(t); return n!==null&&n>0&&n<w;});
+    return {tasks,totalWeight,earned:Math.min(full,earned),missing,partial,full,remaining:Math.max(0,full-earned)};
+  }
+  async function addHomeworkTask(){
+    if(classId==="all"){alert("اختر فصلًا محددًا قبل إضافة واجب.");return;}
+    const w=Math.max(0.25,safeNum(homeworkWeight,5));
+    const id=["fhw",user&&user.id?user.id:"teacher",term,period,classId,Date.now()].map(cleanId).join("_");
+    const task={id,teacherId:user.id,term,period,classId,title:homeworkTitle||"واجب",type:homeworkType||"Homework",date:homeworkDate||date,weight:w,maxScore:w,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    try{await fsSet("followupHomeworkTasks",id,task); setHomeworkTasks(prev=>[...prev,task]); setMsg("✅ تمت إضافة المهمة. أدخل الدرجات ثم احفظها.");}
+    catch(e){setMsg("⚠️ تعذر حفظ المهمة.");}
+  }
+  async function saveHomeworkScores(task){
+    if(!task||!task.id)return; setLoading(true); setMsg("⏳ حفظ درجات "+(task.title||"المهمة")+"...");
+    try{await Promise.all(classStudents.map(st=>{const val=getTaskScore(task.id,st.id); const id=["fhws",task.id,st.id].map(cleanId).join("_"); const row={id,taskId:task.id,teacherId:user.id,term,period,classId,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",score:val===""?"":safeNum(val,0),maxScore:homeworkWeightNum(task),updatedAt:new Date().toISOString()}; return fsSet("followupHomeworkScores",id,row);})); setMsg("✅ تم حفظ درجات المهمة."); await loadFollowupDay();}
+    catch(e){setMsg("⚠️ تعذر حفظ درجات المهمة.");}
+    setLoading(false);
+  }
+  function fillTaskFull(task){const next={}; classStudents.forEach(st=>{next[taskScoreKey(task.id,st.id)]={...(homeworkScores[taskScoreKey(task.id,st.id)]||{}),taskId:task.id,studentId:st.id,score:homeworkWeightNum(task)};}); setHomeworkScores(prev=>({...prev,...next}));}
+  function fillTaskZero(task){const next={}; classStudents.forEach(st=>{next[taskScoreKey(task.id,st.id)]={...(homeworkScores[taskScoreKey(task.id,st.id)]||{}),taskId:task.id,studentId:st.id,score:0};}); setHomeworkScores(prev=>({...prev,...next}));}
+  function combinedNeeds(st,scope="period"){
+    const p=periodStats(st,scope), h=homeworkSummary(st,scope); const arr=[];
+    if(p.totalPart<safeNum(settings.requiredParticipation,8))arr.push("مشاركات ناقصة: "+p.totalPart+"/"+settings.requiredParticipation);
+    if(p.late)arr.push("تأخير: "+p.late); if(p.absent)arr.push("غياب: "+p.absent); if(p.book)arr.push("كتاب: "+p.book); if(p.behavior)arr.push("سلوك: "+p.behavior); if(p.exit)arr.push("خروج: "+p.exit);
+    h.missing.forEach(t=>arr.push((t.title||"واجب")+": لم يسلم")); h.partial.forEach(t=>arr.push((t.title||"واجب")+": ناقص "+fmt(homeworkScoreNum(t,st))+"/"+fmt(homeworkWeightNum(t))));
+    return arr;
+  }
   const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
   const chip=(active,label,onClick,color)=> <button onClick={onClick} style={{padding:"7px 9px",borderRadius:"999px",border:"1px solid "+(active?color:C.br),background:active?color:"#fff",color:active?"#fff":C.mu,fontWeight:900,fontSize:"11px",cursor:"pointer"}}>{label}</button>;
   return <div>
@@ -7513,7 +7578,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       {settingsOpen&&<div style={{marginTop:"12px",padding:"12px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"13px"}}>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,marginBottom:"8px"}}>⚙️ إعدادات محفوظة للفترة</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"8px"}}>
-          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
+          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"],["homeworkFullScore","درجة قسم الواجبات/الكتابة"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
         </div><div style={{marginTop:"9px"}}><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ إعدادات الفترة</Btn></div>
       </div>}
     </Card>
@@ -7536,7 +7601,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"980px",width:"100%",fontSize:"12px"}}>
           <thead><tr style={{background:"#0f172a",color:"#fff"}}>
             <th style={{position:"sticky",left:0,zIndex:2,background:"#0f172a",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
-            <th style={{padding:"10px",textAlign:"center"}}>ID</th><th style={{padding:"10px",textAlign:"center"}}>المشاركات</th><th style={{padding:"10px",textAlign:"center"}}>تأخير</th><th style={{padding:"10px",textAlign:"center"}}>غياب</th><th style={{padding:"10px",textAlign:"center"}}>كتاب</th><th style={{padding:"10px",textAlign:"center"}}>سلوك</th><th style={{padding:"10px",textAlign:"center"}}>خروج</th><th style={{padding:"10px",textAlign:"center"}}>خصم حضور</th><th style={{padding:"10px",textAlign:"center"}}>خصم آخر</th><th style={{padding:"10px",textAlign:"center"}}>المشاركة / {settings.fullScore}</th>
+            <th style={{padding:"10px",textAlign:"center"}}>ID</th><th style={{padding:"10px",textAlign:"center"}}>المشاركات</th><th style={{padding:"10px",textAlign:"center"}}>تأخير</th><th style={{padding:"10px",textAlign:"center"}}>غياب</th><th style={{padding:"10px",textAlign:"center"}}>كتاب</th><th style={{padding:"10px",textAlign:"center"}}>سلوك</th><th style={{padding:"10px",textAlign:"center"}}>خروج</th><th style={{padding:"10px",textAlign:"center"}}>خصم حضور</th><th style={{padding:"10px",textAlign:"center"}}>خصم آخر</th><th style={{padding:"10px",textAlign:"center"}}>المشاركة / {settings.fullScore}</th><th style={{padding:"10px",textAlign:"center"}}>الواجبات/الكتابة / {settings.homeworkFullScore}</th><th style={{padding:"10px",textAlign:"center",minWidth:"210px"}}>الفروقات والنواقص</th>
           </tr></thead>
           <tbody>{visibleStudents.map((st,i)=>{const sum=periodStats(st,sheetScope); const pct=(sum.final/Math.max(1,safeNum(settings.fullScore,10)))*100; return <tr key={st.id} style={{background:i%2?"#f8fafc":"#fff"}}>
             <td style={{position:"sticky",left:0,zIndex:1,background:i%2?"#f8fafc":"#fff",padding:"9px",fontWeight:900,color:C.tx,borderBottom:"1px solid "+C.br}}>{st.name}</td>
@@ -7544,12 +7609,35 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900}}>{sum.totalPart} / {settings.requiredParticipation}</td>
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.late}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.absent}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.book}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.behavior}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.exit}</td>
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.attPen)}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.otherPen)}</td>
-            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>{(()=>{const hw=homeworkSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((hw.earned/Math.max(1,settings.homeworkFullScore))*100)}}>{fmt(hw.earned)} / {settings.homeworkFullScore}</td>;})()}<td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontSize:"10px",color:C.mu}}>{combinedNeeds(st,sheetScope).slice(0,4).join("، ")||"✅ مكتمل"}</td>
           </tr>;})}</tbody>
         </table>
       </div>
       <div style={{fontSize:"11px",color:C.mu,fontWeight:800,marginTop:"8px"}}>هذا الكشف للعرض فقط ولا يغيّر السجلات. التصدير إلى Excel ونور سيكون في مرحلة لاحقة.</div>
     </Card>
+
+    <Card style={{marginBottom:"12px",border:"1px solid #bbf7d0",background:"linear-gradient(180deg,#ffffff,#f0fdf4)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>📝 الواجبات / الكتابة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>مستقلة عن Reading Progress. كل مهمة لها وزن من درجة القسم، وتظهر النواقص مع المشاركة في كشف الفترة.</div></div>
+        <Btn size="sm" color={C.s} onClick={()=>setHomeworkOpen(!homeworkOpen)}>{homeworkOpen?"إخفاء":"عرض"}</Btn>
+      </div>
+      {homeworkOpen&&<div style={{marginTop:"12px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:"8px",alignItems:"end"}}>
+          <div><Label text="اسم الواجب/المهمة"/><input value={homeworkTitle} onChange={e=>setHomeworkTitle(e.target.value)} placeholder="Unit 1 / Writing Task" style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div><Label text="نوع المهمة"/><select value={homeworkType} onChange={e=>setHomeworkType(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option>Homework</option><option>Writing</option><option>Workbook</option><option>Other</option></select></div>
+          <div><Label text="تاريخ الواجب"/><input type="date" value={homeworkDate} onChange={e=>setHomeworkDate(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div><Label text="وزن المهمة"/><input type="number" step="0.25" value={homeworkWeight} onChange={e=>setHomeworkWeight(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div style={{display:"flex",gap:"7px",alignItems:"end"}}><Btn size="sm" color={C.p} onClick={addHomeworkTask}>+ إضافة المهمة</Btn></div>
+        </div>
+        <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"8px"}}>درجة قسم الواجبات/الكتابة النهائية: <b>{settings.homeworkFullScore}</b>. إذا أردت تغييرها افتح إعدادات الفترة. مجموع أوزان المهام الحالية: <b>{fmt(homeworkTasks.reduce((a,t)=>a+homeworkWeightNum(t),0))}</b> / {settings.homeworkFullScore}.</div>
+        {homeworkTasks.length===0?<div style={{marginTop:"10px",fontSize:"12px",color:C.mu,fontWeight:800}}>لا توجد مهام محفوظة لهذه الفترة والفصل حتى الآن.</div>:homeworkTasks.map(task=><div key={task.id} style={{marginTop:"12px",background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"11px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{task.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{task.type} · {task.date} · الوزن {fmt(homeworkWeightNum(task))} من {settings.homeworkFullScore}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={()=>fillTaskFull(task)}>إعطاء الجميع كامل</Btn><Btn size="sm" color={C.mu} onClick={()=>fillTaskZero(task)}>تصفير الجميع</Btn><Btn size="sm" color={C.p} onClick={()=>saveHomeworkScores(task)}>💾 حفظ درجات المهمة</Btn></div></div>
+          <div style={{marginTop:"9px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const stt=homeworkStatus(task,st); return <div key={st.id} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"9px",background:stt.bg}}><div style={{display:"flex",justifyContent:"space-between",gap:"7px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""}</div></div><span style={{fontSize:"10px",fontWeight:900,color:stt.color}}>{stt.label}</span></div><div style={{display:"flex",gap:"6px",alignItems:"center",marginTop:"7px"}}><input type="number" step="0.25" min="0" max={homeworkWeightNum(task)} value={getTaskScore(task.id,st.id)} onChange={e=>setTaskScoreLocal(task.id,st.id,e.target.value)} placeholder="لم يسلم" style={{width:"85px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px"}}/><span style={{fontSize:"12px",fontWeight:900,color:C.mu}}> / {fmt(homeworkWeightNum(task))}</span><button onClick={()=>setTaskScoreLocal(task.id,st.id,homeworkWeightNum(task))} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>كامل</button><button onClick={()=>setTaskScoreLocal(task.id,st.id,0)} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>صفر</button></div></div>;})}</div>
+        </div>)}
+        <Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"13px",color:"#9a3412"}}>🔎 الفروقات والنواقص: مشاركة + واجبات</strong><label style={{fontSize:"12px",fontWeight:900,color:"#9a3412"}}><input type="checkbox" checked={missingOnly} onChange={e=>setMissingOnly(e.target.checked)}/> عرض من عليهم نواقص فقط</label></div><div style={{marginTop:"8px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.filter(st=>!missingOnly||combinedNeeds(st).length).map(st=>{const needs=combinedNeeds(st); const hw=homeworkSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid #fed7aa",borderRadius:"12px",padding:"9px"}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>واجبات: {fmt(hw.earned)} / {settings.homeworkFullScore}</div><div style={{fontSize:"11px",color:needs.length?C.d:C.s,fontWeight:800,marginTop:"5px"}}>{needs.length?needs.slice(0,6).join("، "):"✅ لا توجد فروقات واضحة"}</div></div>;})}</div></Card>
+      </div>}
+    </Card>
+    
     {bulkOpen&&<Card style={{marginBottom:"12px",border:"2px solid "+C.p,background:"#eff6ff"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"14px",color:C.tx}}>➕ إضافة مشاركات جماعية لليوم</strong><button onClick={()=>setBulkOpen(false)} style={{border:"none",background:"transparent",fontSize:"18px",cursor:"pointer"}}>×</button></div>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"10px",alignItems:"center"}}><Label text="عدد المشاركات"/><select value={bulkCount} onChange={e=>setBulkCount(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}><option value="1">+1</option><option value="2">+2</option><option value="3">+3</option><option value="4">+4</option></select><Btn size="sm" color={C.s} onClick={()=>{const o={}; classStudents.forEach(s=>o[s.id]=true); setBulkSelected(o);}}>تحديد الكل</Btn><Btn size="sm" color={C.mu} onClick={clearBulkSelection}>إلغاء تحديد الكل</Btn><span style={{fontSize:"12px",fontWeight:900,color:C.tx}}>المحدد: {bulkSelectedCount}</span></div>
