@@ -7500,6 +7500,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   </div>;
 }
 
+// FOLLOWUP227_QUIZZES_LINK_FOUR_SKILLS_20260708
 // FOLLOWUP210_HOMEWORK_WRITING_WEIGHTED_TASKS_20260706
 // FOLLOWUP209_GRADE_SHEET_SCREEN_ONLY_20260706
 // FOLLOWUP208_PARTICIPATION_MODAL_SAFE_FIX_20260706
@@ -7512,7 +7513,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [period,setPeriod]=useState("p1");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"all");
   const [date,setDate]=useState(isoToday());
-  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10,projectFullScore:10});
+  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10,projectFullScore:10,quizFullScore:10,quizSlots:{vocabulary:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},listening:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},reading:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},workbook:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0}}});
   const [records,setRecords]=useState({});
   const [periodRows,setPeriodRows]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -7535,6 +7536,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [projectsOpen,setProjectsOpen]=useState(false);
   const [projectCalcMode,setProjectCalcMode]=useState("best");
   const [selectedProjectId,setSelectedProjectId]=useState("all");
+  const [quizzesOpen,setQuizzesOpen]=useState(false);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -7543,6 +7545,11 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
 
   const safeNum=(v,fb)=>{const n=Number(v); return Number.isFinite(n)?n:fb;};
   const fmt=n=>{const x=Number(n); if(!Number.isFinite(x))return "0"; return (Math.round(x*100)/100).toString();};
+  const quizSlotInfo={vocabulary:{label:"اختبار الكلمات",en:"Vocabulary",icon:"🧩"},listening:{label:"اختبار الاستماع",en:"Listening",icon:"🎧"},reading:{label:"اختبار القراءة",en:"Reading",icon:"📖"},workbook:{label:"اختبار الكتاب / إضافي",en:"Workbook / Extra",icon:"📘"}};
+  const quizSlotKeys=["vocabulary","listening","reading","workbook"];
+  function defaultQuizSlots(){return {vocabulary:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},listening:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},reading:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0},workbook:{quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0}};}
+  function quizSlots(){return {...defaultQuizSlots(),...((settings&&settings.quizSlots)||{})};}
+  function setQuizSlot(key,patch){const slots=quizSlots(); setSettings({...settings,quizSlots:{...slots,[key]:{...slots[key],...patch}}});}
   const termLabel=t=>t==="term2"?"الفصل الثاني":(t==="term3"?"الفصل الثالث":"الفصل الأول");
   const periodLabel=p=>p==="p2"?"الفترة الثانية":"الفترة الأولى";
   function classOk(st,cid){ if(cid==="all")return true; try{return sameClassId(st.classId||st.className||st.class,cid);}catch(e){return String(st.classId||"")===String(cid);} }
@@ -7616,7 +7623,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setLoading(false);
   }
   async function saveSettings(){
-    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10)},updatedAt:new Date().toISOString()};
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
     try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات.");}
   }
   async function saveDayCore(autoMode){
@@ -7818,14 +7825,96 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const returned=missing.filter(x=>x.latest && x.latest.status==="resubmit_allowed");
     return {projects:ps,rows,approvedRows,earned,full,missing,pending,notSubmitted,returned,mode:projectCalcMode};
   }
+  function quizMatchesFollowup(q){
+    if(!q || q.deleted===true || q.status==="deleted") return false;
+    if(q.teacherId && String(q.teacherId)!==String(user.id||"")) return false;
+    if(classId==="all") return true;
+    const ids=[].concat(q.classIds||[],q.classId||[],q.class||[],q.className||[]).filter(Boolean);
+    if(!ids.length) return true;
+    return ids.some(cid=>sameClassId(cid,classId));
+  }
+  const followupQuizzes=(data.quizzes||[]).filter(quizMatchesFollowup).sort((a,b)=>String(b.createdAt||b.updatedAt||b.importedAt||"").localeCompare(String(a.createdAt||a.updatedAt||a.importedAt||""))||String(a.title||"").localeCompare(String(b.title||"")));
+  function quizTitle(q){return (q&& (q.title||q.name||q.quizName||q.importFile)) || "Quiz";}
+  function quizMax(q,r){
+    const rt=Number(r&& (r.totalQ||r.total||r.maxScore||r.outOf));
+    if(Number.isFinite(rt)&&rt>0) return rt;
+    const qt=Number(q&& (q.totalQ||q.total||q.maxScore||q.outOf));
+    if(Number.isFinite(qt)&&qt>0) return qt;
+    if(q&&Array.isArray(q.questions)&&q.questions.length) return q.questions.length;
+    return 100;
+  }
+  function quizRespPercent(q,r){
+    const p=Number(r&&r.percent);
+    if(Number.isFinite(p)&&p>=0) return Math.max(0,Math.min(100,p));
+    const sc=Number(r&& (r.score!==undefined?r.score:r.earned));
+    const mx=quizMax(q,r);
+    if(Number.isFinite(sc)&&mx>0) return Math.max(0,Math.min(100,(sc/mx)*100));
+    return null;
+  }
+  function quizBestResponse(q,st){
+    if(!q || !st) return null;
+    const rs=responsesForStudent(data.responses||[],st).filter(r=>r && r.deleted!==true && r.status!=="deleted" && String(r.quizId||"")===String(q.id||q._id||"") && r.mode!=="project");
+    if(!rs.length) return null;
+    return rs.slice().sort((a,b)=>(quizRespPercent(q,b)||0)-(quizRespPercent(q,a)||0)||Number(b.ts||0)-Number(a.ts||0))[0];
+  }
+  function quizSummary(st){
+    const slots=quizSlots();
+    const full=safeNum(settings.quizFullScore,10);
+    let earnedRaw=0, usedWeight=0;
+    const rows=[];
+    quizSlotKeys.forEach(key=>{
+      const cfg=slots[key]||{};
+      const weight=safeNum(cfg.weight,2.5);
+      const q=followupQuizzes.find(x=>String(x.id||x._id||"")===String(cfg.quizId||""));
+      if(!cfg.quizId || !q){ rows.push({key,cfg,weight,quiz:null,status:"not_selected",earned:0}); return; }
+      const resp=quizBestResponse(q,st);
+      if(resp){
+        const pctv=quizRespPercent(q,resp);
+        const e=(Math.max(0,Math.min(100,pctv||0))/100)*weight;
+        earnedRaw+=e; usedWeight+=weight;
+        rows.push({key,cfg,weight,quiz:q,resp,status:"done",pct:pctv,earned:e});
+      }else{
+        const pol=cfg.missingPolicy||"missing";
+        if(pol==="zero"){
+          usedWeight+=weight; rows.push({key,cfg,weight,quiz:q,status:"zero",earned:0});
+        }else if(pol==="fallback"){
+          const fb=Math.max(0,Math.min(weight,safeNum(cfg.fallbackScore,0)));
+          earnedRaw+=fb; usedWeight+=weight; rows.push({key,cfg,weight,quiz:q,status:"fallback",earned:fb});
+        }else if(pol==="ignore"){
+          rows.push({key,cfg,weight,quiz:q,status:"ignored",earned:0});
+        }else{
+          rows.push({key,cfg,weight,quiz:q,status:"missing",earned:0});
+        }
+      }
+    });
+    const earned=usedWeight>0?Math.max(0,Math.min(full,(earnedRaw/usedWeight)*full)):0;
+    return {rows,earned,full,usedWeight,configured:rows.filter(r=>r.quiz).length,missing:rows.filter(r=>r.status==="missing"),zero:rows.filter(r=>r.status==="zero"),ignored:rows.filter(r=>r.status==="ignored"),fallback:rows.filter(r=>r.status==="fallback")};
+  }
+  function quizStatusText(r){
+    const info=quizSlotInfo[r.key]||{};
+    if(r.status==="done") return (info.label||"اختبار")+": "+fmt(r.earned)+"/"+fmt(r.weight);
+    if(r.status==="zero") return (info.label||"اختبار")+": لم يحل - حُسب صفر";
+    if(r.status==="ignored") return (info.label||"اختبار")+": لم يحل - غير محسوب";
+    if(r.status==="fallback") return (info.label||"اختبار")+": درجة بديلة "+fmt(r.earned)+"/"+fmt(r.weight);
+    if(r.status==="missing") return (info.label||"اختبار")+": لم يحل - يحتاج قرار";
+    return (info.label||"اختبار")+": لم يتم اختيار اختبار";
+  }
+  function applyQuizPolicyAll(policy){
+    const slots=quizSlots(); const next={};
+    quizSlotKeys.forEach(k=>next[k]={...slots[k],missingPolicy:policy});
+    setSettings({...settings,quizSlots:next});
+  }
   function combinedNeeds(st,scope="period"){
-    const p=periodStats(st,scope), h=homeworkSummary(st,scope), pr=projectSummary(st,scope); const arr=[];
+    const p=periodStats(st,scope), h=homeworkSummary(st,scope), pr=projectSummary(st,scope), qz=quizSummary(st); const arr=[];
     if(p.totalPart<safeNum(settings.requiredParticipation,8))arr.push("مشاركات ناقصة: "+p.totalPart+"/"+settings.requiredParticipation);
     if(p.late)arr.push("تأخير: "+p.late); if(p.absent)arr.push("غياب: "+p.absent); if(p.book)arr.push("كتاب: "+p.book); if(p.behavior)arr.push("سلوك: "+p.behavior); if(p.exit)arr.push("خروج: "+p.exit);
     h.missing.forEach(t=>arr.push((t.title||"واجب")+": لم يسلم")); h.partial.forEach(t=>arr.push((t.title||"واجب")+": ناقص "+fmt(homeworkScoreNum(t,st))+"/"+fmt(homeworkWeightNum(t))));
     pr.notSubmitted.forEach(x=>arr.push((x.project.title||"مشروع")+": لم يسلم"));
     pr.pending.forEach(x=>arr.push((x.project.title||"مشروع")+": ينتظر اعتماد المعلم"));
     pr.returned.forEach(x=>arr.push((x.project.title||"مشروع")+": رجع للتعديل"));
+    qz.missing.forEach(x=>arr.push((quizSlotInfo[x.key]&&quizSlotInfo[x.key].label||"اختبار")+": لم يحل - يحتاج قرار"));
+    qz.zero.forEach(x=>arr.push((quizSlotInfo[x.key]&&quizSlotInfo[x.key].label||"اختبار")+": لم يحل - حُسب صفر"));
+    qz.ignored.forEach(x=>arr.push((quizSlotInfo[x.key]&&quizSlotInfo[x.key].label||"اختبار")+": غير محسوب"));
     return arr;
   }
   const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
@@ -7849,7 +7938,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       {settingsOpen&&<div style={{marginTop:"12px",padding:"12px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"13px"}}>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,marginBottom:"8px"}}>⚙️ إعدادات محفوظة للفترة</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"8px"}}>
-          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"],["homeworkFullScore","درجة قسم الواجبات/الكتابة"],["projectFullScore","درجة قسم المشاريع"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
+          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"],["homeworkFullScore","درجة قسم الواجبات/الكتابة"],["projectFullScore","درجة قسم المشاريع"],["quizFullScore","درجة الاختبارات القصيرة"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
         </div><div style={{marginTop:"9px"}}><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ إعدادات الفترة</Btn></div>
       </div>}
     </Card>
@@ -7862,7 +7951,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
     <Card style={{marginBottom:"12px",border:"1px solid #c7d2fe",background:"linear-gradient(180deg,#ffffff,#f8fafc)"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"10px"}}>
-        <div><strong style={{fontSize:"15px",color:C.tx}}>📋 كشف الفترة على الشاشة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>عرض أفقي قبل Excel: المشاركة + الواجبات/الكتابة + المشاريع المعتمدة فقط.</div></div>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>📋 كشف الفترة على الشاشة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>عرض أفقي قبل Excel: المشاركة + الواجبات/الكتابة + المشاريع + الاختبارات القصيرة.</div></div>
         <div style={{display:"flex",gap:"7px",alignItems:"center",flexWrap:"wrap"}}>
           <button onClick={()=>setGradeSheetOpen(!gradeSheetOpen)} style={{padding:"8px 10px",border:"1px solid "+C.br,borderRadius:"9px",background:gradeSheetOpen?"#fff7ed":"#eff6ff",color:gradeSheetOpen?"#9a3412":C.p,fontWeight:900,cursor:"pointer"}}>{gradeSheetOpen?"🙈 إخفاء الكشف":"👁️ إظهار الكشف"}</button>
           <select value={sheetScope} onChange={e=>setSheetScope(e.target.value)} style={{padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800}}><option value="period">الفترة كاملة</option><option value="month">شهر محدد</option></select>
@@ -7873,7 +7962,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"980px",width:"100%",fontSize:"12px"}}>
           <thead><tr style={{background:"#0f172a",color:"#fff"}}>
             <th style={{position:"sticky",left:0,zIndex:2,background:"#0f172a",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
-            <th style={{padding:"10px",textAlign:"center"}}>ID</th><th style={{padding:"10px",textAlign:"center"}}>المشاركات</th><th style={{padding:"10px",textAlign:"center"}}>تأخير</th><th style={{padding:"10px",textAlign:"center"}}>غياب</th><th style={{padding:"10px",textAlign:"center"}}>كتاب</th><th style={{padding:"10px",textAlign:"center"}}>سلوك</th><th style={{padding:"10px",textAlign:"center"}}>خروج</th><th style={{padding:"10px",textAlign:"center"}}>خصم حضور</th><th style={{padding:"10px",textAlign:"center"}}>خصم آخر</th><th style={{padding:"10px",textAlign:"center"}}>المشاركة / {settings.fullScore}</th><th style={{padding:"10px",textAlign:"center"}}>الواجبات/الكتابة / {settings.homeworkFullScore}</th><th style={{padding:"10px",textAlign:"center"}}>المشاريع / {settings.projectFullScore}</th><th style={{padding:"10px",textAlign:"center",minWidth:"210px"}}>الفروقات والنواقص</th>
+            <th style={{padding:"10px",textAlign:"center"}}>ID</th><th style={{padding:"10px",textAlign:"center"}}>المشاركات</th><th style={{padding:"10px",textAlign:"center"}}>تأخير</th><th style={{padding:"10px",textAlign:"center"}}>غياب</th><th style={{padding:"10px",textAlign:"center"}}>كتاب</th><th style={{padding:"10px",textAlign:"center"}}>سلوك</th><th style={{padding:"10px",textAlign:"center"}}>خروج</th><th style={{padding:"10px",textAlign:"center"}}>خصم حضور</th><th style={{padding:"10px",textAlign:"center"}}>خصم آخر</th><th style={{padding:"10px",textAlign:"center"}}>المشاركة / {settings.fullScore}</th><th style={{padding:"10px",textAlign:"center"}}>الواجبات/الكتابة / {settings.homeworkFullScore}</th><th style={{padding:"10px",textAlign:"center"}}>المشاريع / {settings.projectFullScore}</th><th style={{padding:"10px",textAlign:"center"}}>الاختبارات القصيرة / {settings.quizFullScore}</th><th style={{padding:"10px",textAlign:"center",minWidth:"210px"}}>الفروقات والنواقص</th>
           </tr></thead>
           <tbody>{visibleStudents.map((st,i)=>{const sum=periodStats(st,sheetScope); const pct=(sum.final/Math.max(1,safeNum(settings.fullScore,10)))*100; return <tr key={st.id} style={{background:i%2?"#f8fafc":"#fff"}}>
             <td style={{position:"sticky",left:0,zIndex:1,background:i%2?"#f8fafc":"#fff",padding:"9px",fontWeight:900,color:C.tx,borderBottom:"1px solid "+C.br}}>{st.name}</td>
@@ -7881,7 +7970,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900}}>{sum.totalPart} / {settings.requiredParticipation}</td>
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.late}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.absent}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.book}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.behavior}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{sum.exit}</td>
             <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.attPen)}</td><td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br}}>{fmt(sum.otherPen)}</td>
-            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>{(()=>{const hw=homeworkSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((hw.earned/Math.max(1,settings.homeworkFullScore))*100)}}>{fmt(hw.earned)} / {settings.homeworkFullScore}</td>;})()}{(()=>{const pr=projectSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((pr.earned/Math.max(1,settings.projectFullScore))*100)}}>{fmt(pr.earned)} / {settings.projectFullScore}</td>;})()}<td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontSize:"10px",color:C.mu}}>{combinedNeeds(st,sheetScope).slice(0,5).join("، ")||"✅ مكتمل"}</td>
+            <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(pct)}}>{fmt(sum.final)} / {settings.fullScore}</td>{(()=>{const hw=homeworkSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((hw.earned/Math.max(1,settings.homeworkFullScore))*100)}}>{fmt(hw.earned)} / {settings.homeworkFullScore}</td>;})()}{(()=>{const pr=projectSummary(st,sheetScope); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((pr.earned/Math.max(1,settings.projectFullScore))*100)}}>{fmt(pr.earned)} / {settings.projectFullScore}</td>;})()}{(()=>{const qz=quizSummary(st); return <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((qz.earned/Math.max(1,settings.quizFullScore))*100)}}>{fmt(qz.earned)} / {settings.quizFullScore}</td>;})()}<td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontSize:"10px",color:C.mu}}>{combinedNeeds(st,sheetScope).slice(0,6).join("، ")||"✅ مكتمل"}</td>
           </tr>;})}</tbody>
         </table>
       </div>}
@@ -7907,10 +7996,32 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
           <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{task.title}</strong><div style={{fontSize:"10px",color:C.mu}}>{task.type} · {task.date} · الوزن {fmt(homeworkWeightNum(task))} من {settings.homeworkFullScore}</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={()=>fillTaskFull(task)}>إعطاء الجميع كامل</Btn><Btn size="sm" color={C.mu} onClick={()=>fillTaskZero(task)}>تصفير الجميع</Btn><Btn size="sm" color={C.p} onClick={()=>saveHomeworkScores(task)}>💾 حفظ درجات المهمة</Btn><Btn size="sm" color="#7c3aed" onClick={()=>editHomeworkTask(task)}>✏️ تعديل بيانات المهمة</Btn><Btn size="sm" color={C.d} onClick={()=>deleteHomeworkTask(task)}>🗑️ حذف المهمة</Btn></div></div>
           <div style={{marginTop:"9px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const stt=homeworkStatus(task,st); return <div key={st.id} style={{border:"1px solid "+C.br,borderRadius:"12px",padding:"9px",background:stt.bg}}><div style={{display:"flex",justifyContent:"space-between",gap:"7px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""}</div></div><span style={{fontSize:"10px",fontWeight:900,color:stt.color}}>{stt.label}</span></div><div style={{display:"flex",gap:"6px",alignItems:"center",marginTop:"7px"}}><input type="number" step="0.25" min="0" max={homeworkWeightNum(task)} value={getTaskScore(task.id,st.id)} onChange={e=>setTaskScoreLocal(task.id,st.id,e.target.value)} placeholder="لم يسلم" style={{width:"85px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px"}}/><span style={{fontSize:"12px",fontWeight:900,color:C.mu}}> / {fmt(homeworkWeightNum(task))}</span><button onClick={()=>setTaskScoreLocal(task.id,st.id,homeworkWeightNum(task))} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>كامل</button><button onClick={()=>setTaskScoreLocal(task.id,st.id,0)} style={{padding:"6px 8px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff",fontSize:"10px",fontWeight:900}}>صفر</button></div></div>;})}</div>
         </div>)}
-        <Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"13px",color:"#9a3412"}}>🔎 الفروقات والنواقص: مشاركة + واجبات + مشاريع</strong><label style={{fontSize:"12px",fontWeight:900,color:"#9a3412"}}><input type="checkbox" checked={missingOnly} onChange={e=>setMissingOnly(e.target.checked)}/> عرض من عليهم نواقص فقط</label></div><div style={{marginTop:"8px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.filter(st=>!missingOnly||combinedNeeds(st).length).map(st=>{const needs=combinedNeeds(st); const hw=homeworkSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid #fed7aa",borderRadius:"12px",padding:"9px"}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>واجبات: {fmt(hw.earned)} / {settings.homeworkFullScore}</div><div style={{fontSize:"11px",color:needs.length?C.d:C.s,fontWeight:800,marginTop:"5px"}}>{needs.length?needs.slice(0,6).join("، "):"✅ لا توجد فروقات واضحة"}</div></div>;})}</div></Card>
+        <Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"13px",color:"#9a3412"}}>🔎 الفروقات والنواقص: مشاركة + واجبات + مشاريع + اختبارات قصيرة</strong><label style={{fontSize:"12px",fontWeight:900,color:"#9a3412"}}><input type="checkbox" checked={missingOnly} onChange={e=>setMissingOnly(e.target.checked)}/> عرض من عليهم نواقص فقط</label></div><div style={{marginTop:"8px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:"8px"}}>{visibleStudents.filter(st=>!missingOnly||combinedNeeds(st).length).map(st=>{const needs=combinedNeeds(st); const hw=homeworkSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid #fed7aa",borderRadius:"12px",padding:"9px"}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>واجبات: {fmt(hw.earned)} / {settings.homeworkFullScore}</div><div style={{fontSize:"11px",color:needs.length?C.d:C.s,fontWeight:800,marginTop:"5px"}}>{needs.length?needs.slice(0,6).join("، "):"✅ لا توجد فروقات واضحة"}</div></div>;})}</div></Card>
       </div>}
     </Card>
     
+    <Card style={{marginBottom:"12px",border:"1px solid #ddd6fe",background:"linear-gradient(180deg,#ffffff,#faf5ff)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>🧪 الاختبارات القصيرة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>تسحب النتائج من Quizzes وتحولها إلى درجة من 10. اختر اختبار الكلمات والاستماع والقراءة والكتاب/إضافي.</div></div>
+        <Btn size="sm" color={C.pu} onClick={()=>setQuizzesOpen(!quizzesOpen)}>{quizzesOpen?"إخفاء":"عرض"}</Btn>
+      </div>
+      {quizzesOpen&&<div style={{marginTop:"12px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"8px",alignItems:"end",marginBottom:"10px"}}>
+          <div><Label text="درجة قسم الاختبارات القصيرة"/><input type="number" step="0.25" value={settings.quizFullScore} onChange={e=>setSettings({...settings,quizFullScore:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div><Label text="سياسة جماعية للنواقص"/><select onChange={e=>{if(e.target.value)applyQuizPolicyAll(e.target.value); e.target.value="";}} defaultValue="" style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option value="">اختر للتطبيق على الأربع خانات</option><option value="zero">لم يحل = صفر</option><option value="ignore">تجاهل من المتوسط</option><option value="fallback">درجة بديلة جماعية</option><option value="missing">ناقص يحتاج قرار</option></select></div>
+          <div style={{fontSize:"11px",fontWeight:800,color:C.mu}}>الاختبارات المتاحة: <b>{followupQuizzes.length}</b> · درجة كل خانة افتراضيًا 2.5 من 10.</div><div><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ اختيار الاختبارات</Btn></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:"10px"}}>{quizSlotKeys.map(key=>{const info=quizSlotInfo[key]; const cfg=quizSlots()[key]||{}; return <div key={key} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"13px",padding:"10px"}}>
+          <div style={{fontWeight:900,color:C.tx,fontSize:"13px"}}>{info.icon} {info.label}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800,marginBottom:"7px"}}>{info.en}</div>
+          <Label text="اختر اختبارًا من Quizzes"/><select value={cfg.quizId||""} onChange={e=>setQuizSlot(key,{quizId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontSize:"12px"}}><option value="">لم يتم الاختيار</option>{followupQuizzes.map(q=><option key={q.id||q._id} value={q.id||q._id}>{quizTitle(q)}</option>)}</select>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginTop:"8px"}}><div><Label text="الوزن"/><input type="number" step="0.25" value={cfg.weight} onChange={e=>setQuizSlot(key,{weight:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div><div><Label text="إذا لم يحل"/><select value={cfg.missingPolicy||"missing"} onChange={e=>setQuizSlot(key,{missingPolicy:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="missing">ناقص يحتاج قرار</option><option value="zero">احسب صفر</option><option value="ignore">تجاهل من المتوسط</option><option value="fallback">درجة بديلة</option></select></div></div>
+          {cfg.missingPolicy==="fallback"&&<div style={{marginTop:"8px"}}><Label text="الدرجة البديلة للناقصين"/><input type="number" step="0.25" value={cfg.fallbackScore} onChange={e=>setQuizSlot(key,{fallbackScore:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>}
+        </div>;})}</div>
+        <div style={{marginTop:"10px",fontSize:"11px",color:C.mu,fontWeight:800}}>ملاحظة: الاختبار الذي لم يتم اختياره لا يدخل الحساب. عند اختيار "تجاهل من المتوسط" يتم حساب درجة الطالب من الاختبارات التي لها نتيجة فقط ثم تحويلها إلى درجة القسم.</div>
+        <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const qz=quizSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"9px"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · خانات مختارة: {qz.configured}/4</div></div><div style={{fontSize:"16px",fontWeight:900,color:gc((qz.earned/Math.max(1,settings.quizFullScore))*100)}}>{fmt(qz.earned)} / {settings.quizFullScore}</div></div><div style={{fontSize:"10px",color:qz.missing.length?C.d:C.mu,fontWeight:800,marginTop:"6px"}}>{qz.rows.filter(r=>r.quiz).map(quizStatusText).slice(0,4).join("، ")||"لم يتم اختيار اختبارات"}</div></div>;})}</div>
+      </div>}
+    </Card>
+
     <Card style={{marginBottom:"12px",border:"1px solid #bfdbfe",background:"linear-gradient(180deg,#ffffff,#eff6ff)"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
         <div><strong style={{fontSize:"15px",color:C.tx}}>🧩 المشاريع</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>تسحب الدرجات المعتمدة فقط من Projects. التسليم أو AI بدون اعتماد لا يدخل الدرجة.</div></div>
