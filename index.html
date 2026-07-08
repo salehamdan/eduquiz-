@@ -16,6 +16,7 @@
 <!-- FOLLOWUP222_FIX_SCRIPT_ERROR_SAFE_REFRESH_CONFIRM_20260707 -->
 <!-- FOLLOWUP221_REFRESH_SAFE_ATTENDANCE_TOGGLE_20260707 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
+<!-- PROJECTS225_BILINGUAL_RUBRIC_STUDENT_20260708 -->
 <!-- RP198_ANCHOR_MISSING_TOLERANT_FAIR_SCORE_20260704 -->
 <!-- RP199_STUDENT_COLORED_ANALYSIS_BEFORE_ACCEPT_20260704 -->
 <!-- RP201_SAFE_QUEUE_ALL_ONE_BY_ONE_STUDENT_COLORED_20260704 -->
@@ -4798,18 +4799,18 @@ const PROJECT_TYPES = [
 ];
 function projectRubricFor(type){
   if(type==="Reading Response") return [
-    {key:"understanding",label:"Understanding the Reading",points:3,student:"Show that you understood the main idea and important details."},
-    {key:"personal",label:"Personal Response",points:2,student:"Give your opinion, feeling, or reaction clearly."},
-    {key:"evidence",label:"Evidence from Text",points:2,student:"Support your answer with examples or details from the reading."},
-    {key:"organization",label:"Organization",points:1,student:"Make your response organized and easy to follow."},
-    {key:"language",label:"Language",points:2,student:"Use clear sentences with acceptable grammar and spelling."}
+    {key:"understanding",label:"Understanding",labelAr:"فهم النص",points:3,student:"Show that you understand the main idea and important details in the text.",studentAr:"أظهر أنك فهمت الفكرة الرئيسة والتفاصيل المهمة في النص."},
+    {key:"personal",label:"Personal Response",labelAr:"الاستجابة الشخصية",points:2,student:"Write your opinion, feeling, or response to the text clearly.",studentAr:"اكتب رأيك أو شعورك أو تفاعلك مع النص بوضوح."},
+    {key:"evidence",label:"Evidence from the Text",labelAr:"الدليل من النص",points:2,student:"Support your answer with examples or details from the text.",studentAr:"ادعم إجابتك بأمثلة أو تفاصيل من النص."},
+    {key:"organization",label:"Organization",labelAr:"التنظيم",points:1,student:"Make your response organized and easy to follow.",studentAr:"اجعل إجابتك مرتبة وسهلة المتابعة."},
+    {key:"language",label:"English Language",labelAr:"اللغة الإنجليزية",points:2,student:"Write in English using clear sentences with acceptable grammar and spelling.",studentAr:"اكتب باللغة الإنجليزية بجمل واضحة مع قواعد وإملاء مقبولين."}
   ];
   return [
-    {key:"content",label:"Content",points:3,student:"Your project is related to the topic and gives enough clear information."},
-    {key:"organization",label:"Organization",points:2,student:"Your work is organized with clear parts such as title, introduction, body, and conclusion when needed."},
-    {key:"language",label:"Language",points:2,student:"Your English is clear with acceptable grammar, spelling, and sentence structure."},
-    {key:"requirements",label:"Requirements",points:2,student:"You followed the teacher's instructions and included the required parts."},
-    {key:"creativity",label:"Creativity",points:1,student:"Your work shows effort, examples, suitable design, or a personal touch."}
+    {key:"content",label:"Content / Ideas",labelAr:"المحتوى والأفكار",points:3,student:"The project is related to the topic and gives clear, sufficient information.",studentAr:"يكون المشروع مرتبطًا بالموضوع ويقدم معلومات واضحة وكافية."},
+    {key:"organization",label:"Organization",labelAr:"التنظيم",points:2,student:"The work is well organized with clear parts such as title, introduction, body, and conclusion when needed.",studentAr:"يكون العمل مرتبًا وفيه أجزاء واضحة مثل العنوان والمقدمة والعرض والخاتمة عند الحاجة."},
+    {key:"language",label:"English Language",labelAr:"اللغة الإنجليزية",points:2,student:"The project or research must be written in English using clear sentences with acceptable grammar and spelling.",studentAr:"يجب أن يكون المشروع أو البحث مكتوبًا باللغة الإنجليزية بجمل واضحة وقواعد وإملاء مقبولين."},
+    {key:"requirements",label:"Following Instructions",labelAr:"اتباع التعليمات",points:2,student:"Follow the teacher's instructions and complete all required parts of the project.",studentAr:"اتبع تعليمات المعلم وأكمل الأجزاء المطلوبة في المشروع."},
+    {key:"creativity",label:"Creativity and Effort",labelAr:"الإبداع والجهد",points:1,student:"Your work shows clear effort, suitable examples, good design, or a personal touch.",studentAr:"يظهر في عملك جهد واضح أو أمثلة مناسبة أو تصميم جيد أو لمسة شخصية."}
   ];
 }
 function projectMaxScore(p){ return Math.max(1, Number(p && p.maxScore)||10); }
@@ -4847,6 +4848,14 @@ function projectNormalizeText(t){
     .replace(/[إأآا]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[ؤئ]/g,"ء")
     .replace(/[^a-z0-9\u0600-\u06ff\s]+/g," ")
     .replace(/\s+/g," ").trim();
+}
+function projectLooksEnglishEnough(t){
+  const txt=String(t||"");
+  const latin=(txt.match(/[A-Za-z]/g)||[]).length;
+  const arabic=(txt.match(/[؀-ۿ]/g)||[]).length;
+  if(!txt.trim()) return true;
+  if(latin<20 && txt.trim().length>40) return false;
+  return latin>=Math.max(20, arabic*2);
 }
 function projectUsefulWords(t){
   const stop={the:1,a:1,an:1,and:1,or:1,to:1,of:1,in:1,on:1,for:1,is:1,are:1,was:1,were:1,be:1,with:1,this:1,that:1,it:1,as:1,by:1,from:1,at:1,عن:1,في:1,من:1,الى:1,إلى:1,على:1,و:1,او:1,أو:1,هو:1,هي:1,هذا:1,هذه:1,ان:1,أن:1};
@@ -4911,7 +4920,7 @@ async function projectUploadFile(file, projectId, studentId){
   }
   return meta;
 }
-function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+": "+x.points+" marks. "+(x.student||"")).join("\n"); }
+function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
 async function aiCorrectProjectSubmission({project, submission, student}){
   let apiKey=getAIKey();
   if(!apiKey){ apiKey=await loadAIKeyFromCloud(); if(apiKey) setAIKey(apiKey); }
@@ -4921,7 +4930,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   if(!submittedText){
     throw new Error("AI cannot read this submission content. Use Manual Grade, or ask the student to submit text/readable file.");
   }
-  const prompt = `You are an English teacher assistant. Grade this student project strictly using the teacher's project type, instructions, and rubric.\n\nProject title: ${project.title}\nProject type: ${project.type}\nMax score: ${projectMaxScore(project)}\nTeacher instructions:\n${project.instructions||"No extra instructions."}\n\nRubric:\n${projectRubricText(rubric)}\n\nStudent name: ${student?student.name:(submission.studentName||"Student")}\nSubmission mode: ${submission.submissionMode||"text"}\nStudent submission:\n${submittedText.slice(0,12000)}\n\nReturn ONLY valid JSON in this exact format:\n{"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"2-3 short friendly sentences for the student","teacherNote":"short note for teacher about missing requirements or concerns"}\nUse decimal scores if needed. Do not exceed each criterion max. Requirements must be judged against the teacher instructions.`;
+  const prompt = `You are an English teacher assistant. Grade this student project strictly using the teacher's project type, instructions, and rubric.\n\nProject title: ${project.title}\nProject type: ${project.type}\nMax score: ${projectMaxScore(project)}\nTeacher instructions:\n${project.instructions||"No extra instructions."}\n\nMandatory language requirement:\nThe student project/research must be written in English. If the submission is mainly Arabic or not in English, clearly mention this in the feedback and reduce the score under Language and Requirements according to the rubric.\n\nRubric:\n${projectRubricText(rubric)}\n\nStudent name: ${student?student.name:(submission.studentName||"Student")}\nSubmission mode: ${submission.submissionMode||"text"}\nStudent submission:\n${submittedText.slice(0,12000)}\n\nReturn ONLY valid JSON in this exact format:\n{"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"2-3 short friendly sentences for the student","teacherNote":"short note for teacher about missing requirements or concerns"}\nUse decimal scores if needed. Do not exceed each criterion max. Requirements must be judged against the teacher instructions.`;
   const resp = await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -4940,10 +4949,15 @@ async function aiCorrectProjectSubmission({project, submission, student}){
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
   return <div style={{background:compact?"#f8fafc":"#eff6ff",border:"1px solid "+(compact?C.br:"#bfdbfe"),borderRadius:"10px",padding:"10px",marginTop:"8px"}}>
-    <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>📌 Rubric / معايير الدرجة — 10 Marks</div>
-    {rub.map(r=><div key={r.key} style={{display:"flex",gap:"8px",padding:"5px 0",borderBottom:"1px solid "+C.br+"80"}}>
-      <div style={{width:"40px",fontWeight:"900",color:C.p,fontSize:"12px",fontFamily:F}}>{r.points}</div>
-      <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F}}>{r.label}</div>{!compact&&<div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{r.student}</div>}</div>
+    <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>📌 Assessment Rubric — معايير الدرجة — 10 درجات</div>
+    {rub.map((r,i)=><div key={r.key} style={{display:"flex",gap:"8px",padding:"7px 0",borderBottom:"1px solid "+C.br+"80"}}>
+      <div style={{width:"48px",fontWeight:"900",color:C.p,fontSize:"12px",fontFamily:F}}>{i+1}. {r.points}</div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F}}>{r.label}</div>
+        <div style={{fontSize:"11px",fontWeight:"800",color:C.mu,fontFamily:F,marginTop:"2px"}}>{r.labelAr}</div>
+        {!compact&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px",lineHeight:1.45}}>{r.student}</div>}
+        {!compact&&<div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginTop:"3px",lineHeight:1.45}}>{r.studentAr}</div>}
+      </div>
     </div>)}
   </div>;
 }
@@ -5059,6 +5073,10 @@ function StudentProjects({user,data,reload}){
       try{ fileText=(await extractFileText(file)||"").trim().slice(0,12000); }catch(e){ fileText=""; }
     }
     const currentProjectText = submitMode==="text" ? text.trim() : fileText;
+    if(currentProjectText && !projectLooksEnglishEnough(currentProjectText)){
+      setMsg("يجب أن يكون المشروع أو البحث مكتوبًا باللغة الإنجليزية. عدّل النص ثم أعد التسليم.");
+      return;
+    }
     const copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
     if(copyCheck && copyCheck.blocked){
       setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
@@ -5080,11 +5098,11 @@ function StudentProjects({user,data,reload}){
       <button onClick={()=>setOpenProject(null)} style={{background:"none",border:"none",fontSize:"20px",color:C.mu,marginBottom:"8px"}}>←</button>
       <Card style={{marginBottom:"10px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none",direction:"rtl",textAlign:"right"}}><strong style={{color:"#fff",fontSize:"15px",fontFamily:F}}>📌 {p.title}</strong><p style={{margin:"5px 0 0",fontSize:"11px",color:C.mu,fontFamily:F}}>{projectTypeArabic(p.type)} · الدرجة 10 · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.startDate||"بدون بداية"} ← {p.endDate||"بدون نهاية"}</p></Card>
       {disabled&&<Card style={{marginBottom:"10px",background:dstat==="not_started"?"#fffbeb":"#fef2f2",border:"1px solid "+(dstat==="not_started"?"#fbbf24":"#fecaca"),direction:"rtl",textAlign:"right"}}><b style={{fontSize:"12px",color:dstat==="not_started"?"#92400e":C.d,fontFamily:F}}>{dstat==="not_started"?"لم يبدأ وقت تسليم المشروع بعد.":"انتهى وقت تسليم المشروع."}</b></Card>}
-      <Card style={{marginBottom:"10px",direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>📋 تعليمات المشروع</b><div style={{whiteSpace:"pre-wrap",fontSize:"12px",color:C.tx,marginTop:"6px",fontFamily:F}}>{p.instructions||"لا توجد تعليمات إضافية من المعلم."}</div><div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginTop:"8px"}}>طريقة التسليم: {projectSubmissionTypeArabic(p.submissionType)}</div><ProjectRubricView type={p.type}/></Card>
+      <Card style={{marginBottom:"10px",direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>📋 تعليمات المشروع</b><div style={{whiteSpace:"pre-wrap",fontSize:"12px",color:C.tx,marginTop:"6px",fontFamily:F}}>{p.instructions||"لا توجد تعليمات إضافية من المعلم."}</div><div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginTop:"8px"}}>طريقة التسليم: {projectSubmissionTypeArabic(p.submissionType)}</div><div style={{marginTop:"8px",padding:"8px 10px",borderRadius:"10px",background:"#fff7ed",border:"1px solid #fed7aa",color:"#9a3412",fontSize:"12px",fontWeight:"900",fontFamily:F}}>⚠️ شرط مهم: يجب أن يكون المشروع أو البحث مكتوبًا باللغة الإنجليزية.</div><ProjectRubricView type={p.type}/></Card>
       {latest&&<Card style={{marginBottom:"10px",background:latest.status==="approved"?"#f0fdf4":"#f8fafc",border:"1px solid "+(latest.status==="approved"?"#86efac":C.br),direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>حالة آخر تسليم</b><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>المحاولة {latest.attempt} · {projectStatusArabic(latest.status)} · {latest.submittedAt}</div>{latest.finalScore!=null&&<div style={{fontSize:"16px",fontWeight:"900",color:gc(latest.finalScore*10),fontFamily:F}}>الدرجة النهائية: {latest.finalScore}/10</div>}{latest.teacherFeedback&&<div style={{fontSize:"12px",color:C.tx,marginTop:"5px",fontFamily:F}}>ملاحظة المعلم: {latest.teacherFeedback}</div>}</Card>}
       {!disabled&&(!latest||canResubmit)&&<Card>
         {p.submissionType==="bothChoice"&&<><Label text="اختر طريقة التسليم"/><div style={{display:"flex",gap:"8px",marginBottom:"10px"}}><button onClick={()=>setMode("text")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="text"?C.p:C.br),background:mode==="text"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>كتابة النص</button><button onClick={()=>setMode("file")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="file"?C.p:C.br),background:mode==="file"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>رفع ملف</button></div></>}
-        {submitMode==="text"?<><Label text="اكتب مشروعك هنا"/><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" onChange={e=>setFile(e.target.files&&e.target.files[0])} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>يفضل رفع ملف نصي واضح. بعض ملفات PDF/Word قد تحتاج مراجعة المعلم إذا لم يستطع النظام قراءة النص.</div></>}
+        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" onChange={e=>setFile(e.target.files&&e.target.files[0])} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>يفضل رفع ملف نصي واضح. بعض ملفات PDF/Word قد تحتاج مراجعة المعلم إذا لم يستطع النظام قراءة النص.</div></>}
         {msg&&<div style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d,fontWeight:"800",margin:"8px 0",fontFamily:F}}>{msg}</div>}
         <Btn color={C.p} onClick={()=>submitProject(p)} style={{width:"100%",marginTop:"10px"}}>تسليم المشروع</Btn>
       </Card>}
@@ -13781,3 +13799,5 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
   document.addEventListener('click', function(){ setTimeout(apply, 80); }, true);
 })();
 </script>
+
+<!-- PROJECT224_ARABIC_RUBRIC_ENGLISH_REQUIREMENT_20260708 -->
