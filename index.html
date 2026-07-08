@@ -7960,23 +7960,28 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     return arr;
   }
   function final40Summary(st,scope="period"){
-    const p=periodStats(st,scope);
-    const h=homeworkSummary(st,scope);
-    const pr=projectSummary(st,scope);
-    const qz=quizSummary(st);
-    const participation=Math.max(0,Math.min(10,(safeNum(p.final,0)/Math.max(1,safeNum(settings.fullScore,10)))*10));
-    const homework=Math.max(0,Math.min(10,(safeNum(h.earned,0)/Math.max(1,safeNum(settings.homeworkFullScore,10)))*10));
-    const projects=Math.max(0,Math.min(10,(safeNum(pr.earned,0)/Math.max(1,safeNum(settings.projectFullScore,10)))*10));
-    const quizzes=Math.max(0,Math.min(10,(safeNum(qz.earned,0)/Math.max(1,safeNum(settings.quizFullScore,10)))*10));
-    const total=Math.max(0,Math.min(40,participation+homework+quizzes+projects));
-    const needs=combinedNeeds(st,scope);
-    const critical=needs.some(x=>String(x).includes("يحتاج قرار")||String(x).includes("ينتظر اعتماد")||String(x).includes("رجع للتعديل"));
-    const status=critical?"يحتاج مراجعة":(needs.length?"به نواقص محسوبة":"مكتمل");
-    return {participation,homework,quizzes,projects,total,needs,status,critical};
+    try{
+      const p=periodStats(st,scope)||{};
+      const h=homeworkSummary(st,scope)||{};
+      const pr=projectSummary(st,scope)||{};
+      const qz=quizSummary(st)||{};
+      const participation=Math.max(0,Math.min(10,(safeNum(p.final,0)/Math.max(1,safeNum(settings.fullScore,10)))*10));
+      const homework=Math.max(0,Math.min(10,(safeNum(h.earned,0)/Math.max(1,safeNum(settings.homeworkFullScore,10)))*10));
+      const projects=Math.max(0,Math.min(10,(safeNum(pr.earned,0)/Math.max(1,safeNum(settings.projectFullScore,10)))*10));
+      const quizzes=Math.max(0,Math.min(10,(safeNum(qz.earned,0)/Math.max(1,safeNum(settings.quizFullScore,10)))*10));
+      const total=Math.max(0,Math.min(40,participation+homework+quizzes+projects));
+      const rawNeeds=combinedNeeds(st,scope);
+      const needs=Array.isArray(rawNeeds)?rawNeeds:[];
+      const critical=needs.some(x=>String(x).includes("يحتاج قرار")||String(x).includes("ينتظر اعتماد")||String(x).includes("رجع للتعديل"));
+      const status=critical?"يحتاج مراجعة":(needs.length?"به نواقص محسوبة":"مكتمل");
+      return {participation,homework,quizzes,projects,total,needs,status,critical};
+    }catch(e){
+      return {participation:0,homework:0,quizzes:0,projects:0,total:0,needs:["خطأ في حساب هذا الطالب - راجع بياناته"],status:"يحتاج مراجعة",critical:true};
+    }
   }
-  const final40Rows=visibleStudents.map(st=>({st,...final40Summary(st,sheetScope)}));
+  const final40Rows=final40Open?visibleStudents.map(st=>({st,...final40Summary(st,sheetScope)})):[];
   const final40Avg=final40Rows.length?final40Rows.reduce((a,x)=>a+safeNum(x.total,0),0)/final40Rows.length:0;
-  const final40Complete=final40Rows.filter(x=>!x.needs.length).length;
+  const final40Complete=final40Rows.filter(x=>Array.isArray(x.needs)&&!x.needs.length).length;
   const final40Review=final40Rows.filter(x=>x.critical).length;
   const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
   const chip=(active,label,onClick,color)=> <button onClick={onClick} style={{padding:"7px 9px",borderRadius:"999px",border:"1px solid "+(active?color:C.br),background:active?color:"#fff",color:active?"#fff":C.mu,fontWeight:900,fontSize:"11px",cursor:"pointer"}}>{label}</button>;
