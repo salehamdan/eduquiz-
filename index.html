@@ -7516,7 +7516,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [period,setPeriod]=useState("p1");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"all");
   const [date,setDate]=useState(isoToday());
-  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10,projectFullScore:10,quizFullScore:10,quizSlots:{vocabulary:{label:"اختبار الكلمات",en:"Vocabulary",icon:"🧩",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},listening:{label:"اختبار الاستماع",en:"Listening",icon:"🎧",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},reading:{label:"اختبار القراءة",en:"Reading",icon:"📖",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},workbook:{label:"اختبار الكتاب / إضافي",en:"Workbook / Extra",icon:"📘",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true}}});
+  const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10,projectFullScore:10,quizFullScore:10,oralFullScore:10,writtenFullScore:10,oralListeningWeight:8,oralRpWeight:2,oralListeningMode:"best",oralListeningSelectedId:"",oralRpMode:"best",oralRpTaskId:"",writtenCalcMode:"best",writtenSelectedId:"",oralListeningSlots:{listen_1:{label:"اختبار الاستماع 1",en:"Listening 1",icon:"🎧",quizId:"",active:true}},writtenTestSlots:{written_1:{label:"اختبار تحريري 1",en:"Written Test 1",icon:"📝",quizId:"",weight:10,active:true}},quizSlots:{vocabulary:{label:"اختبار الكلمات",en:"Vocabulary",icon:"🧩",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},listening:{label:"اختبار الاستماع",en:"Listening",icon:"🎧",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},reading:{label:"اختبار القراءة",en:"Reading",icon:"📖",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},workbook:{label:"اختبار الكتاب / إضافي",en:"Workbook / Extra",icon:"📘",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true}}});
   const [records,setRecords]=useState({});
   const [periodRows,setPeriodRows]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -7540,6 +7540,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [projectCalcMode,setProjectCalcMode]=useState("best");
   const [selectedProjectId,setSelectedProjectId]=useState("all");
   const [quizzesOpen,setQuizzesOpen]=useState(false);
+  const [oralWrittenOpen,setOralWrittenOpen]=useState(false);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -7630,13 +7631,13 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setLoading(false);
   }
   async function saveSettings(){
-    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),oralFullScore:safeNum(settings.oralFullScore,10),writtenFullScore:safeNum(settings.writtenFullScore,10),oralListeningWeight:safeNum(settings.oralListeningWeight,8),oralRpWeight:safeNum(settings.oralRpWeight,2),oralListeningMode:settings.oralListeningMode||"best",oralListeningSelectedId:settings.oralListeningSelectedId||"",oralRpMode:settings.oralRpMode||"best",oralRpTaskId:settings.oralRpTaskId||"",writtenCalcMode:settings.writtenCalcMode||"best",writtenSelectedId:settings.writtenSelectedId||"",oralListeningSlots:oralListeningSlots(),writtenTestSlots:writtenTestSlots(),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
     try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); followupDomToast("✅ تم حفظ إعدادات الفترة بنجاح", false); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات."); followupDomToast("⚠️ تعذر حفظ الإعدادات", true);}
   }
   async function saveQuizSlot(key){
     const slots=quizSlots();
     const cfg=slots[key]||{};
-    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),quizSlots:slots},updatedAt:new Date().toISOString()};
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),oralFullScore:safeNum(settings.oralFullScore,10),writtenFullScore:safeNum(settings.writtenFullScore,10),oralListeningWeight:safeNum(settings.oralListeningWeight,8),oralRpWeight:safeNum(settings.oralRpWeight,2),oralListeningMode:settings.oralListeningMode||"best",oralListeningSelectedId:settings.oralListeningSelectedId||"",oralRpMode:settings.oralRpMode||"best",oralRpTaskId:settings.oralRpTaskId||"",writtenCalcMode:settings.writtenCalcMode||"best",writtenSelectedId:settings.writtenSelectedId||"",oralListeningSlots:oralListeningSlots(),writtenTestSlots:writtenTestSlots(),quizSlots:slots},updatedAt:new Date().toISOString()};
     const nm=quizSlotLabel(key,cfg);
     try{
       localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj));
@@ -7940,6 +7941,82 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     if(r.status==="missing") return label+": لم يحل - يحتاج قرار";
     return label+": لم يتم اختيار اختبار";
   }
+  function defaultOralListeningSlots(){return {listen_1:{label:"اختبار الاستماع 1",en:"Listening 1",icon:"🎧",quizId:"",active:true}};}
+  function oralListeningSlots(){const base=defaultOralListeningSlots(); const saved=(settings&&settings.oralListeningSlots)||{}; const merged={...base}; Object.keys(saved||{}).forEach(k=>{merged[k]={...(base[k]||{label:"اختبار استماع",en:"Listening",icon:"🎧",quizId:"",active:true}),...(saved[k]||{})}; if(merged[k].active===undefined) merged[k].active=true;}); return merged;}
+  function oralListeningKeys(){return Object.keys(oralListeningSlots());}
+  function setOralListeningSlot(key,patch){const slots=oralListeningSlots(); setSettings({...settings,oralListeningSlots:{...slots,[key]:{...slots[key],...patch}}});}
+  function addOralListeningSlot(){const slots=oralListeningSlots(); const idx=Object.keys(slots).length+1; const key="listen_"+Date.now(); setSettings({...settings,oralListeningSlots:{...slots,[key]:{label:"اختبار الاستماع "+idx,en:"Listening "+idx,icon:"🎧",quizId:"",active:true}}});}
+  function deleteOralListeningSlot(key){const slots=oralListeningSlots(); const ok=window.confirm("هل تريد حذف اختبار الاستماع من حساب الشفوي؟"); if(!ok)return; const next={...slots}; delete next[key]; setSettings({...settings,oralListeningSlots:next});}
+  function defaultWrittenTestSlots(){return {written_1:{label:"اختبار تحريري 1",en:"Written Test 1",icon:"📝",quizId:"",weight:10,active:true}};}
+  function writtenTestSlots(){const base=defaultWrittenTestSlots(); const saved=(settings&&settings.writtenTestSlots)||{}; const merged={...base}; Object.keys(saved||{}).forEach(k=>{merged[k]={...(base[k]||{label:"اختبار تحريري",en:"Written Test",icon:"📝",quizId:"",weight:10,active:true}),...(saved[k]||{})}; if(merged[k].active===undefined) merged[k].active=true;}); return merged;}
+  function writtenTestKeys(){return Object.keys(writtenTestSlots());}
+  function setWrittenTestSlot(key,patch){const slots=writtenTestSlots(); setSettings({...settings,writtenTestSlots:{...slots,[key]:{...slots[key],...patch}}});}
+  function addWrittenTestSlot(){const slots=writtenTestSlots(); const idx=Object.keys(slots).length+1; const key="written_"+Date.now(); setSettings({...settings,writtenTestSlots:{...slots,[key]:{label:"اختبار تحريري "+idx,en:"Written Test "+idx,icon:"📝",quizId:"",weight:10,active:true}}});}
+  function deleteWrittenTestSlot(key){const slots=writtenTestSlots(); const ok=window.confirm("هل تريد حذف هذا الاختبار من حساب التحريري؟"); if(!ok)return; const next={...slots}; delete next[key]; setSettings({...settings,writtenTestSlots:next});}
+  async function saveOralWrittenSettings(label){
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),oralFullScore:safeNum(settings.oralFullScore,10),writtenFullScore:safeNum(settings.writtenFullScore,10),oralListeningWeight:safeNum(settings.oralListeningWeight,8),oralRpWeight:safeNum(settings.oralRpWeight,2),oralListeningMode:settings.oralListeningMode||"best",oralListeningSelectedId:settings.oralListeningSelectedId||"",oralRpMode:settings.oralRpMode||"best",oralRpTaskId:settings.oralRpTaskId||"",writtenCalcMode:settings.writtenCalcMode||"best",writtenSelectedId:settings.writtenSelectedId||"",oralListeningSlots:oralListeningSlots(),writtenTestSlots:writtenTestSlots(),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
+    try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ "+label+"."); followupDomToast("✅ تم حفظ "+label+" بنجاح", false);}catch(e){setMsg("⚠️ تعذر حفظ "+label+"."); followupDomToast("⚠️ تعذر حفظ "+label, true);}
+  }
+  function rpTaskMatchesFollowup(t){
+    if(!t || t.deleted===true || t.status==="deleted") return false;
+    if(t.teacherId && String(t.teacherId)!==String(user.id||"")) return false;
+    if(classId==="all") return true;
+    const ids=[].concat(t.classIds||[],t.classId||[],t.class||[],t.className||[]).filter(Boolean);
+    if(!ids.length) return true;
+    return ids.some(cid=>sameClassId(cid,classId));
+  }
+  const followupRpTasks=(data.readingTasks||[]).filter(rpTaskMatchesFollowup).sort((a,b)=>String(b.createdAt||b.updatedAt||"").localeCompare(String(a.createdAt||a.updatedAt||""))||String(a.title||"").localeCompare(String(b.title||"")));
+  function rpTaskTitle(t){return (t&&(t.title||t.name||t.taskTitle))||"Reading Progress";}
+  function rpSubmissionPercent(s){
+    if(!s) return null;
+    const direct=[s.percent,s.finalPercent,s.finalScore,s.score,s.grade,s.totalScore,s.overallScore,s.analysis&&s.analysis.finalScore,s.analysis&&s.analysis.score,s.analysis&&s.analysis.overallScore,s.analysis&&s.analysis.accuracy,s.analysis&&s.analysis.accuracyPct];
+    for(const v of direct){const n=Number(v); if(Number.isFinite(n)&&n>=0){return Math.max(0,Math.min(100,n));}}
+    const acc=Number(rpMetricFromSubmission(s,"accuracy")); if(Number.isFinite(acc)&&acc>=0) return Math.max(0,Math.min(100,acc));
+    return null;
+  }
+  function rpSubsForStudentTask(st,taskId){
+    return (data.readingSubmissions||[]).filter(x=>x && x.deleted!==true && x.status!=="deleted" && (x.status==="approved"||x.status==="accepted") && String(x.taskId||"")===String(taskId||"") && responseBelongsToStudent(x,st));
+  }
+  function rpPercentForStudent(st){
+    const mode=settings.oralRpMode||"best";
+    let tasks=followupRpTasks;
+    if(mode==="specific" && settings.oralRpTaskId) tasks=tasks.filter(t=>String(t.id)===String(settings.oralRpTaskId));
+    const vals=[];
+    tasks.forEach(t=>{rpSubsForStudentTask(st,t.id).forEach(s=>{const p=rpSubmissionPercent(s); if(p!==null) vals.push(p);});});
+    if(!vals.length) return null;
+    if(mode==="average") return vals.reduce((a,b)=>a+b,0)/vals.length;
+    return Math.max.apply(null,vals);
+  }
+  function pctFromQuizList(st,ids,mode,selectedId){
+    const qs=ids.map(id=>followupQuizzes.find(q=>String(q.id||q._id||"")===String(id))).filter(Boolean);
+    if(mode==="specific" && selectedId) qs.splice(0,qs.length,...qs.filter(q=>String(q.id||q._id||"")===String(selectedId)));
+    const vals=[];
+    qs.forEach(q=>{const r=quizBestResponse(q,st); const p=quizRespPercent(q,r); if(p!==null) vals.push(p);});
+    if(!vals.length) return null;
+    if(mode==="average") return vals.reduce((a,b)=>a+b,0)/vals.length;
+    return Math.max.apply(null,vals);
+  }
+  function oralWrittenSummary(st){
+    const listenSlots=oralListeningSlots();
+    const listenIds=Object.values(listenSlots).filter(x=>x&&x.active!==false&&x.quizId).map(x=>x.quizId);
+    const listenPct=pctFromQuizList(st,listenIds,settings.oralListeningMode||"best",settings.oralListeningSelectedId||"");
+    const rpPct=rpPercentForStudent(st);
+    const listenW=safeNum(settings.oralListeningWeight,8), rpW=safeNum(settings.oralRpWeight,2);
+    const oralFull=safeNum(settings.oralFullScore,10), writtenFull=safeNum(settings.writtenFullScore,10);
+    const oralBase=Math.max(0,listenW+rpW)||10;
+    const oralEarned=((listenPct===null?0:(listenPct/100)*listenW)+(rpPct===null?0:(rpPct/100)*rpW))/oralBase*oralFull;
+    const wSlots=writtenTestSlots(); const wRows=[]; let weightedEarn=0, weightedUsed=0; const pctVals=[];
+    Object.keys(wSlots).forEach(k=>{const cfg=wSlots[k]||{}; if(cfg.active===false||!cfg.quizId)return; const q=followupQuizzes.find(x=>String(x.id||x._id||"")===String(cfg.quizId)); if(!q)return; const r=quizBestResponse(q,st); const p=quizRespPercent(q,r); const weight=safeNum(cfg.weight,10); if(p!==null){pctVals.push({pct:p,quizId:cfg.quizId}); weightedEarn+=(p/100)*weight; weightedUsed+=weight; wRows.push({cfg,quiz:q,pct:p,weight,status:"done"});}else{wRows.push({cfg,quiz:q,pct:null,weight,status:"missing"});}});
+    let writtenPct=null; const wMode=settings.writtenCalcMode||"best";
+    if(wMode==="weighted") writtenPct=weightedUsed>0?(weightedEarn/weightedUsed)*100:null;
+    else if(wMode==="average") writtenPct=pctVals.length?pctVals.reduce((a,x)=>a+x.pct,0)/pctVals.length:null;
+    else if(wMode==="specific" && settings.writtenSelectedId){const f=pctVals.filter(x=>String(x.quizId)===String(settings.writtenSelectedId)); writtenPct=f.length?f[0].pct:null;}
+    else writtenPct=pctVals.length?Math.max.apply(null,pctVals.map(x=>x.pct)):null;
+    const writtenEarned=writtenPct===null?0:(writtenPct/100)*writtenFull;
+    const total=Math.max(0,Math.min(oralFull+writtenFull,oralEarned+writtenEarned));
+    const missing=[]; if(listenIds.length && listenPct===null) missing.push("الاستماع: لا توجد نتيجة"); if(safeNum(settings.oralRpWeight,2)>0 && rpPct===null) missing.push("Reading Progress: لا توجد نتيجة معتمدة"); wRows.filter(x=>x.status==="missing").forEach(x=>missing.push((x.cfg.label||"اختبار تحريري")+": لم يحل"));
+    return {listenPct,rpPct,oralEarned,writtenPct,writtenEarned,total,missing,wRows,oralFull,writtenFull};
+  }
   function applyQuizPolicyAll(policy){
     const slots=quizSlots(); const next={};
     quizSlotKeys().forEach(k=>next[k]={...slots[k],missingPolicy:policy});
@@ -7979,7 +8056,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       {settingsOpen&&<div style={{marginTop:"12px",padding:"12px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"13px"}}>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,marginBottom:"8px"}}>⚙️ إعدادات محفوظة للفترة</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"8px"}}>
-          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"],["homeworkFullScore","درجة قسم الواجبات/الكتابة"],["projectFullScore","درجة قسم المشاريع"],["quizFullScore","درجة الاختبارات القصيرة"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
+          {[ ["requiredParticipation","عدد المشاركات للكامل"],["fullScore","درجة المشاركة"],["latePenalty","خصم التأخير"],["absencePenalty","خصم الغياب"],["maxAttendancePenalty","أقصى خصم حضور"],["itemPenalty","خصم الكتاب/السلوك/الخروج"],["homeworkFullScore","درجة قسم الواجبات/الكتابة"],["projectFullScore","درجة قسم المشاريع"],["quizFullScore","درجة الاختبارات القصيرة"],["oralFullScore","درجة الشفوي"],["writtenFullScore","درجة التحريري"] ].map(x=><div key={x[0]}><Label text={x[1]}/><input type="number" step="0.25" value={settings[x[0]]} onChange={e=>setSettings({...settings,[x[0]]:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>)}
         </div><div style={{marginTop:"9px"}}><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ إعدادات الفترة</Btn></div>
       </div>}
     </Card>
@@ -8064,6 +8141,40 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         </div>;})}</div>
         <div style={{marginTop:"10px",fontSize:"11px",color:C.mu,fontWeight:800}}>ملاحظة: يمكنك حذف أي خانة أو إيقافها من الحساب بدون حذف الاختبار من Quizzes. الاختبار غير المختار أو غير الفعال لا يدخل الدرجة. عند اختيار "تجاهل من المتوسط" يتم حساب درجة الطالب من الاختبارات التي لها نتيجة فقط ثم تحويلها إلى درجة القسم.</div>
         <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const qz=quizSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"9px"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · اختبارات داخلة في الحساب: {qz.configured}/{qz.activeSlots}</div></div><div style={{fontSize:"16px",fontWeight:900,color:gc((qz.earned/Math.max(1,settings.quizFullScore))*100)}}>{fmt(qz.earned)} / {settings.quizFullScore}</div></div><div style={{fontSize:"10px",color:qz.missing.length?C.d:C.mu,fontWeight:800,marginTop:"6px"}}>{qz.rows.filter(r=>r.quiz&&r.status!=="inactive").map(quizStatusText).join("، ")||"لم يتم اختيار اختبارات"}</div></div>;})}</div>
+      </div>}
+    </Card>
+
+    <Card style={{marginBottom:"12px",border:"1px solid #ddd6fe",background:"linear-gradient(180deg,#ffffff,#faf5ff)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>🎙️ الاختبارات الشفوية والتحريرية / 20</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>الشفوي من 10: Listening من Quizzes + Reading Progress بأوزان مرنة. التحريري من 10: اختبارات من Quizzes أو ZipGrade.</div></div>
+        <Btn size="sm" color={C.pu} onClick={()=>setOralWrittenOpen(!oralWrittenOpen)}>{oralWrittenOpen?"إخفاء":"عرض"}</Btn>
+      </div>
+      {oralWrittenOpen&&<div style={{marginTop:"12px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:"8px",alignItems:"end",marginBottom:"10px"}}>
+          <div><Label text="درجة الشفوي"/><input type="number" step="0.25" value={settings.oralFullScore||10} onChange={e=>setSettings({...settings,oralFullScore:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div><Label text="درجة التحريري"/><input type="number" step="0.25" value={settings.writtenFullScore||10} onChange={e=>setSettings({...settings,writtenFullScore:e.target.value})} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px"}}/></div>
+          <div style={{fontSize:"11px",fontWeight:900,color:C.mu}}>المجموع الحالي: <b>{fmt(safeNum(settings.oralFullScore,10)+safeNum(settings.writtenFullScore,10))}</b> / 20</div>
+          <div><Btn size="sm" color={C.s} onClick={()=>saveOralWrittenSettings("إعدادات الشفوي والتحريري")}>💾 حفظ إعدادات 20</Btn></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:"10px"}}>
+          <div style={{background:"#fff",border:"1px solid #ddd6fe",borderRadius:"13px",padding:"10px"}}>
+            <div style={{fontWeight:900,color:C.tx,marginBottom:"8px"}}>🎧 الشفوي / Listening + Reading Progress</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}><div><Label text="وزن الاستماع"/><input type="number" step="0.25" value={settings.oralListeningWeight} onChange={e=>setSettings({...settings,oralListeningWeight:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div><div><Label text="وزن Reading Progress"/><input type="number" step="0.25" value={settings.oralRpWeight} onChange={e=>setSettings({...settings,oralRpWeight:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}><div><Label text="حساب الاستماع"/><select value={settings.oralListeningMode||"best"} onChange={e=>setSettings({...settings,oralListeningMode:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="best">أفضل اختبار</option><option value="average">متوسط الاختبارات</option><option value="specific">اختبار محدد</option></select></div><div><Label text="حساب RP"/><select value={settings.oralRpMode||"best"} onChange={e=>setSettings({...settings,oralRpMode:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="best">أفضل تسجيل</option><option value="average">متوسط التسجيلات</option><option value="specific">مهمة محددة</option></select></div></div>
+            {settings.oralListeningMode==="specific"&&<div style={{marginBottom:"8px"}}><Label text="اختبار الاستماع المحدد للحساب"/><select value={settings.oralListeningSelectedId||""} onChange={e=>setSettings({...settings,oralListeningSelectedId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="">اختر اختبارًا محددًا</option>{Object.values(oralListeningSlots()).filter(x=>x&&x.quizId).map(x=>{const q=followupQuizzes.find(a=>String(a.id||a._id||"")===String(x.quizId)); return q?<option key={x.quizId} value={x.quizId}>{quizTitle(q)}</option>:null;})}</select></div>}
+            {settings.oralRpMode==="specific"&&<div style={{marginBottom:"8px"}}><Label text="مهمة Reading Progress المحددة"/><select value={settings.oralRpTaskId||""} onChange={e=>setSettings({...settings,oralRpTaskId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="">اختر مهمة RP</option>{followupRpTasks.map(t=><option key={t.id} value={t.id}>{rpTaskTitle(t)}</option>)}</select></div>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",margin:"8px 0"}}><b style={{fontSize:"12px",color:C.tx}}>اختبارات الاستماع من Quizzes</b><Btn size="sm" color={C.pu} onClick={addOralListeningSlot}>➕ إضافة استماع</Btn></div>
+            <div style={{display:"grid",gap:"8px"}}>{oralListeningKeys().map(key=>{const cfg=oralListeningSlots()[key]||{}; const q=followupQuizzes.find(x=>String(x.id||x._id||"")===String(cfg.quizId||"")); const dateTxt=quizDateRangeText(q); return <div key={key} style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"12px",padding:"8px"}}><div style={{display:"flex",gap:"6px",justifyContent:"space-between",alignItems:"center"}}><label style={{fontSize:"11px",fontWeight:900,color:C.tx}}><input type="checkbox" checked={cfg.active!==false} onChange={e=>setOralListeningSlot(key,{active:e.target.checked})}/> يدخل في الحساب</label><Btn size="sm" color={C.d} onClick={()=>deleteOralListeningSlot(key)}>🗑️ حذف</Btn></div><Label text="اختر اختبار استماع"/><select value={cfg.quizId||""} onChange={e=>setOralListeningSlot(key,{quizId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="">لم يتم الاختيار</option>{followupQuizzes.map(q=><option key={q.id||q._id} value={q.id||q._id}>{quizTitle(q)}</option>)}</select>{dateTxt&&<div style={{marginTop:"6px",fontSize:"10px",fontWeight:900,color:C.p,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"7px"}}>{dateTxt}</div>}<div style={{display:"flex",justifyContent:"flex-end",marginTop:"7px"}}><Btn size="sm" color={C.s} onClick={()=>saveOralWrittenSettings("اختبار الاستماع")}>💾 حفظ هذا الاختبار</Btn></div></div>;})}</div>
+            <div style={{display:"flex",justifyContent:"flex-end",marginTop:"8px"}}><Btn size="sm" color={C.s} onClick={()=>saveOralWrittenSettings("Reading Progress")}>💾 حفظ Reading Progress</Btn></div>
+          </div>
+          <div style={{background:"#fff",border:"1px solid #ddd6fe",borderRadius:"13px",padding:"10px"}}>
+            <div style={{fontWeight:900,color:C.tx,marginBottom:"8px"}}>📝 التحريري / Written from Quizzes</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}><div><Label text="طريقة حساب التحريري"/><select value={settings.writtenCalcMode||"best"} onChange={e=>setSettings({...settings,writtenCalcMode:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="best">أفضل اختبار</option><option value="average">متوسط الاختبارات</option><option value="specific">اختبار محدد</option><option value="weighted">حسب أوزان الاختبارات</option></select></div>{settings.writtenCalcMode==="specific"&&<div><Label text="الاختبار المحدد"/><select value={settings.writtenSelectedId||""} onChange={e=>setSettings({...settings,writtenSelectedId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="">اختر اختبارًا</option>{Object.values(writtenTestSlots()).filter(x=>x&&x.quizId).map(x=>{const q=followupQuizzes.find(a=>String(a.id||a._id||"")===String(x.quizId)); return q?<option key={x.quizId} value={x.quizId}>{quizTitle(q)}</option>:null;})}</select></div>}</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",margin:"8px 0"}}><b style={{fontSize:"12px",color:C.tx}}>اختبارات التحريري من Quizzes / ZipGrade</b><Btn size="sm" color={C.pu} onClick={addWrittenTestSlot}>➕ إضافة تحريري</Btn></div>
+            <div style={{display:"grid",gap:"8px"}}>{writtenTestKeys().map(key=>{const cfg=writtenTestSlots()[key]||{}; const q=followupQuizzes.find(x=>String(x.id||x._id||"")===String(cfg.quizId||"")); const dateTxt=quizDateRangeText(q); return <div key={key} style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"12px",padding:"8px"}}><div style={{display:"flex",gap:"6px",justifyContent:"space-between",alignItems:"center"}}><label style={{fontSize:"11px",fontWeight:900,color:C.tx}}><input type="checkbox" checked={cfg.active!==false} onChange={e=>setWrittenTestSlot(key,{active:e.target.checked})}/> يدخل في الحساب</label><Btn size="sm" color={C.d} onClick={()=>deleteWrittenTestSlot(key)}>🗑️ حذف</Btn></div><div style={{display:"grid",gridTemplateColumns:"1fr 90px",gap:"7px"}}><div><Label text="اختر اختبارًا"/><select value={cfg.quizId||""} onChange={e=>setWrittenTestSlot(key,{quizId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="">لم يتم الاختيار</option>{followupQuizzes.map(q=><option key={q.id||q._id} value={q.id||q._id}>{quizTitle(q)}</option>)}</select></div><div><Label text="الوزن"/><input type="number" step="0.25" value={cfg.weight} onChange={e=>setWrittenTestSlot(key,{weight:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div></div>{dateTxt&&<div style={{marginTop:"6px",fontSize:"10px",fontWeight:900,color:C.p,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"7px"}}>{dateTxt}</div>}<div style={{display:"flex",justifyContent:"flex-end",marginTop:"7px"}}><Btn size="sm" color={C.s} onClick={()=>saveOralWrittenSettings("الاختبار التحريري")}>💾 حفظ هذا الاختبار</Btn></div></div>;})}</div>
+          </div>
+        </div>
+        <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const ow=oralWrittenSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"9px"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · شفوي {fmt(ow.oralEarned)}/{fmt(ow.oralFull)} · تحريري {fmt(ow.writtenEarned)}/{fmt(ow.writtenFull)}</div></div><div style={{fontSize:"16px",fontWeight:900,color:gc((ow.total/Math.max(1,ow.oralFull+ow.writtenFull))*100)}}>{fmt(ow.total)} / {fmt(ow.oralFull+ow.writtenFull)}</div></div><div style={{fontSize:"10px",color:ow.missing.length?C.d:C.s,fontWeight:800,marginTop:"6px"}}>{ow.missing.length?ow.missing.slice(0,4).join("، "):"✅ مكتمل حسب الاختيارات الحالية"}</div></div>;})}</div>
       </div>}
     </Card>
 
