@@ -7500,6 +7500,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   </div>;
 }
 
+// FOLLOWUP229_FOLLOWUP_QUIZZES_EDIT_SAVE_DATE_TOAST_20260708
 // FOLLOWUP228_FOLLOWUP_QUIZZES_FLEXIBLE_SLOTS_20260708
 // FOLLOWUP227_QUIZZES_LINK_FOUR_SKILLS_20260708
 // FOLLOWUP210_HOMEWORK_WRITING_WEIGHTED_TASKS_20260706
@@ -7629,7 +7630,23 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function saveSettings(){
     const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
-    try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات.");}
+    try{localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj)); await fsSet("followupSettings",obj.id,obj); setSettings(obj.settings); setMsg("✅ تم حفظ إعدادات الفترة."); followupDomToast("✅ تم حفظ إعدادات الفترة بنجاح", false); setSettingsOpen(false);}catch(e){setMsg("⚠️ تعذر حفظ الإعدادات."); followupDomToast("⚠️ تعذر حفظ الإعدادات", true);}
+  }
+  async function saveQuizSlot(key){
+    const slots=quizSlots();
+    const cfg=slots[key]||{};
+    const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),quizSlots:slots},updatedAt:new Date().toISOString()};
+    const nm=quizSlotLabel(key,cfg);
+    try{
+      localStorage.setItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher"),JSON.stringify(obj));
+      await fsSet("followupSettings",obj.id,obj);
+      setSettings(obj.settings);
+      setMsg("✅ تم حفظ "+nm+".");
+      followupDomToast("✅ تم حفظ "+nm+" بنجاح", false);
+    }catch(e){
+      setMsg("⚠️ تعذر حفظ "+nm+".");
+      followupDomToast("⚠️ تعذر حفظ "+nm, true);
+    }
   }
   async function saveDayCore(autoMode){
     if(classId==="all"){ if(!autoMode) alert("اختر فصلًا محددًا قبل الحفظ."); return; }
@@ -7840,6 +7857,21 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   const followupQuizzes=(data.quizzes||[]).filter(quizMatchesFollowup).sort((a,b)=>String(b.createdAt||b.updatedAt||b.importedAt||"").localeCompare(String(a.createdAt||a.updatedAt||a.importedAt||""))||String(a.title||"").localeCompare(String(b.title||"")));
   function quizTitle(q){return (q&& (q.title||q.name||q.quizName||q.importFile)) || "Quiz";}
+  function quizDatePick(q,kind){
+    if(!q) return "";
+    const startKeys=["openDate","startDate","availableFrom","availableStart","publishDate","fromDate","startAt","openAt","availableAt","beginDate","startsAt"];
+    const endKeys=["closeDate","endDate","availableTo","availableEnd","dueDate","deadline","untilDate","endAt","closeAt","endsAt"];
+    const keys=kind==="end"?endKeys:startKeys;
+    for(const k of keys){ if(q[k]) return String(q[k]); }
+    return "";
+  }
+  function quizDateRangeText(q){
+    const st=quizDatePick(q,"start"), en=quizDatePick(q,"end");
+    if(!st && !en) return "";
+    if(st && en) return "📅 من: "+rpFormatTaskDate(st)+" إلى: "+rpFormatTaskDate(en);
+    if(st) return "📅 يبدأ: "+rpFormatTaskDate(st);
+    return "📅 ينتهي: "+rpFormatTaskDate(en);
+  }
   function quizMax(q,r){
     const rt=Number(r&& (r.totalQ||r.total||r.maxScore||r.outOf));
     if(Number.isFinite(rt)&&rt>0) return rt;
@@ -8019,11 +8051,13 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
           <div><Label text="سياسة جماعية للنواقص"/><select onChange={e=>{if(e.target.value)applyQuizPolicyAll(e.target.value); e.target.value="";}} defaultValue="" style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option value="">اختر للتطبيق على كل الاختبارات الفعالة</option><option value="zero">لم يحل = صفر</option><option value="ignore">تجاهل من المتوسط</option><option value="fallback">درجة بديلة جماعية</option><option value="missing">ناقص يحتاج قرار</option></select></div>
           <div style={{fontSize:"11px",fontWeight:800,color:C.mu}}>الاختبارات المتاحة: <b>{followupQuizzes.length}</b> · يمكنك جعلها اختبارين أو أربعة أو ستة حسب الفترة.</div><div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.pu} onClick={addQuizSlot}>➕ إضافة اختبار</Btn><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ اختيار الاختبارات</Btn></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"10px"}}>{quizSlotKeys().map(key=>{const info=quizSlotInfo[key]||{}; const cfg=quizSlots()[key]||{}; return <div key={key} style={{background:cfg.active===false?"#f8fafc":"#fff",border:"1px solid "+(cfg.active===false?"#cbd5e1":C.br),borderRadius:"13px",padding:"10px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"10px"}}>{quizSlotKeys().map(key=>{const info=quizSlotInfo[key]||{}; const cfg=quizSlots()[key]||{}; const selectedQuiz=followupQuizzes.find(x=>String(x.id||x._id||"")===String(cfg.quizId||"")); const dateTxt=quizDateRangeText(selectedQuiz); return <div key={key} style={{background:cfg.active===false?"#f8fafc":"#fff",border:"1px solid "+(cfg.active===false?"#cbd5e1":C.br),borderRadius:"13px",padding:"10px"}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontWeight:900,color:C.tx,fontSize:"13px"}}>{cfg.icon||info.icon||"📝"} {quizSlotLabel(key,cfg)}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800,marginBottom:"7px"}}>{quizSlotEn(key,cfg)}</div></div><Btn size="sm" color={C.d} onClick={()=>deleteQuizSlot(key)}>🗑️ حذف</Btn></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}><div><Label text="اسم الخانة بالعربي"/><input value={cfg.label||""} onChange={e=>setQuizSlot(key,{label:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div><div><Label text="English name"/><input value={cfg.en||""} onChange={e=>setQuizSlot(key,{en:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div></div>
           <label style={{display:"flex",gap:"7px",alignItems:"center",fontSize:"11px",fontWeight:900,color:cfg.active===false?C.d:C.s,marginBottom:"8px"}}><input type="checkbox" checked={cfg.active!==false} onChange={e=>setQuizSlot(key,{active:e.target.checked})}/> يدخل هذا الاختبار في درجة الاختبارات القصيرة</label>
           <Label text="اختر اختبارًا من Quizzes"/><select value={cfg.quizId||""} onChange={e=>setQuizSlot(key,{quizId:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontSize:"12px"}}><option value="">لم يتم الاختيار</option>{followupQuizzes.map(q=><option key={q.id||q._id} value={q.id||q._id}>{quizTitle(q)}</option>)}</select>
+          {dateTxt&&<div style={{marginTop:"6px",fontSize:"10px",fontWeight:900,color:C.p,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"7px"}}>{dateTxt}</div>}
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:"7px"}}><Btn size="sm" color={C.s} onClick={()=>saveQuizSlot(key)}>💾 حفظ هذا الاختبار</Btn></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginTop:"8px"}}><div><Label text="الوزن"/><input type="number" step="0.25" value={cfg.weight} onChange={e=>setQuizSlot(key,{weight:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div><div><Label text="إذا لم يحل"/><select value={cfg.missingPolicy||"missing"} onChange={e=>setQuizSlot(key,{missingPolicy:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff"}}><option value="missing">ناقص يحتاج قرار</option><option value="zero">احسب صفر</option><option value="ignore">تجاهل من المتوسط</option><option value="fallback">درجة بديلة</option></select></div></div>
           {cfg.missingPolicy==="fallback"&&<div style={{marginTop:"8px"}}><Label text="الدرجة البديلة للناقصين"/><input type="number" step="0.25" value={cfg.fallbackScore} onChange={e=>setQuizSlot(key,{fallbackScore:e.target.value})} style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"9px"}}/></div>}
         </div>;})}</div>
