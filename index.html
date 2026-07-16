@@ -13,7 +13,6 @@
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
 <!-- RP186_EXACT_DELETE_TRANSCRIPT_ISOLATION_20260704 -->
-<!-- FOLLOWUP235_ENTITLEMENTS_40_20_PREVIEW_SAFE_20260708 -->
 <!-- FOLLOWUP222_FIX_SCRIPT_ERROR_SAFE_REFRESH_CONFIRM_20260707 -->
 <!-- FOLLOWUP221_REFRESH_SAFE_ATTENDANCE_TOGGLE_20260707 -->
 <!-- RP193_REVERSE_SEQUENCE_DETECTION_FIXED_20260704 -->
@@ -7542,7 +7541,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [selectedProjectId,setSelectedProjectId]=useState("all");
   const [quizzesOpen,setQuizzesOpen]=useState(false);
   const [oralWrittenOpen,setOralWrittenOpen]=useState(false);
-  const [entitlementsOpen,setEntitlementsOpen]=useState(false);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -8019,48 +8017,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const missing=[]; if(listenIds.length && listenPct===null) missing.push("الاستماع: لا توجد نتيجة"); if(safeNum(settings.oralRpWeight,2)>0 && rpPct===null) missing.push("Reading Progress: لا توجد نتيجة معتمدة"); wRows.filter(x=>x.status==="missing").forEach(x=>missing.push((x.cfg.label||"اختبار تحريري")+": لم يحل"));
     return {listenPct,rpPct,oralEarned,writtenPct,writtenEarned,total,missing,wRows,oralFull,writtenFull};
   }
-  function safeFollowupPartScore(st){
-    try{return periodStats(st,"period");}catch(e){return {final:0,notes:["خطأ في حساب المشاركة"]};}
-  }
-  function safeHomeworkScore(st){
-    try{return homeworkSummary(st,"period");}catch(e){return {earned:0,full:safeNum(settings.homeworkFullScore,10),missing:[],partial:[],error:true};}
-  }
-  function safeProjectScore(st){
-    try{return projectSummary(st,"period");}catch(e){return {earned:0,full:safeNum(settings.projectFullScore,10),missing:[],pending:[],notSubmitted:[],returned:[],error:true};}
-  }
-  function safeQuizScore(st){
-    try{return quizSummary(st);}catch(e){return {earned:0,full:safeNum(settings.quizFullScore,10),missing:[],zero:[],ignored:[],fallback:[],rows:[],error:true};}
-  }
-  function safeOralWrittenScore(st){
-    try{return oralWrittenSummary(st);}catch(e){return {oralEarned:0,writtenEarned:0,total:0,oralFull:safeNum(settings.oralFullScore,10),writtenFull:safeNum(settings.writtenFullScore,10),missing:["خطأ في حساب الشفوي/التحريري"],error:true};}
-  }
-  function final40ForStudent(st){
-    const p=safeFollowupPartScore(st), h=safeHomeworkScore(st), pr=safeProjectScore(st), qz=safeQuizScore(st);
-    const participation=Math.max(0,Math.min(10,safeNum(p.final,0)));
-    const homework=Math.max(0,Math.min(10,safeNum(h.earned,0)));
-    const quizzes=Math.max(0,Math.min(10,safeNum(qz.earned,0)));
-    const projects=Math.max(0,Math.min(10,safeNum(pr.earned,0)));
-    const total=participation+homework+quizzes+projects;
-    const notes=[];
-    try{combinedNeeds(st,"period").forEach(x=>notes.push(x));}catch(e){}
-    if(h.error)notes.push("الواجبات: يحتاج مراجعة");
-    if(pr.error)notes.push("المشاريع: يحتاج مراجعة");
-    if(qz.error)notes.push("الاختبارات القصيرة: يحتاج مراجعة");
-    return {participation,homework,quizzes,projects,total,notes};
-  }
-  function final20ForStudent(st){
-    const ow=safeOralWrittenScore(st);
-    const oral=Math.max(0,Math.min(10,safeNum(ow.oralEarned,0)));
-    const written=Math.max(0,Math.min(10,safeNum(ow.writtenEarned,0)));
-    const total=oral+written;
-    const notes=[...(ow.missing||[])];
-    return {oral,written,total,notes};
-  }
-  function reviewBadge(notes){
-    if(!notes||!notes.length) return <span style={{color:C.s,fontWeight:900}}>✅ مكتمل</span>;
-    const hard=notes.some(x=>String(x).includes("يحتاج قرار")||String(x).includes("ينتظر اعتماد")||String(x).includes("رجع للتعديل")||String(x).includes("لا توجد نتيجة")||String(x).includes("يحتاج مراجعة"));
-    return <span style={{color:hard?C.d:C.w,fontWeight:900}}>{hard?"🔴 يحتاج قرار":"🟡 يوجد نقص محسوب"}</span>;
-  }
   function applyQuizPolicyAll(policy){
     const slots=quizSlots(); const next={};
     quizSlotKeys().forEach(k=>next[k]={...slots[k],missingPolicy:policy});
@@ -8219,52 +8175,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
           </div>
         </div>
         <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const ow=oralWrittenSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"9px"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · شفوي {fmt(ow.oralEarned)}/{fmt(ow.oralFull)} · تحريري {fmt(ow.writtenEarned)}/{fmt(ow.writtenFull)}</div></div><div style={{fontSize:"16px",fontWeight:900,color:gc((ow.total/Math.max(1,ow.oralFull+ow.writtenFull))*100)}}>{fmt(ow.total)} / {fmt(ow.oralFull+ow.writtenFull)}</div></div><div style={{fontSize:"10px",color:ow.missing.length?C.d:C.s,fontWeight:800,marginTop:"6px"}}>{ow.missing.length?ow.missing.slice(0,4).join("، "):"✅ مكتمل حسب الاختيارات الحالية"}</div></div>;})}</div>
-      </div>}
-    </Card>
-
-
-    <Card style={{marginBottom:"12px",border:"1px solid #86efac",background:"linear-gradient(180deg,#ffffff,#f0fdf4)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
-        <div><strong style={{fontSize:"15px",color:C.tx}}>📊 كشف الاستحقاقات قبل نور</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>مراجعة فقط قبل التصدير: أعمال الفترة /40 + الشفوي والتحريري /20 + المجموع /60 مع النواقص.</div></div>
-        <Btn size="sm" color={C.s} onClick={()=>setEntitlementsOpen(!entitlementsOpen)}>{entitlementsOpen?"إخفاء الكشف":"عرض الاستحقاقات"}</Btn>
-      </div>
-      {entitlementsOpen&&<div style={{marginTop:"12px"}}>
-        <div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"8px"}}>الفترة الحالية: {termLabel(term)} · {periodLabel(period)} · الفصل: {classId==="all"?"لم يتم تحديد فصل":((activeClasses.find(c=>String(c.id)===String(classId))||{}).name||classId)}</div>
-        <div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff",maxHeight:"520px"}}>
-          <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"1180px",width:"100%",fontSize:"12px"}}>
-            <thead><tr style={{background:"#064e3b",color:"#fff"}}>
-              <th style={{position:"sticky",left:0,zIndex:2,background:"#064e3b",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
-              <th style={{padding:"10px"}}>ID</th>
-              <th style={{padding:"10px"}}>المشاركة /10</th>
-              <th style={{padding:"10px"}}>الواجبات /10</th>
-              <th style={{padding:"10px"}}>الاختبارات القصيرة /10</th>
-              <th style={{padding:"10px"}}>المشاريع /10</th>
-              <th style={{padding:"10px",background:"#065f46"}}>أعمال الفترة /40</th>
-              <th style={{padding:"10px"}}>الشفوي /10</th>
-              <th style={{padding:"10px"}}>التحريري /10</th>
-              <th style={{padding:"10px",background:"#065f46"}}>الاختبارات /20</th>
-              <th style={{padding:"10px",background:"#052e16"}}>المجموع /60</th>
-              <th style={{padding:"10px",minWidth:"260px"}}>النواقص قبل نور</th>
-              <th style={{padding:"10px"}}>الحالة</th>
-            </tr></thead>
-            <tbody>{visibleStudents.map(st=>{const f40=final40ForStudent(st); const f20=final20ForStudent(st); const total60=f40.total+f20.total; const notes=[...(f40.notes||[]),...(f20.notes||[])]; return <tr key={st.id} style={{background:notes.length?"#fff7ed":"#f0fdf4"}}>
-              <td style={{position:"sticky",left:0,background:notes.length?"#fff7ed":"#f0fdf4",padding:"9px",fontWeight:900,color:C.tx,borderBottom:"1px solid "+C.br}}>{st.name}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,color:C.mu,fontWeight:800}}>{st.studentId||""}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f40.participation*10)}}>{fmt(f40.participation)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f40.homework*10)}}>{fmt(f40.homework)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f40.quizzes*10)}}>{fmt(f40.quizzes)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f40.projects*10)}}>{fmt(f40.projects)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((f40.total/40)*100),background:"#ecfdf5"}}>{fmt(f40.total)} / 40</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f20.oral*10)}}>{fmt(f20.oral)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc(f20.written*10)}}>{fmt(f20.written)}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((f20.total/20)*100),background:"#ecfdf5"}}>{fmt(f20.total)} / 20</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((total60/60)*100),background:"#dcfce7"}}>{fmt(total60)} / 60</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,color:notes.length?C.d:C.s,fontWeight:800,lineHeight:1.5}}>{notes.length?notes.slice(0,8).join("، "):"✅ لا توجد نواقص ظاهرة"}</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br}}>{reviewBadge(notes)}</td>
-            </tr>;})}</tbody>
-          </table>
-        </div>
-        <div style={{marginTop:"8px",fontSize:"11px",fontWeight:800,color:C.mu}}>هذا الكشف للمعاينة فقط. لا يوجد تصدير ولا اعتماد نهائي في هذه النسخة. إذا ظهر طالب باللون الأحمر، راجع النواقص قبل رفع الدرجات إلى نور.</div>
       </div>}
     </Card>
 
