@@ -8035,48 +8035,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     qz.ignored.forEach(x=>arr.push(quizSlotLabel(x.key,x.cfg)+": غير محسوب"));
     return arr;
   }
-
-  function openNoorEntitlementsReport(){
-    try{
-      if(classId==="all"){ alert("اختر فصلًا محددًا أولًا قبل فتح كشف نور."); return; }
-      const rows=classStudents.map(st=>{
-        const p=periodStats(st,"period");
-        const h=homeworkSummary(st,"period");
-        const q=quizSummary(st);
-        const pr=projectSummary(st,"period");
-        const ow=oralWrittenSummary(st);
-        const n40=combinedNeeds(st,"period")||[];
-        const n20=(ow&&ow.missing)||[];
-        const participation=safeNum(p&&p.final,0);
-        const homework=safeNum(h&&h.earned,0);
-        const shortQuiz=safeNum(q&&q.earned,0);
-        const projects=safeNum(pr&&pr.earned,0);
-        const total40=participation+homework+shortQuiz+projects;
-        const oral=safeNum(ow&&ow.oralEarned,0);
-        const written=safeNum(ow&&ow.writtenEarned,0);
-        const total20=oral+written;
-        return {
-          name:st.name||"",
-          studentId:st.studentId||st.id||"",
-          className:(activeClasses.find(c=>String(c.id)===String(classId))||{}).name||classId,
-          participation,homework,shortQuiz,projects,total40,oral,written,total20,total60:total40+total20,
-          notes:n40.concat(n20).filter(Boolean)
-        };
-      });
-      if(window.eduNoorReportOpen){
-        window.eduNoorReportOpen({
-          title:"كشف الاستحقاقات قبل نور",
-          meta:{term:termLabel(term),period:periodLabel(period),className:(activeClasses.find(c=>String(c.id)===String(classId))||{}).name||classId,date:date},
-          rows
-        });
-      }else{ alert("تعذر فتح نافذة الكشف."); }
-    }catch(e){
-      console.error(e);
-      alert("تعذر توليد الكشف. المنصة لم تتأثر. افتح Console لمعرفة السبب.");
-    }
-  }
-
-    const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
+  const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
   const chip=(active,label,onClick,color)=> <button onClick={onClick} style={{padding:"7px 9px",borderRadius:"999px",border:"1px solid "+(active?color:C.br),background:active?color:"#fff",color:active?"#fff":C.mu,fontWeight:900,fontSize:"11px",cursor:"pointer"}}>{label}</button>;
   return <div>
     <Card style={{marginBottom:"12px",background:"linear-gradient(135deg,#0f172a,#1e3a5f)",border:"none",color:"#fff"}}>
@@ -8087,13 +8046,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
     {msg&&<div style={{margin:"0 0 10px",fontSize:"12px",fontWeight:900,color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.d:C.mu)}}>{msg}</div>}
     {classId!=="all"&&<div style={{margin:"0 0 10px",padding:"8px 10px",borderRadius:"10px",background:autosaveMsg.includes("⚠️")?"#fef2f2":(autosaveMsg.includes("🟡")?"#fffbeb":"#ecfdf5"),border:"1px solid "+(autosaveMsg.includes("⚠️")?"#fecaca":(autosaveMsg.includes("🟡")?"#fde68a":"#bbf7d0")),fontSize:"12px",fontWeight:900,color:autosaveMsg.includes("⚠️")?"#991b1b":(autosaveMsg.includes("🟡")?"#92400e":"#166534")}}>{autosaveMsg}</div>}
-    <Card style={{marginBottom:"12px",border:"1px solid #bae6fd",background:"linear-gradient(180deg,#ffffff,#f0f9ff)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
-        <div><strong style={{fontSize:"15px",color:C.tx}}>📊 كشف الاستحقاقات قبل نور</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>يفتح الكشف في نافذة مستقلة: 40 + 20 + 60 مع النواقص المحددة. لا يعمل تلقائيًا ولا يلمس Reading Theory.</div></div>
-        <Btn size="sm" color={C.p} onClick={openNoorEntitlementsReport}>📊 فتح كشف نور</Btn>
-      </div>
-    </Card>
-
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:"8px",alignItems:"end"}}>
         <div><Label text="الفصل الدراسي"/><select value={term} onChange={e=>setTerm(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option value="term1">الفصل الأول</option><option value="term2">الفصل الثاني</option><option value="term3">الفصل الثالث</option></select></div>
@@ -10123,41 +10075,6 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   </div>;
 }
 
-
-
-// SAFE240_READING_PERFORMANCE_BOUNDARY_20260716
-class EduSafeSectionBoundary extends React.Component{
-  constructor(props){super(props);this.state={hasError:false,error:null};}
-  static getDerivedStateFromError(error){return {hasError:true,error:error};}
-  componentDidCatch(error,info){try{console.error('EduQuiz section error:',error,info);}catch(e){}}
-  render(){
-    if(this.state.hasError){return this.props.fallback||<Card><strong>حدث خطأ في هذا القسم</strong><p style={{fontSize:'12px',color:C.mu}}>بقية المنصة تعمل. افتح Console لمعرفة السبب.</p></Card>;}
-    return this.props.children;
-  }
-}
-function ReadingPerformanceSafeFallback({data,myStudents}){
-  function readLocal(){let out=[];try{['rp_attempt_records_v11','rp_attempt_records_v10','rp_attempt_records_v9','rp_attempt_records_v8','rp_attempt_records_v7','rp_student_attempts'].forEach(k=>{try{const a=JSON.parse(localStorage.getItem(k)||'[]'); if(Array.isArray(a)) out=out.concat(a);}catch(e){}});}catch(e){} return out;}
-  function isDeletedSafe(r){return !!(r&&(r.deleted===true||String(r.status||'').toLowerCase()==='deleted'));}
-  function isAcceptedSafe(r){const st=String(r&&r.status||'').toLowerCase(); const ts=Number(r&&r.teacherScore); return !isDeletedSafe(r)&&(st==='accepted'||st==='approved'||(Number.isFinite(ts)&&ts>0));}
-  function scoreSafe(r){const vals=[r&&r.teacherScore,r&&r.finalScore,r&&r.aiScore,r&&r.accuracy,r&&r.analysis&&r.analysis.accuracy]; for(const v of vals){const n=Number(v); if(Number.isFinite(n)&&n>0)return Math.round(Math.max(0,Math.min(100,n)));} return null;}
-  const all=[...((data&&data.readingSubmissions)||[]),...readLocal()].filter(r=>r&&!isDeletedSafe(r));
-  const accepted=all.filter(isAcceptedSafe);
-  const by={}; accepted.forEach(r=>{const id=String(r.studentId||r.studentNumber||r.id||r.name||'').trim()||String(Math.random()); const name=String(r.studentName||r.name||'Student'); if(!by[id])by[id]={id,name,count:0,scores:[]}; by[id].count++; const sc=scoreSafe(r); if(sc!==null)by[id].scores.push(sc);});
-  const rows=Object.values(by).sort((a,b)=>a.name.localeCompare(b.name));
-  const avg=arr=>arr.length?Math.round(arr.reduce((x,y)=>x+y,0)/arr.length):null;
-  return <div>
-    <Card style={{marginBottom:'11px',background:'#fff7ed',border:'1px solid #fed7aa'}}>
-      <strong style={{fontSize:'15px',color:'#9a3412'}}>📊 Reading Performance - Safe View</strong>
-      <p style={{fontSize:'12px',color:'#9a3412',margin:'6px 0 0'}}>تم منع الشاشة البيضاء. هذا عرض آمن مؤقت للنتائج المقبولة حتى لا يتعطل القسم.</p>
-    </Card>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px',marginBottom:'11px'}}>
-      <Stat icon='✅' label='Accepted' value={accepted.length} color={C.s}/>
-      <Stat icon='👥' label='Students' value={rows.length} color={C.p}/>
-    </div>
-    <Card><strong style={{fontSize:'13px',display:'block',marginBottom:'8px'}}>👤 Student Performance</strong>{rows.length===0?<p style={{fontSize:'12px',color:C.mu}}>No accepted Reading Progress results yet.</p>:rows.map(r=>{const av=avg(r.scores);return <div key={r.id} style={{border:'1px solid '+C.br,borderRadius:'12px',padding:'10px',marginBottom:'8px',background:'#fff'}}><div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}><strong>{r.name}</strong><b style={{color:av!==null?gc(av):C.mu}}>{av!==null?av+'%':'—'}</b></div><div style={{fontSize:'11px',color:C.mu,marginTop:'5px'}}>Accepted attempts: {r.count}</div></div>})}</Card>
-  </div>;
-}
-
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
@@ -11071,7 +10988,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
-        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
+        {tab==="readingReport" && <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="cleanup" && <YearEndCleanupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
@@ -14209,39 +14126,6 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
   var tries=0;
   var timer=setInterval(function(){ apply(); if(++tries>40) clearInterval(timer); }, 500);
   document.addEventListener('click', function(){ setTimeout(apply, 80); }, true);
-})();
-</script>
-
-
-<script>
-(function(){
-  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
-  function num(v){var n=Number(v); return Number.isFinite(n)?(Math.round(n*100)/100).toString():'0';}
-  window.eduNoorReportOpen=function(payload){
-    try{
-      payload=payload||{}; var rows=Array.isArray(payload.rows)?payload.rows:[]; var meta=payload.meta||{};
-      var w=window.open('', '_blank');
-      if(!w){ alert('اسمح بفتح النوافذ المنبثقة حتى يظهر كشف نور.'); return; }
-      var bodyRows=rows.map(function(r,i){
-        var notes=Array.isArray(r.notes)?r.notes.filter(Boolean):[];
-        var status=notes.length?'⚠️ نواقص محددة':'✅ مكتمل';
-        return '<tr>'+
-          '<td>'+(i+1)+'</td><td>'+esc(r.studentId)+'</td><td class="name">'+esc(r.name)+'</td><td>'+esc(r.className)+'</td>'+ 
-          '<td>'+num(r.participation)+'</td><td>'+num(r.homework)+'</td><td>'+num(r.shortQuiz)+'</td><td>'+num(r.projects)+'</td><td class="total">'+num(r.total40)+'</td>'+ 
-          '<td>'+num(r.oral)+'</td><td>'+num(r.written)+'</td><td class="total">'+num(r.total20)+'</td><td class="grand">'+num(r.total60)+'</td>'+ 
-          '<td class="status '+(notes.length?'warn':'ok')+'">'+status+'</td><td class="notes">'+esc(notes.join(' | '))+'</td></tr>';
-      }).join('');
-      var html='<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>كشف الاستحقاقات قبل نور</title><style>'+ 
-        'body{font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;background:#f8fafc;color:#0f172a;margin:18px}'+
-        '.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}.card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(15,23,42,.08)}'+
-        'h1{font-size:22px;margin:0 0 6px}.muted{color:#64748b;font-size:12px;font-weight:700}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:0;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer;background:#2563eb;color:white}.print{background:#16a34a}.close{background:#64748b}'+
-        'table{border-collapse:separate;border-spacing:0;width:100%;min-width:1200px;background:white;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden}th,td{border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:8px 9px;font-size:12px;text-align:center;vertical-align:top}th{background:#0f172a;color:white;position:sticky;top:0;z-index:2}.name{text-align:right;font-weight:900}.total{font-weight:900;color:#2563eb}.grand{font-weight:900;color:#7c3aed}.ok{color:#166534;background:#ecfdf5}.warn{color:#92400e;background:#fffbeb}.notes{text-align:right;min-width:260px;color:#475569}.wrap{overflow:auto;max-height:72vh;border-radius:14px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.summary div{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:10px;font-weight:900}.ltr{direction:ltr;display:inline-block}@media print{button,.actions{display:none}.wrap{max-height:none;overflow:visible}body{background:white;margin:8px}th{position:static}}'+
-        '</style></head><body><div class="top"><div><h1>📊 كشف الاستحقاقات قبل نور</h1><div class="muted">'+esc(meta.term||'')+' · '+esc(meta.period||'')+' · '+esc(meta.className||'')+' · التاريخ: <span class="ltr">'+esc(meta.date||'')+'</span></div></div><div class="actions"><button class="print" onclick="window.print()">🖨️ طباعة / PDF</button><button onclick="location.reload()">🔄 تحديث النافذة</button><button class="close" onclick="window.close()">إغلاق</button></div></div>'+ 
-        '<div class="summary"><div>عدد الطلاب: '+rows.length+'</div><div>مكتمل: '+rows.filter(function(r){return !(r.notes||[]).length}).length+'</div><div>لديهم نواقص محددة: '+rows.filter(function(r){return (r.notes||[]).length}).length+'</div></div>'+ 
-        '<div class="wrap"><table><thead><tr><th>#</th><th>ID</th><th>الطالب</th><th>الفصل</th><th>المشاركة /10</th><th>الواجبات /10</th><th>الاختبارات القصيرة /10</th><th>المشاريع /10</th><th>أعمال الفترة /40</th><th>الشفوي /10</th><th>التحريري /10</th><th>الاختبارات /20</th><th>الإجمالي /60</th><th>الحالة</th><th>النواقص المحددة</th></tr></thead><tbody>'+bodyRows+'</tbody></table></div></body></html>';
-      w.document.open(); w.document.write(html); w.document.close();
-    }catch(e){ console.error(e); alert('تعذر فتح كشف نور.'); }
-  };
 })();
 </script>
 
