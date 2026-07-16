@@ -10123,6 +10123,41 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   </div>;
 }
 
+
+
+// SAFE240_READING_PERFORMANCE_BOUNDARY_20260716
+class EduSafeSectionBoundary extends React.Component{
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return {hasError:true,error:error};}
+  componentDidCatch(error,info){try{console.error('EduQuiz section error:',error,info);}catch(e){}}
+  render(){
+    if(this.state.hasError){return this.props.fallback||<Card><strong>حدث خطأ في هذا القسم</strong><p style={{fontSize:'12px',color:C.mu}}>بقية المنصة تعمل. افتح Console لمعرفة السبب.</p></Card>;}
+    return this.props.children;
+  }
+}
+function ReadingPerformanceSafeFallback({data,myStudents}){
+  function readLocal(){let out=[];try{['rp_attempt_records_v11','rp_attempt_records_v10','rp_attempt_records_v9','rp_attempt_records_v8','rp_attempt_records_v7','rp_student_attempts'].forEach(k=>{try{const a=JSON.parse(localStorage.getItem(k)||'[]'); if(Array.isArray(a)) out=out.concat(a);}catch(e){}});}catch(e){} return out;}
+  function isDeletedSafe(r){return !!(r&&(r.deleted===true||String(r.status||'').toLowerCase()==='deleted'));}
+  function isAcceptedSafe(r){const st=String(r&&r.status||'').toLowerCase(); const ts=Number(r&&r.teacherScore); return !isDeletedSafe(r)&&(st==='accepted'||st==='approved'||(Number.isFinite(ts)&&ts>0));}
+  function scoreSafe(r){const vals=[r&&r.teacherScore,r&&r.finalScore,r&&r.aiScore,r&&r.accuracy,r&&r.analysis&&r.analysis.accuracy]; for(const v of vals){const n=Number(v); if(Number.isFinite(n)&&n>0)return Math.round(Math.max(0,Math.min(100,n)));} return null;}
+  const all=[...((data&&data.readingSubmissions)||[]),...readLocal()].filter(r=>r&&!isDeletedSafe(r));
+  const accepted=all.filter(isAcceptedSafe);
+  const by={}; accepted.forEach(r=>{const id=String(r.studentId||r.studentNumber||r.id||r.name||'').trim()||String(Math.random()); const name=String(r.studentName||r.name||'Student'); if(!by[id])by[id]={id,name,count:0,scores:[]}; by[id].count++; const sc=scoreSafe(r); if(sc!==null)by[id].scores.push(sc);});
+  const rows=Object.values(by).sort((a,b)=>a.name.localeCompare(b.name));
+  const avg=arr=>arr.length?Math.round(arr.reduce((x,y)=>x+y,0)/arr.length):null;
+  return <div>
+    <Card style={{marginBottom:'11px',background:'#fff7ed',border:'1px solid #fed7aa'}}>
+      <strong style={{fontSize:'15px',color:'#9a3412'}}>📊 Reading Performance - Safe View</strong>
+      <p style={{fontSize:'12px',color:'#9a3412',margin:'6px 0 0'}}>تم منع الشاشة البيضاء. هذا عرض آمن مؤقت للنتائج المقبولة حتى لا يتعطل القسم.</p>
+    </Card>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px',marginBottom:'11px'}}>
+      <Stat icon='✅' label='Accepted' value={accepted.length} color={C.s}/>
+      <Stat icon='👥' label='Students' value={rows.length} color={C.p}/>
+    </div>
+    <Card><strong style={{fontSize:'13px',display:'block',marginBottom:'8px'}}>👤 Student Performance</strong>{rows.length===0?<p style={{fontSize:'12px',color:C.mu}}>No accepted Reading Progress results yet.</p>:rows.map(r=>{const av=avg(r.scores);return <div key={r.id} style={{border:'1px solid '+C.br,borderRadius:'12px',padding:'10px',marginBottom:'8px',background:'#fff'}}><div style={{display:'flex',justifyContent:'space-between',gap:'8px'}}><strong>{r.name}</strong><b style={{color:av!==null?gc(av):C.mu}}>{av!==null?av+'%':'—'}</b></div><div style={{fontSize:'11px',color:C.mu,marginTop:'5px'}}>Accepted attempts: {r.count}</div></div>})}</Card>
+  </div>;
+}
+
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
@@ -11036,7 +11071,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
-        {tab==="readingReport" && <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
+        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="cleanup" && <YearEndCleanupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
