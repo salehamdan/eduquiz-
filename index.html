@@ -7541,7 +7541,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [selectedProjectId,setSelectedProjectId]=useState("all");
   const [quizzesOpen,setQuizzesOpen]=useState(false);
   const [oralWrittenOpen,setOralWrittenOpen]=useState(false);
-  const [entitlementsOpen,setEntitlementsOpen]=useState(false);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -8036,49 +8035,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     qz.ignored.forEach(x=>arr.push(quizSlotLabel(x.key,x.cfg)+": غير محسوب"));
     return arr;
   }
-  function entitlementRow(st){
-    try{
-    const notes=[];
-    const p=periodStats(st,"period")||{};
-    const h=homeworkSummary(st,"period")||{};
-    const pr=projectSummary(st,"period")||{};
-    const qz=quizSummary(st)||{};
-    const ow=oralWrittenSummary(st)||{};
-    const participation=Math.max(0,Math.min(safeNum(settings.fullScore,10),safeNum(p.final,0)));
-    const homework=Math.max(0,Math.min(safeNum(settings.homeworkFullScore,10),safeNum(h.earned,0)));
-    const shortQuizzes=Math.max(0,Math.min(safeNum(settings.quizFullScore,10),safeNum(qz.earned,0)));
-    const projects=Math.max(0,Math.min(safeNum(settings.projectFullScore,10),safeNum(pr.earned,0)));
-    const forty=participation+homework+shortQuizzes+projects;
-    const oral=Math.max(0,Math.min(safeNum(settings.oralFullScore,10),safeNum(ow.oralEarned,0)));
-    const written=Math.max(0,Math.min(safeNum(settings.writtenFullScore,10),safeNum(ow.writtenEarned,0)));
-    const twenty=oral+written;
-    const total=forty+twenty;
-    if(safeNum(p.totalPart,0)<safeNum(settings.requiredParticipation,8)) notes.push("مشاركات ناقصة: "+safeNum(p.totalPart,0)+"/"+safeNum(settings.requiredParticipation,8));
-    if(safeNum(p.absent,0)>0) notes.push("غياب: "+safeNum(p.absent,0));
-    if(safeNum(p.late,0)>0) notes.push("تأخير: "+safeNum(p.late,0));
-    (h.missing||[]).forEach(t=>notes.push((t.title||"واجب")+": لم يسلم"));
-    (h.partial||[]).forEach(t=>notes.push((t.title||"واجب")+": ناقص "+fmt(homeworkScoreNum(t,st))+"/"+fmt(homeworkWeightNum(t))));
-    if((followupProjects||[]).length===0 && safeNum(settings.projectFullScore,10)>0) notes.push("المشاريع: لا توجد مشاريع مطابقة لهذه الفترة");
-    (pr.notSubmitted||[]).forEach(x=>notes.push((x.project&&x.project.title?x.project.title:"مشروع")+": لم يسلم"));
-    (pr.pending||[]).forEach(x=>notes.push((x.project&&x.project.title?x.project.title:"مشروع")+": ينتظر اعتماد المعلم"));
-    (pr.returned||[]).forEach(x=>notes.push((x.project&&x.project.title?x.project.title:"مشروع")+": رجع للتعديل"));
-    (qz.rows||[]).forEach(r=>{ if(r.status==="not_selected"&&r.cfg&&r.cfg.active!==false) notes.push(quizSlotLabel(r.key,r.cfg)+": لم يتم اختيار اختبار"); });
-    (qz.missing||[]).forEach(x=>notes.push(quizSlotLabel(x.key,x.cfg)+": لم يحل - يحتاج قرار"));
-    (qz.zero||[]).forEach(x=>notes.push(quizSlotLabel(x.key,x.cfg)+": لم يحل - حُسب صفر"));
-    (qz.ignored||[]).forEach(x=>notes.push(quizSlotLabel(x.key,x.cfg)+": غير محسوب"));
-    (qz.fallback||[]).forEach(x=>notes.push(quizSlotLabel(x.key,x.cfg)+": درجة بديلة"));
-    const listenActive=Object.values(oralListeningSlots()).filter(x=>x&&x.active!==false&&x.quizId).length;
-    if(safeNum(settings.oralListeningWeight,8)>0 && !listenActive) notes.push("الشفوي: لم يتم اختيار اختبار استماع");
-    const writtenActive=Object.values(writtenTestSlots()).filter(x=>x&&x.active!==false&&x.quizId).length;
-    if(safeNum(settings.writtenFullScore,10)>0 && !writtenActive) notes.push("التحريري: لم يتم اختيار اختبار");
-    (ow.missing||[]).forEach(x=>notes.push(x));
-    const unique=[...new Set(notes.filter(Boolean))];
-    const blocking=unique.filter(x=>x.includes("يحتاج قرار")||x.includes("لم يتم اختيار")||x.includes("ينتظر اعتماد")||x.includes("رجع للتعديل")||x.includes("لا توجد")||x.includes("لا توجد نتيجة"));
-    return {st,participation,homework,shortQuizzes,projects,forty,oral,written,twenty,total,notes:unique,blocking};
-    }catch(e){
-      return {st,participation:0,homework:0,shortQuizzes:0,projects:0,forty:0,oral:0,written:0,twenty:0,total:0,notes:["تعذر حساب الاستحقاق: "+(e&&e.message?e.message:"بيانات غير متوافقة")],blocking:["تعذر الحساب"]};
-    }
-  }
   const stat=(label,val,color,icon)=><div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",padding:"10px",boxShadow:"0 4px 12px rgba(15,23,42,.05)"}}><div style={{fontSize:"18px"}}>{icon}</div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{val}</div><div style={{fontSize:"10px",color:C.mu,fontWeight:800}}>{label}</div></div>;
   const chip=(active,label,onClick,color)=> <button onClick={onClick} style={{padding:"7px 9px",borderRadius:"999px",border:"1px solid "+(active?color:C.br),background:active?color:"#fff",color:active?"#fff":C.mu,fontWeight:900,fontSize:"11px",cursor:"pointer"}}>{label}</button>;
   return <div>
@@ -8138,54 +8094,6 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       </div>}
       {!gradeSheetOpen&&<div style={{padding:"12px",border:"1px dashed "+C.br,borderRadius:"12px",background:"#fff",fontSize:"12px",fontWeight:900,color:C.mu,textAlign:"center"}}>الكشف مخفي الآن. اضغط 👁️ إظهار الكشف لعرض الجدول.</div>}
       <div style={{fontSize:"11px",color:C.mu,fontWeight:800,marginTop:"8px"}}>هذا الكشف للعرض فقط ولا يغيّر السجلات. التصدير إلى Excel ونور سيكون في مرحلة لاحقة.</div>
-    </Card>
-
-    <Card style={{marginBottom:"12px",border:"1px solid #fbbf24",background:"linear-gradient(180deg,#ffffff,#fffbeb)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
-        <div><strong style={{fontSize:"15px",color:C.tx}}>📊 كشف الاستحقاقات قبل نور</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>مراجعة شاملة: أعمال الفترة /40 + الشفوي والتحريري /20 + الإجمالي /60. لا يعمل إلا عند فتحه.</div></div>
-        <Btn size="sm" color={C.w} onClick={()=>setEntitlementsOpen(!entitlementsOpen)}>{entitlementsOpen?"إخفاء الكشف":"عرض كشف الاستحقاقات"}</Btn>
-      </div>
-      {entitlementsOpen&&<div style={{marginTop:"12px"}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"8px",marginBottom:"10px"}}>
-          {stat("أعمال الفترة", "40", C.p, "📘")}
-          {stat("الشفوي والتحريري", "20", C.pu, "🎙️")}
-          {stat("المجموع للمراجعة", "60", C.s, "📊")}
-          {stat("الطلاب", visibleStudents.length, C.tx, "👥")}
-        </div>
-        <div style={{overflowX:"auto",border:"1px solid "+C.br,borderRadius:"12px",background:"#fff",maxHeight:"520px"}}>
-          <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"1250px",width:"100%",fontSize:"12px"}}>
-            <thead><tr style={{background:"#78350f",color:"#fff"}}>
-              <th style={{position:"sticky",left:0,zIndex:2,background:"#78350f",padding:"10px",textAlign:"right",minWidth:"210px"}}>الطالب</th>
-              <th style={{padding:"10px",textAlign:"center"}}>ID</th>
-              <th style={{padding:"10px",textAlign:"center"}}>المشاركة /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>الواجبات /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>الاختبارات القصيرة /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>المشاريع /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>أعمال الفترة /40</th>
-              <th style={{padding:"10px",textAlign:"center"}}>الشفوي /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>التحريري /10</th>
-              <th style={{padding:"10px",textAlign:"center"}}>الاختبارات /20</th>
-              <th style={{padding:"10px",textAlign:"center"}}>المجموع /60</th>
-              <th style={{padding:"10px",textAlign:"center",minWidth:"300px"}}>النواقص المحددة قبل نور</th>
-            </tr></thead>
-            <tbody>{visibleStudents.map((st,i)=>{const r=entitlementRow(st); const ok=!r.notes.length; return <tr key={st.id} style={{background:i%2?"#f8fafc":"#fff"}}>
-              <td style={{position:"sticky",left:0,zIndex:1,background:i%2?"#f8fafc":"#fff",padding:"9px",fontWeight:900,color:C.tx,borderBottom:"1px solid "+C.br}}>{st.name}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,color:C.mu,fontWeight:800}}>{st.studentId||"—"}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.participation/Math.max(1,safeNum(settings.fullScore,10)))*100)}}>{fmt(r.participation)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.homework/Math.max(1,safeNum(settings.homeworkFullScore,10)))*100)}}>{fmt(r.homework)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.shortQuizzes/Math.max(1,safeNum(settings.quizFullScore,10)))*100)}}>{fmt(r.shortQuizzes)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.projects/Math.max(1,safeNum(settings.projectFullScore,10)))*100)}}>{fmt(r.projects)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.forty/40)*100)}}>{fmt(r.forty)} / 40</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.oral/Math.max(1,safeNum(settings.oralFullScore,10)))*100)}}>{fmt(r.oral)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.written/Math.max(1,safeNum(settings.writtenFullScore,10)))*100)}}>{fmt(r.written)}</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.twenty/20)*100)}}>{fmt(r.twenty)} / 20</td>
-              <td style={{padding:"9px",textAlign:"center",borderBottom:"1px solid "+C.br,fontWeight:900,color:gc((r.total/60)*100)}}>{fmt(r.total)} / 60</td>
-              <td style={{padding:"9px",borderBottom:"1px solid "+C.br,fontSize:"10px",fontWeight:800,color:ok?C.s:(r.blocking.length?C.d:C.w)}}>{ok?"✅ مكتمل":r.notes.slice(0,8).join("، ")}</td>
-            </tr>;})}</tbody>
-          </table>
-        </div>
-        <div style={{fontSize:"11px",fontWeight:800,color:C.mu,marginTop:"8px"}}>هذا الكشف للمعاينة فقط قبل نور. لا يصدّر ولا يغيّر أي درجة. النواقص تظهر باسمها المحدد بدل رسالة عامة.</div>
-      </div>}
     </Card>
 
     <Card style={{marginBottom:"12px",border:"1px solid #bbf7d0",background:"linear-gradient(180deg,#ffffff,#f0fdf4)"}}>
@@ -13230,7 +13138,7 @@ document.addEventListener("click", function(e){
   function searchText(v){ return String(v||"").trim().toLowerCase(); }
   function includesText(v,q){ return !q || String(v||"").toLowerCase().includes(q); }
   function rpNorm(v){ return String(v||"").trim().toLowerCase().replace(/[أإآ]/g,"ا").replace(/ة/g,"ه").replace(/ى/g,"ي").replace(/\s+/g," "); }
-  function rpEsc(v){ return String(v==null?"":v).replace(/[&<>"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]||ch;}); }
+  function rpEsc(v){ return String(v==null?"":v).replace(/[&<>\"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;","'":"&#39;"}[ch]||ch;}); }
   // RP157: do not revive old/manual students in RP.
   // The RP drawer must use the current real roster only; old أحمد/حسن restore rows are no longer injected.
   const RP_MANUAL_STUDENTS = [];
