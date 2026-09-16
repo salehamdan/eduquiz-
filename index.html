@@ -10873,10 +10873,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setTimeout(()=>setEditStu(null),700);
   }
   async function createCls(){
-    if(!newCls.name.trim())return;
-    const rawName=newCls.name.trim(), rawGrade=newCls.grade.trim();
-    const canon=canonicalClassId(rawName||rawGrade);
-    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني، ثالث رابع، ثالث سادس."); return; }
+    const rawName=(newCls.name||"").trim(), rawGrade=(newCls.grade||"").trim();
+    if(!rawName && !rawGrade){ alert("اكتب اسم الفصل أو رقمه: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6."); return; }
+    const nameCanon=canonicalClassId(rawName);
+    const gradeCanon=canonicalClassId(rawGrade);
+    const canon=EQ_ACTUAL_CLASS_IDS.includes(nameCanon) ? nameCanon : (EQ_ACTUAL_CLASS_IDS.includes(gradeCanon) ? gradeCanon : canonicalClassId(rawName||rawGrade));
+    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6."); return; }
     const official=officialClassRow(canon);
     const id=official.id;
     const existingActive=(myClasses||[]).find(function(c){ return canonicalClassId(c&& (c.id||c.classId||c.grade||c.name))===id; });
@@ -11726,8 +11728,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         <Btn onClick={postAnn} style={{width:"100%"}}>📣 Post</Btn>
       </Modal>
       <Modal open={clsModal} onClose={()=>setClsModal(false)} title="Add New Class">
-        <TxtInput label="Class Name *" value={newCls.name} onChange={v=>setNewCls(c=>({...c,name:v}))} placeholder="e.g. Class 5A"/>
-        <TxtInput label="Grade" value={newCls.grade} onChange={v=>setNewCls(c=>({...c,grade:v}))} placeholder="e.g. Grade 5"/>
+        <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"8px",padding:"8px",marginBottom:"8px",fontFamily:F}}>الفصول الرسمية المتاحة للإضافة فقط: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6.</div>
+        <TxtInput label="Class Name or Code *" value={newCls.name} onChange={v=>setNewCls(c=>({...c,name:v}))} placeholder="مثال: ثالث ثاني أو 3-2"/>
+        <TxtInput label="Grade / Code" value={newCls.grade} onChange={v=>setNewCls(c=>({...c,grade:v}))} placeholder="اختياري: 3-2 أو 3-4 أو 3-6"/>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",margin:"0 0 9px"}}>
+          {[officialClassRow("class_3_2"),officialClassRow("class_3_4"),officialClassRow("class_3_6")].map(c=><Btn key={c.id} size="sm" color={C.pu} onClick={()=>setNewCls({name:c.name,grade:c.grade})}>{c.name}</Btn>)}
+        </div>
         <Btn onClick={createCls} style={{width:"100%",marginTop:"4px"}}>Create Class</Btn>
       </Modal>
       <Modal open={!!addStuModal} onClose={()=>setAddStuModal(null)} title={"Add Student — "+(addStuModal?.name||"")}>
