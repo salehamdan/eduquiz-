@@ -7602,6 +7602,14 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   function rowId(stId,day=date){return ["df",user&&user.id?user.id:"teacher",term,period,classId,day,stId].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
   function shiftDate(base,delta){const d=new Date((base||isoToday())+"T12:00:00"); d.setDate(d.getDate()+delta); const z=n=>String(n).padStart(2,"0"); return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate());}
   function arDayName(day){try{return new Intl.DateTimeFormat("ar-SA",{weekday:"short",day:"numeric",month:"short"}).format(new Date(day+"T12:00:00"));}catch(e){return day;}}
+  function isFollowupWeekend(day){
+    try{const wd=new Date(day+"T12:00:00").getDay(); return wd===5 || wd===6;}catch(e){return false;}
+  }
+  function shiftSchoolDate(base,delta){
+    let d=base||isoToday(); let step=delta<0?-1:1; let left=Math.abs(delta)||0;
+    while(left>0){ d=shiftDate(d,step); if(!isFollowupWeekend(d)) left--; }
+    return d;
+  }
   function dayEntriesCount(day){
     const seen={};
     (periodRows||[]).forEach(r=>{
@@ -7618,9 +7626,13 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   function recentFollowupDays(){
     const map={};
-    [0,-1,-2,-3,-4,-5,-6].forEach(x=>{const d=shiftDate(isoToday(),x); map[d]=true;});
-    (periodRows||[]).forEach(r=>{if(r&&r.date)map[String(r.date)]=true;});
-    return Object.keys(map).sort((a,b)=>String(b).localeCompare(String(a))).slice(0,14);
+    let d=isoToday(); let added=0; let guard=0;
+    while(added<10 && guard<35){
+      if(!isFollowupWeekend(d)){ map[d]=true; added++; }
+      d=shiftDate(d,-1); guard++;
+    }
+    (periodRows||[]).forEach(r=>{const rd=String((r&&r.date)||""); if(rd && !isFollowupWeekend(rd))map[rd]=true;});
+    return Object.keys(map).filter(d=>!isFollowupWeekend(d)).sort((a,b)=>String(b).localeCompare(String(a))).slice(0,14);
   }
   function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,dailyHomework:"",noteTags:[],note:"",manualScore:""};}
   const behaviorNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال","خروج بدون إذن","مشاركة ممتازة","تحسن ملحوظ","تعاون مع الزملاء"];
@@ -8176,8 +8188,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"8px"}}>
         <div><strong style={{fontSize:"14px",color:C.tx}}>📅 أيام المتابعة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>اختر اليوم لمراجعة الحفظ. الرقم يعني عدد الطلاب الذين لهم سجل في ذلك اليوم.</div></div>
         <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-          <Btn size="sm" color={C.p} onClick={()=>setDate(isoToday())}>اليوم</Btn>
-          <Btn size="sm" color={C.mu} onClick={()=>setDate(shiftDate(isoToday(),-1))}>أمس</Btn>
+          <Btn size="sm" color={C.p} onClick={()=>setDate(isFollowupWeekend(isoToday())?shiftSchoolDate(isoToday(),-1):isoToday())}>اليوم</Btn>
+          <Btn size="sm" color={C.mu} onClick={()=>setDate(shiftSchoolDate(date||isoToday(),-1))}>اليوم الدراسي السابق</Btn>
         </div>
       </div>
       <div style={{display:"flex",gap:"7px",overflowX:"auto",paddingBottom:"3px"}}>
