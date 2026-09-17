@@ -8840,9 +8840,20 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
 
   async function saveAccess(newStatus,newClasses,newStudents){
     const s=newStatus!==undefined?newStatus:status;
-    const c=newClasses!==undefined?newClasses:selClasses;
-    const st=newStudents!==undefined?newStudents:selStudents;
-    const payload={id:"rt_access",status:s,classIds:(c||[]).map(canonicalClassId).filter(Boolean),studentIds:(st||[]).map(String).filter(Boolean),updatedAt:new Date().toISOString()};
+    const c=(newClasses!==undefined?newClasses:selClasses)||[];
+    const st=(newStudents!==undefined?newStudents:selStudents)||[];
+    const cleanClassIds=c.map(canonicalClassId).filter(Boolean);
+    const classSet=new Set(cleanClassIds);
+    const liveById=new Map((myStudents||[]).map(x=>[String(x.id),x]));
+    const cleanStudentIds=st.map(String).filter(Boolean).filter(sid=>{
+      const stu=liveById.get(String(sid));
+      if(!stu) return false;
+      if(classSet.size===0) return true;
+      const sc=canonicalClassId(stu.classId||stu.className||stu.class||"");
+      return classSet.has(sc);
+    });
+    const payload={id:"rt_access",status:s,classIds:cleanClassIds,studentIds:cleanStudentIds,updatedAt:new Date().toISOString()};
+    setSelStudents(cleanStudentIds);
     await fsSet("appSettings","rt_access",payload);
     rtLastSyncRef.current=JSON.stringify({status:payload.status,classIds:[...payload.classIds].sort(),studentIds:[...payload.studentIds].sort(),updatedAt:payload.updatedAt});
     setRtDirty(false);
@@ -8854,8 +8865,18 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   function toggleClass(id){
     const cid=canonicalClassId(id);
     const n=selClasses.map(canonicalClassId).includes(cid)?selClasses.filter(x=>canonicalClassId(x)!==cid):[...selClasses,cid];
+    const nSet=new Set(n.map(canonicalClassId).filter(Boolean));
     setRtDirty(true);
     setSelClasses(n);
+    setSelStudents(prev=>{
+      const liveById=new Map((myStudents||[]).map(x=>[String(x.id),x]));
+      return (prev||[]).map(String).filter(sid=>{
+        const stu=liveById.get(sid);
+        if(!stu) return false;
+        if(nSet.size===0) return true;
+        return nSet.has(canonicalClassId(stu.classId||stu.className||stu.class||""));
+      });
+    });
   }
   function toggleStudent(id){
     const sid=String(id);
@@ -8881,7 +8902,19 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const rows = Object.values(byStudent).sort((a,b)=>(a.st&&a.st.name||"").localeCompare(b.st&&b.st.name||""));
 
   const isOpen = status==="open";
-  const filteredStudents = myStudents.filter(s=>!stSearch.trim()||s.name.includes(stSearch.trim())||String(s.studentId||"").includes(stSearch.trim()));
+  const liveStudentIdSet = new Set((myStudents||[]).map(s=>String(s.id)));
+  const selectedClassSet = new Set((selClasses||[]).map(canonicalClassId).filter(Boolean));
+  const activeSelStudents = (selStudents||[]).map(String).filter(sid=>{
+    if(!liveStudentIdSet.has(sid)) return false;
+    if(selectedClassSet.size===0) return true;
+    const st=(myStudents||[]).find(x=>String(x.id)===sid);
+    return st && selectedClassSet.has(canonicalClassId(st.classId||st.className||st.class||""));
+  });
+  const filteredStudents = myStudents.filter(s=>{
+    if(selectedClassSet.size>0 && !selectedClassSet.has(canonicalClassId(s.classId||s.className||s.class||""))) return false;
+    const q=stSearch.trim();
+    return !q||s.name.includes(q)||String(s.studentId||"").includes(q);
+  });
   const inp={width:"100%",padding:"9px 11px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",boxSizing:"border-box",fontFamily:F};
 
   return <div>
@@ -8926,10 +8959,10 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
 
       {/* تحديد طلاب بعينهم */}
       <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>
-        👤 Specific Students {selStudents.length>0&&<span style={{background:C.p,color:"#fff",borderRadius:"999px",padding:"1px 8px",fontSize:"10px",marginLeft:"5px"}}>{selStudents.length}</span>}
+        👤 Specific Students {activeSelStudents.length>0&&<span style={{background:C.p,color:"#fff",borderRadius:"999px",padding:"1px 8px",fontSize:"10px",marginLeft:"5px"}}>{activeSelStudents.length}</span>}
       </div>
-      {selStudents.length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginBottom:"7px"}}>
-        {selStudents.map(sid=>{
+      {activeSelStudents.length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginBottom:"7px"}}>
+        {activeSelStudents.map(sid=>{
           const st=myStudents.find(s=>s.id===sid);
           return st?<span key={sid} style={{fontSize:"10px",background:"#eff6ff",color:C.p,padding:"3px 8px",borderRadius:"999px",fontWeight:"700",fontFamily:F,display:"flex",alignItems:"center",gap:"4px"}}>
             {st.name}
@@ -8944,7 +8977,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         <input value={stSearch} onChange={e=>setStSearch(e.target.value)} placeholder="Search student…" style={{...inp,marginBottom:"8px"}}/>
         <div style={{maxHeight:"200px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"4px"}}>
           {filteredStudents.map(s=>{
-            const on=selStudents.map(String).includes(String(s.id));
+            const on=activeSelStudents.map(String).includes(String(s.id));
             const cls=data.classes.find(c=>c.id===s.classId);
             return <button key={s.id} onClick={()=>toggleStudent(s.id)}
               style={{display:"flex",alignItems:"center",gap:"8px",padding:"7px 10px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",cursor:"pointer",textAlign:"left",fontFamily:F}}>
