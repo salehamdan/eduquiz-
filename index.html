@@ -7634,10 +7634,16 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     (periodRows||[]).forEach(r=>{const rd=String((r&&r.date)||""); if(rd && !isFollowupWeekend(rd))map[rd]=true;});
     return Object.keys(map).filter(d=>!isFollowupWeekend(d)).sort((a,b)=>String(b).localeCompare(String(a))).slice(0,14);
   }
-  function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,dailyHomework:"",noteTags:[],note:"",manualScore:""};}
-  const behaviorNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال","خروج بدون إذن","مشاركة ممتازة","تحسن ملحوظ","تعاون مع الزملاء"];
-  function noteTagsOf(r){return Array.isArray(r&&r.noteTags)?r.noteTags:[];}
-  function toggleNoteTag(sid,tag){const r=getRec(sid); const arr=noteTagsOf(r); const exists=arr.includes(tag); setRec(sid,{noteTags:exists?arr.filter(x=>x!==tag):[...arr,tag]});}
+  function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,dailyHomework:"",noteTags:[],note:"",noteTone:"negative",manualScore:""};}
+  const positiveNoteOptions=["مشاركة ممتازة","تحسن ملحوظ","تعاون مع الزملاء","حل الواجب بإتقان","إجابة مميزة","مبادرة داخل الدرس","مساعدة زميل"];
+  const negativeNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام بقواعد الصف","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال","خروج بدون إذن","الكلام أثناء الدرس","لم يجب عن سؤال الدرس السابق"];
+  const behaviorNoteOptions=[...negativeNoteOptions,...positiveNoteOptions];
+  function normalizeNoteTag(tag){const t=String(tag||"").trim(); if(t==="عدم الالتزام")return "عدم الالتزام بقواعد الصف"; if(t==="عدم الإجابة على سؤال المعلم"||t==="عدم الإجابة على سؤال المعلم في الدرس السابق")return "لم يجب عن سؤال الدرس السابق"; return t;}
+  function noteTagTone(tag){const t=normalizeNoteTag(tag); if(positiveNoteOptions.includes(t))return "positive"; if(negativeNoteOptions.includes(t))return "negative"; return "negative";}
+  function noteToneColor(tone){return tone==="positive"?C.s:C.d;}
+  function noteToneLabel(tone){return tone==="positive"?"إيجابية":"سلبية";}
+  function noteTagsOf(r){return Array.from(new Set((Array.isArray(r&&r.noteTags)?r.noteTags:[]).map(normalizeNoteTag).filter(Boolean)));}
+  function toggleNoteTag(sid,tag){const r=getRec(sid); const arr=noteTagsOf(r); const clean=normalizeNoteTag(tag); const exists=arr.includes(clean); setRec(sid,{noteTags:exists?arr.filter(x=>x!==clean):[...arr,clean]});}
   function getRec(sid){return records[sid]||blank();}
   function setRec(sid,patch){setRecords(prev=>({...prev,[sid]:{...blank(),...(prev[sid]||{}),...patch}}));}
 
@@ -7695,7 +7701,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
-      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
+      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",noteTone:r.noteTone||"negative",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
       const init={}; classStudents.forEach(s=>{init[s.id]={...blank(),...(todays[s.id]||todays[s.studentId]||{})};});
       autosaveSuppressRef.current=true;
       let nextRecords=init;
@@ -7748,7 +7754,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setAutosaveMsg(autoMode?"⏳ جاري الحفظ التلقائي...":"⏳ جاري الحفظ...");
     try{
       const savedRows=classStudents.map(st=>{
-        const r=getRec(st.id); return {id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
+        const r=getRec(st.id); return {id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",noteTone:r.noteTone||"negative",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
       });
       await Promise.all(savedRows.map(row=>fsSet("dailyFollowup",row.id,row)));
       setPeriodRows(prev=>{const map={}; (prev||[]).forEach(r=>{map[String(r.id||rowId(r.studentId,r.date))]=r;}); savedRows.forEach(r=>{map[String(r.id)]=r;}); return Object.values(map);});
@@ -8222,7 +8228,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
     {classId!=="all"&&<Card style={{marginBottom:"12px",border:"1px solid #d9f99d",background:"linear-gradient(180deg,#ffffff,#f7fee7)"}}>
       <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>⚡ سجل سريع للحصة</div>
-      <div style={{fontSize:"11px",color:C.mu,marginTop:"4px",fontWeight:800}}>هذه الإضافات للتوثيق اليومي فقط: حضور، تأخير، غياب، مشاركات، حالة واجب يومية، وملاحظات متعددة للمعلم. لا تعرض للطالب ولا تغيّر حساب الدرجات الحالي.</div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"4px",fontWeight:800}}>هذه الإضافات للتوثيق اليومي فقط: حضور، تأخير، غياب، مشاركات، حالة واجب يومية، وملاحظات مصنفة إيجابية/سلبية للمعلم. لا تعرض للطالب ولا تغيّر حساب الدرجات الحالي.</div>
     </Card>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"7px",marginBottom:"12px"}}>{stat("طلاب",classStudents.length,C.p,"👥")}{stat("حاضر",presentCount,C.s,"✅")}{stat("متأخر",lateCount,C.w,"⏰")}{stat("غائب",absentCount,C.d,"🚫")}</div>
     <Card style={{marginBottom:"12px"}}>
@@ -8375,8 +8381,11 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         <label><input type="checkbox" checked={!!r.behavior} onChange={e=>setRec(st.id,{behavior:e.target.checked})}/> عدم انضباط</label>
         <label><input type="checkbox" checked={!!r.exit} onChange={e=>setRec(st.id,{exit:e.target.checked})}/> خروج بدون استئذان</label>
       </div>
-      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>ملاحظات سريعة متعددة</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{behaviorNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),noteTagsOf(r).includes(tag)?C.d:C.pu))}</div>{noteTagsOf(r).length>0&&<div style={{fontSize:"10px",fontWeight:800,color:C.mu,marginTop:"6px"}}>المحدد: {noteTagsOf(r).join("، ")}</div>}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"10px"}}><div><Label text="درجة يدوية للفترة"/><input value={r.manualScore} onChange={e=>setRec(st.id,{manualScore:e.target.value})} placeholder="اختياري" type="number" step="0.25" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div><Label text="ملاحظة"/><input value={r.note} onChange={e=>setRec(st.id,{note:e.target.value})} placeholder="اختياري" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></div>
+      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>ملاحظات سريعة متعددة</div>
+        <div style={{fontSize:"11px",fontWeight:900,color:C.s,margin:"5px 0"}}>إيجابية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{positiveNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.s))}</div>
+        <div style={{fontSize:"11px",fontWeight:900,color:C.d,margin:"8px 0 5px"}}>سلبية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{negativeNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.d))}</div>
+        {noteTagsOf(r).length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginTop:"7px"}}>{noteTagsOf(r).map(tag=><span key={tag} style={{fontSize:"10px",fontWeight:900,color:"#fff",background:noteToneColor(noteTagTone(tag)),borderRadius:"999px",padding:"4px 7px"}}>{noteTagTone(tag)==="positive"?"🟢":"🔴"} {tag}</span>)}</div>}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1.2fr",gap:"8px",marginTop:"10px"}}><div><Label text="درجة يدوية للفترة"/><input value={r.manualScore} onChange={e=>setRec(st.id,{manualScore:e.target.value})} placeholder="اختياري" type="number" step="0.25" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div><Label text="ملاحظة يدوية"/><input value={r.note} onChange={e=>setRec(st.id,{note:e.target.value})} placeholder="اكتب ملاحظة اختيارية" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><div style={{display:"flex",gap:"6px",marginTop:"6px",alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:"10px",fontWeight:900,color:C.mu}}>نوع الملاحظة:</span>{chip((r.noteTone||"negative")==="negative","🔴 سلبية",()=>setRec(st.id,{noteTone:"negative"}),C.d)}{chip((r.noteTone||"negative")==="positive","🟢 إيجابية",()=>setRec(st.id,{noteTone:"positive"}),C.s)}</div></div></div>
       <div style={{marginTop:"10px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"11px",color:C.mu,lineHeight:1.6}}>إجمالي الفترة: <b>{sum.totalPart}</b> مشاركة / المطلوب <b>{settings.requiredParticipation}</b> · تأخير <b>{sum.late}</b> · غياب <b>{sum.absent}</b><br/>واجب يومي: مكتمل <b>{sum.homeworkDone}</b> · ناقص <b>{sum.homeworkPartial}</b> · لم يسلم <b>{sum.homeworkMissing}</b> · ملاحظات <b>{sum.noteTagCount}</b><br/>خصم حضور: <b>{fmt(sum.attPen)}</b> · خصومات أخرى: <b>{fmt(sum.otherPen)}</b></div>
     </Card>;})}</div>
     {classId==="all"&&<Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa",color:"#9a3412",fontSize:"12px",fontWeight:800}}>اختر فصلًا محددًا حتى تظهر بطاقات الطلاب وتحفظ المتابعة اليومية.</Card>}
