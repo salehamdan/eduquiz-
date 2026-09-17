@@ -7577,6 +7577,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
   const dailySaveBusyRef=useRef(false);
+  const dailySavePendingRef=useRef(false);
   const [autosaveMsg,setAutosaveMsg]=useState("✅ محفوظ");
 
   const safeNum=(v,fb)=>{const n=Number(v); return Number.isFinite(n)?n:fb;};
@@ -7598,7 +7599,10 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const visibleStudents=classStudents.filter(s=>{const q=search.trim().toLowerCase(); return !q || (String(s.name||"")+" "+String(s.studentId||"")).toLowerCase().includes(q);});
   function settingsId(){return "followup_settings_"+(user&&user.id?user.id:"teacher");}
   function rowId(stId,day=date){return ["df",user&&user.id?user.id:"teacher",term,period,classId,day,stId].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
-  function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,note:"",manualScore:""};}
+  function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,dailyHomework:"",noteTags:[],note:"",manualScore:""};}
+  const behaviorNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال","خروج بدون إذن","مشاركة ممتازة","تحسن ملحوظ","تعاون مع الزملاء"];
+  function noteTagsOf(r){return Array.isArray(r&&r.noteTags)?r.noteTags:[];}
+  function toggleNoteTag(sid,tag){const r=getRec(sid); const arr=noteTagsOf(r); const exists=arr.includes(tag); setRec(sid,{noteTags:exists?arr.filter(x=>x!==tag):[...arr,tag]});}
   function getRec(sid){return records[sid]||blank();}
   function setRec(sid,patch){setRecords(prev=>({...prev,[sid]:{...blank(),...(prev[sid]||{}),...patch}}));}
 
@@ -7613,10 +7617,29 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       const draft={teacherId:user&&user.id?user.id:"teacher",term,period,classId,date,records,updatedAt:new Date().toISOString()};
       localStorage.setItem(draftKey(),JSON.stringify(draft));
     }catch(e){}
-    setAutosaveMsg("🟡 تغييرات غير محفوظة — سيتم الحفظ تلقائيًا");
+    setAutosaveMsg("⏳ حفظ تلقائي...");
     if(autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current=setTimeout(function(){ saveDayAuto(); },3000);
+    autosaveTimerRef.current=setTimeout(function(){ saveDayAuto(); },650);
     return function(){ if(autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current); };
+  },[records,term,period,classId,date]);
+
+  useEffect(()=>{
+    function flushDraftAndSave(){
+      try{
+        if(classId!=="all"){
+          const json=JSON.stringify(records||{});
+          if(json && json!=="{}" && json!==lastDailySavedRef.current){
+            const draft={teacherId:user&&user.id?user.id:"teacher",term,period,classId,date,records,updatedAt:new Date().toISOString()};
+            localStorage.setItem(draftKey(),JSON.stringify(draft));
+            saveDayAuto();
+          }
+        }
+      }catch(e){}
+    }
+    function onVisibility(){ if(document.visibilityState==="hidden") flushDraftAndSave(); }
+    window.addEventListener("pagehide",flushDraftAndSave);
+    document.addEventListener("visibilitychange",onVisibility);
+    return function(){ window.removeEventListener("pagehide",flushDraftAndSave); document.removeEventListener("visibilitychange",onVisibility); };
   },[records,term,period,classId,date]);
 
   function draftKey(day=date){return ["eq_followup_daily_draft",user&&user.id?user.id:"teacher",term,period,classId,day].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
@@ -7637,7 +7660,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
-      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
+      const todays={}; mine.filter(r=>r.date===date).forEach(r=>{todays[r.studentId]={attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",manualScore:(r.manualScore!==undefined&&r.manualScore!==null)?String(r.manualScore):""};});
       const init={}; classStudents.forEach(s=>{init[s.id]={...blank(),...(todays[s.id]||todays[s.studentId]||{})};});
       autosaveSuppressRef.current=true;
       let nextRecords=init;
@@ -7650,7 +7673,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
             const draftJson=JSON.stringify(draft.records);
             if(draftJson!==savedJson){
               const ok=window.confirm("يوجد عمل غير محفوظ لهذا اليوم. هل تريد استرجاعه؟");
-              if(ok){ nextRecords={...init,...draft.records}; setAutosaveMsg("🟡 تم استرجاع مسودة غير محفوظة — اضغط حفظ اليوم لاعتمادها"); }
+              if(ok){ nextRecords={...init,...draft.records}; setAutosaveMsg("🟡 تم استرجاع مسودة — سيتم حفظها تلقائيًا"); }
               else { localStorage.removeItem(draftKey()); }
             }
           }
@@ -7684,13 +7707,13 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function saveDayCore(autoMode){
     if(classId==="all"){ if(!autoMode) alert("اختر فصلًا محددًا قبل الحفظ."); return; }
-    if(dailySaveBusyRef.current) return;
+    if(dailySaveBusyRef.current){ if(autoMode) dailySavePendingRef.current=true; return; }
     dailySaveBusyRef.current=true;
     if(!autoMode){ setLoading(true); setMsg("⏳ جاري حفظ متابعة اليوم..."); }
     setAutosaveMsg(autoMode?"⏳ جاري الحفظ التلقائي...":"⏳ جاري الحفظ...");
     try{
       await Promise.all(classStudents.map(st=>{
-        const r=getRec(st.id); const row={id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
+        const r=getRec(st.id); const row={id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
         return fsSet("dailyFollowup",row.id,row);
       }));
       lastDailySavedRef.current=JSON.stringify(records||{});
@@ -7698,11 +7721,15 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       setAutosaveMsg("✅ محفوظ تلقائيًا");
       if(!autoMode){ await loadFollowupDay(); setMsg("✅ تم حفظ متابعة اليوم."); }
     }catch(e){
-      setAutosaveMsg("⚠️ لم يتم الحفظ — اضغط حفظ يدوي");
+      setAutosaveMsg("⚠️ لم يتم الحفظ — استخدم حفظ اليوم كاحتياط");
       if(!autoMode) setMsg("⚠️ حدث خطأ أثناء الحفظ.");
     }
     if(!autoMode) setLoading(false);
     dailySaveBusyRef.current=false;
+    if(dailySavePendingRef.current){
+      dailySavePendingRef.current=false;
+      setTimeout(function(){ try{ saveDayAuto(); }catch(e){} },150);
+    }
   }
   async function saveDay(){ return saveDayCore(false); }
   async function saveDayAuto(){ return saveDayCore(true); }
@@ -7711,7 +7738,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const next={};
     classStudents.forEach(s=>{next[s.id]={...getRec(s.id),attendance:allPresent?"":"present"};});
     setRecords(prev=>({...prev,...next}));
-    setMsg(allPresent?"↩️ تم إلغاء تحديد الحضور الجماعي. اضغط حفظ اليوم لاعتماد التغيير.":"✅ تم تحديد جميع الطلاب حاضرين. اضغط حفظ اليوم لاعتماد التغيير.");
+    setMsg(allPresent?"↩️ تم إلغاء تحديد الحضور الجماعي. سيتم الحفظ تلقائيًا.":"✅ تم تحديد جميع الطلاب حاضرين. سيتم الحفظ تلقائيًا.");
   }
   function safeRefreshDay(){
     const currentJson=JSON.stringify(records||{});
@@ -7725,8 +7752,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); sel[s.id]=(r.attendance||"")!=="absent";}); setBulkSelected(sel); setBulkOpen(true);}
   const bulkSelectedCount=classStudents.filter(s=>!!bulkSelected[s.id]).length;
   function clearBulkSelection(){setBulkSelected({});}
-  function applyBulk(){const n=Math.max(0,safeNum(bulkCount,1)); const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:safeNum(r.participation,0)+n};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تمت إضافة المشاركات للمحددين. اضغط حفظ اليوم لاعتمادها."); setBulkOpen(false);}
-  function zeroBulkToday(){const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:0};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تم تصفير مشاركات اليوم للمحددين. اضغط حفظ اليوم لاعتمادها."); setBulkOpen(false);}
+  function applyBulk(){const n=Math.max(0,safeNum(bulkCount,1)); const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:safeNum(r.participation,0)+n};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تمت إضافة المشاركات للمحددين. سيتم الحفظ تلقائيًا."); setBulkOpen(false);}
+  function zeroBulkToday(){const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:0};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تم تصفير مشاركات اليوم للمحددين. سيتم الحفظ تلقائيًا."); setBulkOpen(false);}
   function periodStats(st,scope="period"){
     const sid=st.id; const sn=String(st.studentId||"");
     let rows=(periodRows||[]).filter(r=>String(r.studentId)===String(sid)||String(r.studentNumber||"")===sn);
@@ -7739,13 +7766,15 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const late=arr.filter(r=>r.attendance==="late").length;
     const absent=arr.filter(r=>r.attendance==="absent").length;
     const book=arr.filter(r=>r.book).length, behavior=arr.filter(r=>r.behavior).length, exit=arr.filter(r=>r.exit).length;
+    const homeworkDone=arr.filter(r=>r.dailyHomework==="done").length, homeworkMissing=arr.filter(r=>r.dailyHomework==="missing").length, homeworkPartial=arr.filter(r=>r.dailyHomework==="partial").length;
+    const noteTagCount=arr.reduce((a,r)=>a+(Array.isArray(r.noteTags)?r.noteTags.length:0),0);
     const manualRows=arr.filter(r=>r.manualScore!==""&&r.manualScore!==undefined&&r.manualScore!==null&&Number.isFinite(Number(r.manualScore)));
     const req=Math.max(1,safeNum(settings.requiredParticipation,8)); const full=Math.max(1,safeNum(settings.fullScore,10));
     const base=manualRows.length?Math.min(full,Math.max(0,safeNum(manualRows[manualRows.length-1].manualScore,0))):Math.min(full,(totalPart/req)*full);
     const attPen=Math.min(safeNum(settings.maxAttendancePenalty,3), late*safeNum(settings.latePenalty,0.25)+absent*safeNum(settings.absencePenalty,0.5));
     const otherPen=(book+behavior+exit)*safeNum(settings.itemPenalty,0.25);
     const final=Math.max(0,Math.min(full,base-attPen-otherPen));
-    return {totalPart,late,absent,book,behavior,exit,base,attPen,otherPen,final,days:arr.length};
+    return {totalPart,late,absent,book,behavior,exit,homeworkDone,homeworkMissing,homeworkPartial,noteTagCount,base,attPen,otherPen,final,days:arr.length};
   }
   const summaries=classStudents.map(st=>periodStats(st));
   const presentCount=classStudents.filter(s=>(getRec(s.id).attendance||"")==="present").length;
@@ -8140,6 +8169,10 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         </div><div style={{marginTop:"9px"}}><Btn size="sm" color={C.s} onClick={saveSettings}>💾 حفظ إعدادات الفترة</Btn></div>
       </div>}
     </Card>
+    {classId!=="all"&&<Card style={{marginBottom:"12px",border:"1px solid #d9f99d",background:"linear-gradient(180deg,#ffffff,#f7fee7)"}}>
+      <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>⚡ سجل سريع للحصة</div>
+      <div style={{fontSize:"11px",color:C.mu,marginTop:"4px",fontWeight:800}}>هذه الإضافات للتوثيق اليومي فقط: حضور، تأخير، غياب، مشاركات، حالة واجب يومية، وملاحظات متعددة للمعلم. لا تعرض للطالب ولا تغيّر حساب الدرجات الحالي.</div>
+    </Card>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"7px",marginBottom:"12px"}}>{stat("طلاب",classStudents.length,C.p,"👥")}{stat("حاضر",presentCount,C.s,"✅")}{stat("متأخر",lateCount,C.w,"⏰")}{stat("غائب",absentCount,C.d,"🚫")}</div>
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",justifyContent:"space-between"}}>
@@ -8285,13 +8318,15 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div><strong style={{fontSize:"14px",color:C.tx}}>{st.name}</strong><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""}</div></div><div style={{fontSize:"18px",fontWeight:900,color:gc((sum.final/safeNum(settings.fullScore,10))*100)}}>{fmt(sum.final)} / {settings.fullScore}</div></div>
       <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{chip(r.attendance==="present","حاضر",()=>setRec(st.id,{attendance:"present"}),C.s)}{chip(r.attendance==="late","متأخر",()=>setRec(st.id,{attendance:"late"}),C.w)}{chip(r.attendance==="absent","غائب",()=>setRec(st.id,{attendance:"absent"}),C.d)}</div>
       <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px"}}><span style={{fontSize:"12px",fontWeight:900,color:C.tx}}>مشاركات اليوم</span><button onClick={()=>setRec(st.id,{participation:Math.max(0,safeNum(r.participation,0)-1)})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:"#fff",fontWeight:900}}>-</button><div style={{minWidth:"32px",textAlign:"center",fontWeight:900}}>{safeNum(r.participation,0)}</div><button onClick={()=>setRec(st.id,{participation:safeNum(r.participation,0)+1})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:C.p,color:"#fff",fontWeight:900}}>+</button></div>
+      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>حالة واجب اليوم</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{chip(r.dailyHomework==="done","واجب مكتمل",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="done"?"":"done"}),C.s)}{chip(r.dailyHomework==="partial","واجب ناقص",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="partial"?"":"partial"}),C.w)}{chip(r.dailyHomework==="missing","لم يسلم",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="missing"?"":"missing"}),C.d)}</div></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"5px",marginTop:"10px",fontSize:"12px",color:C.tx}}>
         <label><input type="checkbox" checked={!!r.book} onChange={e=>setRec(st.id,{book:e.target.checked})}/> لم يحضر الكتاب</label>
         <label><input type="checkbox" checked={!!r.behavior} onChange={e=>setRec(st.id,{behavior:e.target.checked})}/> عدم انضباط</label>
         <label><input type="checkbox" checked={!!r.exit} onChange={e=>setRec(st.id,{exit:e.target.checked})}/> خروج بدون استئذان</label>
       </div>
+      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>ملاحظات سريعة متعددة</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{behaviorNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),noteTagsOf(r).includes(tag)?C.d:C.pu))}</div>{noteTagsOf(r).length>0&&<div style={{fontSize:"10px",fontWeight:800,color:C.mu,marginTop:"6px"}}>المحدد: {noteTagsOf(r).join("، ")}</div>}</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"10px"}}><div><Label text="درجة يدوية للفترة"/><input value={r.manualScore} onChange={e=>setRec(st.id,{manualScore:e.target.value})} placeholder="اختياري" type="number" step="0.25" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div><Label text="ملاحظة"/><input value={r.note} onChange={e=>setRec(st.id,{note:e.target.value})} placeholder="اختياري" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div></div>
-      <div style={{marginTop:"10px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"11px",color:C.mu,lineHeight:1.6}}>إجمالي الفترة: <b>{sum.totalPart}</b> مشاركة / المطلوب <b>{settings.requiredParticipation}</b> · تأخير <b>{sum.late}</b> · غياب <b>{sum.absent}</b><br/>خصم حضور: <b>{fmt(sum.attPen)}</b> · خصومات أخرى: <b>{fmt(sum.otherPen)}</b></div>
+      <div style={{marginTop:"10px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"11px",color:C.mu,lineHeight:1.6}}>إجمالي الفترة: <b>{sum.totalPart}</b> مشاركة / المطلوب <b>{settings.requiredParticipation}</b> · تأخير <b>{sum.late}</b> · غياب <b>{sum.absent}</b><br/>واجب يومي: مكتمل <b>{sum.homeworkDone}</b> · ناقص <b>{sum.homeworkPartial}</b> · لم يسلم <b>{sum.homeworkMissing}</b> · ملاحظات <b>{sum.noteTagCount}</b><br/>خصم حضور: <b>{fmt(sum.attPen)}</b> · خصومات أخرى: <b>{fmt(sum.otherPen)}</b></div>
     </Card>;})}</div>
     {classId==="all"&&<Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa",color:"#9a3412",fontSize:"12px",fontWeight:800}}>اختر فصلًا محددًا حتى تظهر بطاقات الطلاب وتحفظ المتابعة اليومية.</Card>}
   </div>;
