@@ -289,7 +289,7 @@ function canonicalClassId(v){
 
 
 // ACTUAL_CLASSES_LOCK_20260702
-// Current real active classes requested by teacher. All class dropdowns and login list are locked to these IDs only.
+// Historical defaults only. Add Class is now open and no longer limited to this fixed list.
 const EQ_ACTUAL_CLASS_IDS = ["class_3_2","class_3_4","class_3_6"];
 function eqDeletedClassIdsFromData(d){
   const set=new Set();
@@ -536,6 +536,30 @@ function adminClassAliases(c){
 }
 
 function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
+
+// OPEN_ADD_ANY_CLASS_ONLY_20260917
+// Teacher can add any class name/code. This helper is used only by Add Class,
+// so it does not change the student account or quiz screens.
+function eqSafeSlugForClass(v){
+  return String(v||"").trim().toLowerCase()
+    .replace(/[٠-٩]/g,function(d){return "٠١٢٣٤٥٦٧٨٩".indexOf(d);})
+    .replace(/[۰-۹]/g,function(d){return "۰۱۲۳۴۵۶۷۸۹".indexOf(d);})
+    .replace(/[^0-9a-zA-Z\u0600-\u06FF]+/g,"_")
+    .replace(/^_+|_+$/g,"")
+    .slice(0,60) || ("custom_"+Date.now());
+}
+function eqClassIdForNewClass(rawName, rawGrade){
+  const grade=String(rawGrade||"").trim();
+  const name=String(rawName||"").trim();
+  const gm=grade.match(/^\s*([0-9٠-٩۰-۹]+)\s*[-_/ ]\s*([0-9٠-٩۰-۹]+)\s*$/);
+  if(gm){
+    const a=eqDigits(gm[1]), b=eqDigits(gm[2]);
+    if(a && b) return "class_"+a+"_"+b;
+  }
+  const known=canonicalClassId(grade||name);
+  if(/^class_[0-9]+_[0-9]+$/.test(String(known||""))) return known;
+  return "class_custom_"+eqSafeSlugForClass((grade?grade+"_":"")+name);
+}
 
 // RESPONSE_STUDENT_LINK_FIX_20260610
 // SAFE_PERFORMANCE_MEMO_20260611
@@ -9457,8 +9481,7 @@ async function adminClearDeletedStudentMarksForRows(rows){
 async function adminResetClassBeforeImport(classId, newRows, opts){
   opts=opts||{};
   const canon=canonicalClassId(classId);
-  if(!EQ_ACTUAL_CLASS_IDS.includes(canon)) return {oldStudents:0, deleted:{}};
-  const cls=officialClassRow(canon)||{id:canon,name:canon};
+  const cls=officialClassRow(canon)||{id:canon,name:(newRows&&newRows[0]&&(newRows[0].className||newRows[0].class))||canon,grade:""};
   const emit=typeof opts.onProgress==="function"?opts.onProgress:function(){};
   let oldRows=[];
   emit({stage:"Finding old students in "+(cls.name||canon),done:0,total:1});
@@ -9840,15 +9863,10 @@ async function adminCleanOldClassData(currentData, currentUser){
   const stamp=new Date().toISOString();
   eqClearOldClassAndStudentCaches();
   const [cloudUsers, cloudClasses]=await Promise.all([fsAll("users"), fsAll("classes")]);
-  const invalidClassRows=(cloudClasses||[]).filter(function(c){
-    const canon=canonicalClassId(c&& (c.id||c.classId||c.grade||c.name||c._id));
-    return canon && !EQ_ACTUAL_CLASS_IDS.includes(canon);
-  });
-  const invalidUsers=(cloudUsers||[]).filter(function(u){
-    if(!u || String(u.role||"")!=="student") return false;
-    const cid=canonicalClassId(u.classId||u.className||u.class||"");
-    return !EQ_ACTUAL_CLASS_IDS.includes(cid);
-  });
+  // OPEN_ADD_ANY_CLASS_ONLY_20260917:
+  // Do not treat teacher-created custom classes as invalid just because they are not in the old fixed list.
+  const invalidClassRows=[];
+  const invalidUsers=[];
   const deleted=await adminPurgeStudentsAndAllDataFast(invalidUsers);
   if(invalidClassRows.length){
     const classDocs=[];
@@ -10874,31 +10892,27 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   }
   async function createCls(){
     const rawName=(newCls.name||"").trim(), rawGrade=(newCls.grade||"").trim();
-    if(!rawName && !rawGrade){ alert("اكتب اسم الفصل أو رقمه: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6."); return; }
-    const nameCanon=canonicalClassId(rawName);
-    const gradeCanon=canonicalClassId(rawGrade);
-    const canon=EQ_ACTUAL_CLASS_IDS.includes(nameCanon) ? nameCanon : (EQ_ACTUAL_CLASS_IDS.includes(gradeCanon) ? gradeCanon : canonicalClassId(rawName||rawGrade));
-    if(!EQ_ACTUAL_CLASS_IDS.includes(canon)){ alert("الفصول المسموحة الآن فقط: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6."); return; }
-    const official=officialClassRow(canon);
-    const id=official.id;
-    const existingActive=(myClasses||[]).find(function(c){ return canonicalClassId(c&& (c.id||c.classId||c.grade||c.name))===id; });
+    if(!rawName && !rawGrade){ alert("اكتب اسم الفصل أو رقمه."); return; }
+    const id=eqClassIdForNewClass(rawName, rawGrade);
+    const displayName=rawName || rawGrade || id;
+    const displayGrade=rawGrade || "";
+    const existingActive=(myClasses||[]).find(function(c){
+      return sameClassId(c&& (c.id||c.classId||c.grade||c.name), id) || String(c&&c.name||"").trim()===displayName;
+    });
     if(existingActive){ alert("الفصل موجود مسبقًا في المنصة."); return; }
-    const aliases=Array.from(new Set([id, canon, rawName, rawGrade, official.name, official.grade].filter(Boolean)));
-    // ADD_CLASS_EMPTY_NO_AUTO_DELETE_20260702
+    const aliases=Array.from(new Set([id, rawName, rawGrade, displayName, displayGrade].filter(Boolean)));
+    // OPEN_ADD_ANY_CLASS_ONLY_20260917
     // Creating a class must NOT delete any other class or any old Firebase data automatically.
-    // It creates a fresh rosterToken so old students with the same classId are hidden from this new roster
-    // until the teacher imports/adds students into this specific class instance.
-    setAdminBusy("⏳ Creating empty class: "+official.name+"…");
+    setAdminBusy("⏳ Creating empty class: "+displayName+"…");
     adminForgetDeletedClassIds(aliases);
     try{ await adminBatchDelete("deletedClasses", aliases.map(function(a){return {id:String(a)};})); }catch(e){ try{ await fsDel("deletedClasses", id); }catch(_e){} }
-    try{ await fsDel("deletedClasses", canon); }catch(e){}
     const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
-    const row={id,name:official.name,grade:official.grade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
+    const row={id,classId:id,name:displayName,grade:displayGrade,teacherIds:[user.id,"GLOBAL"],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
     await fsSetStrict("classes",id,row);
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
-    eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>canonicalClassId(c&& (c.id||c.grade||c.name))!==id), row]);
-    await reload();setAdminBusy("✅ Empty class created: "+official.name+". No students were deleted."); setTimeout(()=>setAdminBusy(""),3500); setClsModal(false);setNewCls({name:"",grade:""});
+    eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>!sameClassId(c&& (c.id||c.grade||c.name),id)), row]);
+    await reload();setAdminBusy("✅ Empty class created: "+displayName+". No students were deleted."); setTimeout(()=>setAdminBusy(""),3500); setClsModal(false);setNewCls({name:"",grade:""});
   }
 
   async function editClass(cls){
@@ -11728,12 +11742,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         <Btn onClick={postAnn} style={{width:"100%"}}>📣 Post</Btn>
       </Modal>
       <Modal open={clsModal} onClose={()=>setClsModal(false)} title="Add New Class">
-        <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"8px",padding:"8px",marginBottom:"8px",fontFamily:F}}>الفصول الرسمية المتاحة للإضافة فقط: ثالث ثاني / 3-2، ثالث رابع / 3-4، ثالث سادس / 3-6.</div>
-        <TxtInput label="Class Name or Code *" value={newCls.name} onChange={v=>setNewCls(c=>({...c,name:v}))} placeholder="مثال: ثالث ثاني أو 3-2"/>
-        <TxtInput label="Grade / Code" value={newCls.grade} onChange={v=>setNewCls(c=>({...c,grade:v}))} placeholder="اختياري: 3-2 أو 3-4 أو 3-6"/>
-        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",margin:"0 0 9px"}}>
-          {[officialClassRow("class_3_2"),officialClassRow("class_3_4"),officialClassRow("class_3_6")].map(c=><Btn key={c.id} size="sm" color={C.pu} onClick={()=>setNewCls({name:c.name,grade:c.grade})}>{c.name}</Btn>)}
-        </div>
+        <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"8px",padding:"8px",marginBottom:"8px",fontFamily:F}}>يمكنك إضافة أي فصل تريده. اكتب اسم الفصل والكود، ولن يتم حذف أي فصل أو طالب.</div>
+        <TxtInput label="Class Name or Code *" value={newCls.name} onChange={v=>setNewCls(c=>({...c,name:v}))} placeholder="مثال: ثالث أول أو ثاني ثالث أو 3-1"/>
+        <TxtInput label="Grade / Code" value={newCls.grade} onChange={v=>setNewCls(c=>({...c,grade:v}))} placeholder="اختياري: 3-1 أو 2-3 أو 4-1"/>
         <Btn onClick={createCls} style={{width:"100%",marginTop:"4px"}}>Create Class</Btn>
       </Modal>
       <Modal open={!!addStuModal} onClose={()=>setAddStuModal(null)} title={"Add Student — "+(addStuModal?.name||"")}>
