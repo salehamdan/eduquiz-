@@ -7574,6 +7574,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [selectedProjectId,setSelectedProjectId]=useState("all");
   const [quizzesOpen,setQuizzesOpen]=useState(false);
   const [oralWrittenOpen,setOralWrittenOpen]=useState(false);
+  const [referralRows,setReferralRows]=useState([]);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -7636,9 +7637,9 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   }
   function blank(){return {attendance:"",participation:0,book:false,behavior:false,exit:false,dailyHomework:"",noteTags:[],note:"",noteTone:"negative",manualScore:""};}
   const positiveNoteOptions=["مشاركة ممتازة","تحسن ملحوظ","تعاون مع الزملاء","حل الواجب بإتقان","إجابة مميزة","مبادرة داخل الدرس","مساعدة زميل"];
-  const negativeNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام بقواعد الصف","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال","خروج بدون إذن","الكلام أثناء الدرس","لم يجب عن سؤال الدرس السابق"];
+  const negativeNoteOptions=["عدم إحضار الكتاب","عدم حل الواجب","عدم الالتزام بقواعد الصف","عدم انضباط","إثارة فوضى","نوم أثناء الحصة","تأخر عن الحصة","عدم الالتزام بالزي السعودي","استخدام الجوال أثناء الدرس","خروج بدون إذن","الكلام أثناء الدرس","لم يجب عن سؤال الدرس السابق","عدم المشاركة في الدرس","الانشغال عن الدرس"];
   const behaviorNoteOptions=[...negativeNoteOptions,...positiveNoteOptions];
-  function normalizeNoteTag(tag){const t=String(tag||"").trim(); if(t==="عدم الالتزام")return "عدم الالتزام بقواعد الصف"; if(t==="عدم الإجابة على سؤال المعلم"||t==="عدم الإجابة على سؤال المعلم في الدرس السابق")return "لم يجب عن سؤال الدرس السابق"; return t;}
+  function normalizeNoteTag(tag){const t=String(tag||"").trim(); if(t==="عدم الالتزام")return "عدم الالتزام بقواعد الصف"; if(t==="استخدام الجوال")return "استخدام الجوال أثناء الدرس"; if(t==="عدم الإجابة على سؤال المعلم"||t==="عدم الإجابة على سؤال المعلم في الدرس السابق")return "لم يجب عن سؤال الدرس السابق"; return t;}
   function noteTagTone(tag){const t=normalizeNoteTag(tag); if(positiveNoteOptions.includes(t))return "positive"; if(negativeNoteOptions.includes(t))return "negative"; return "negative";}
   function noteToneColor(tone){return tone==="positive"?C.s:C.d;}
   function noteToneLabel(tone){return tone==="positive"?"إيجابية":"سلبية";}
@@ -7646,6 +7647,36 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   function toggleNoteTag(sid,tag){const r=getRec(sid); const arr=noteTagsOf(r); const clean=normalizeNoteTag(tag); const exists=arr.includes(clean); setRec(sid,{noteTags:exists?arr.filter(x=>x!==clean):[...arr,clean]});}
   function getRec(sid){return records[sid]||blank();}
   function setRec(sid,patch){setRecords(prev=>({...prev,[sid]:{...blank(),...(prev[sid]||{}),...patch}}));}
+
+  function referralCategory(text){
+    const t=normalizeNoteTag(text);
+    if(["عدم حل الواجب","واجب ناقص","لم يسلم","عدم إحضار الكتاب","عدم إحضار أدوات التعلم"].includes(t))return "واجبات/استعداد";
+    if(["لم يجب عن سؤال الدرس السابق","عدم المشاركة في الدرس","عدم متابعة الشرح","ضعف الاستعداد للدرس"].includes(t))return "أكاديمية/مشاركة";
+    if(["تأخر عن الحصة","غياب"].includes(t))return "حضور/تأخير";
+    return "سلوكية";
+  }
+  function negativeItem(label,date,source){const clean=normalizeNoteTag(label); return {label:clean,category:referralCategory(clean),date:date||"",source:source||"daily"};}
+  function dailyNegativeItemsFromRow(row){
+    const items=[]; if(!row)return items; const d=row.date||"";
+    if(row.attendance==="absent")items.push(negativeItem("غياب",d,"attendance"));
+    if(row.attendance==="late")items.push(negativeItem("تأخر عن الحصة",d,"attendance"));
+    if(row.book)items.push(negativeItem("عدم إحضار الكتاب",d,"daily"));
+    if(row.behavior)items.push(negativeItem("عدم انضباط",d,"daily"));
+    if(row.exit)items.push(negativeItem("خروج بدون إذن",d,"daily"));
+    if(row.dailyHomework==="missing")items.push(negativeItem("عدم حل الواجب",d,"homework"));
+    if(row.dailyHomework==="partial")items.push(negativeItem("واجب ناقص",d,"homework"));
+    noteTagsOf(row).forEach(tag=>{ if(noteTagTone(tag)==="negative")items.push(negativeItem(tag,d,"tag")); });
+    if((row.note||"").trim() && (row.noteTone||"negative")!=="positive")items.push(negativeItem((row.note||"").trim(),d,"manual"));
+    const seen={}; return items.filter(x=>{const k=[x.date,x.label,x.category].join("__"); if(seen[k])return false; seen[k]=true; return true;});
+  }
+  function referralsForStudent(sid){return (referralRows||[]).filter(r=>String(r.studentId||"")===String(sid||"")).sort((a,b)=>String(a.createdAt||a.date||"").localeCompare(String(b.createdAt||b.date||"")));}
+  function lastReferralDate(sid){const refs=referralsForStudent(sid); const last=refs[refs.length-1]; return last?(last.date||String(last.createdAt||"").slice(0,10)||""):"";}
+  function referralCycleItems(st){const start=lastReferralDate(st&&st.id); return (periodRows||[]).filter(r=>String(r.studentId||"")===String(st&&st.id||"") && (!start || String(r.date||"")>String(start))).flatMap(dailyNegativeItemsFromRow).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));}
+  function referralSummary(st){const refs=referralsForStudent(st&&st.id); const items=referralCycleItems(st); const cats={}; items.forEach(i=>cats[i.category]=(cats[i.category]||0)+1); const mainCat=Object.keys(cats).sort((a,b)=>cats[b]-cats[a])[0]||"غير محدد"; return {refs,items,count:items.length,eligible:items.length>=5,categories:cats,mainCategory:mainCat,lastDate:lastReferralDate(st&&st.id)};}
+  function referralPlanText(summary){const main=summary&&summary.mainCategory; if(main==="واجبات/استعداد")return "خطة علاجية مقترحة: حصر الواجبات/المتطلبات الناقصة، منح الطالب فرصة تعويض قصيرة، متابعة الإنجاز في الحصة القادمة، ثم التواصل مع ولي الأمر إذا لم يظهر تحسن."; if(main==="أكاديمية/مشاركة")return "خطة علاجية مقترحة: سؤال الطالب فرديًا عن سبب عدم المشاركة، تكليفه بسؤال مناسب لمستواه في الدرس القادم، تعزيز أي محاولة إيجابية، ومتابعة الاستعداد للدرس السابق لمدة أسبوع."; if(main==="حضور/تأخير")return "خطة علاجية مقترحة: تنبيه الطالب بأثر التأخير أو الغياب، توثيق التكرار، تحديد هدف أسبوعي للانتظام، ثم إشعار ولي الأمر أو الوكيل عند استمرار التكرار."; return "خطة علاجية مقترحة: مناقشة الطالب فرديًا، توضيح السلوك المتوقع داخل الصف، تحديد هدف أسبوعي واضح، تعزيز التحسن، والتواصل مع ولي الأمر عند استمرار المشكلة.";}
+  function buildReferralMessage(st){const s=referralSummary(st); const refs=s.refs.length; const title=refs===0?"بطاقة متابعة وتحويل لوكيل شؤون الطلاب":"بطاقة متابعة وتحويل متكرر لوكيل شؤون الطلاب"; const lines=[]; lines.push(title); lines.push(""); lines.push("اسم الطالب: "+(st.name||"")); lines.push("رقم الطالب: "+(st.studentId||"")); lines.push("الفصل: "+((activeClasses.find(c=>String(c.id)===String(classId))||{}).name||classId)); lines.push("التاريخ: "+date); lines.push(""); lines.push(refs===0?"سبب التحويل: وصول الطالب إلى 5 ملاحظات سلبية موثقة خلال دورة المتابعة الحالية.":"سبب التحويل: سبق تحويل الطالب عدد "+refs+" مرة، وبعد آخر تحويل تكررت عليه 5 ملاحظات سلبية جديدة."); lines.push("نوع المشكلة الغالب: "+s.mainCategory); lines.push("تفصيل الفئات: "+Object.keys(s.categories).map(k=>k+": "+s.categories[k]).join("، ")); lines.push(""); lines.push("أبرز الملاحظات:"); s.items.slice(0,8).forEach((x,i)=>lines.push((i+1)+". "+x.label+" — "+(x.date||""))); lines.push(""); lines.push("الإجراء العلاجي المبدئي:"); lines.push(referralPlanText(s)); lines.push(""); lines.push("المطلوب: الاطلاع واتخاذ ما يلزم من قبل وكيل شؤون الطلاب."); return lines.join("\n");}
+  async function copyReferralMessage(st){const txt=buildReferralMessage(st); try{await navigator.clipboard.writeText(txt); setMsg("✅ تم نسخ بطاقة التحويل.");}catch(e){window.prompt("انسخ بطاقة التحويل:",txt);}}
+  async function markReferralDone(st){const s=referralSummary(st); if(!s.eligible){alert("لم يصل الطالب إلى 5 ملاحظات سلبية في الدورة الحالية."); return;} if(!confirm("تأكيد تسجيل تحويل الطالب وبدء دورة متابعة جديدة؟"))return; const id=["ref",user.id,term,period,classId,st.id,Date.now()].join("_"); const row={id,teacherId:user.id,term,period,classId,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",date,createdAt:new Date().toISOString(),count:s.count,items:s.items,categories:s.categories,mainCategory:s.mainCategory,plan:referralPlanText(s)}; try{await fsSet("followupReferrals",id,row); setReferralRows(prev=>[...(prev||[]),row]); setMsg("✅ تم تسجيل التحويل وبدأت دورة متابعة جديدة للطالب.");}catch(e){setMsg("⚠️ تعذر تسجيل التحويل. حاول مرة أخرى.");}}
 
   useEffect(()=>{try{const raw=localStorage.getItem("eq_followup_settings_"+(user&&user.id?user.id:"teacher")); if(raw){const obj=JSON.parse(raw); if(obj){setTerm(obj.term||"term1");setPeriod(obj.period||"p1");setSettings({...settings,...(obj.settings||{})});}}}catch(e){}},[]);
   useEffect(()=>{loadFollowupDay();},[term,period,classId,date]);
@@ -7692,6 +7723,10 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       const all=await fsAll("dailyFollowup");
       const mine=(all||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId)));
       setPeriodRows(mine);
+      try{
+        const refsAll=await fsAll("followupReferrals");
+        setReferralRows((refsAll||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId))));
+      }catch(refErr){ setReferralRows([]); }
       try{
         const tasksAll=await fsAll("followupHomeworkTasks");
         const tasks=(tasksAll||[]).filter(t=>String(t.teacherId||"")===String(user.id||"") && t.term===term && t.period===period && (classId==="all" || String(t.classId||"")===String(classId)) && t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
@@ -8363,6 +8398,18 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
         {followupProjects.length===0?<div style={{marginTop:"10px",fontSize:"12px",color:C.mu,fontWeight:800}}>لا توجد مشاريع لهذه الفترة والفصل حتى الآن.</div>:<div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const pr=projectSummary(st); return <div key={st.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"9px"}}><div style={{display:"flex",justifyContent:"space-between",gap:"8px"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · معتمد: {pr.approvedRows.length}/{pr.projects.length}</div></div><div style={{fontSize:"16px",fontWeight:900,color:gc((pr.earned/Math.max(1,settings.projectFullScore))*100)}}>{fmt(pr.earned)} / {settings.projectFullScore}</div></div><div style={{fontSize:"10px",color:pr.missing.length?C.w:C.s,fontWeight:800,marginTop:"6px"}}>{pr.missing.length?pr.missing.slice(0,3).map(x=>(x.project.title||"مشروع")+" - "+(x.latest?projectStatusArabic(x.latest.status):"لم يسلم")).join("، "):"✅ كل المشاريع المحددة معتمدة"}</div></div>;})}</div>}
       </div>}
     </Card>
+
+    {classId!=="all"&&<Card style={{marginBottom:"12px",border:"1px solid #fecaca",background:"linear-gradient(180deg,#ffffff,#fff1f2)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
+        <div><strong style={{fontSize:"15px",color:C.tx}}>🚦 متابعة التحويل لوكيل شؤون الطلاب</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>يتم احتساب الملاحظات السلبية فقط. بعد تسجيل التحويل تبدأ دورة جديدة ولا تُحسب الملاحظات القديمة ضمن الخمس الجديدة.</div></div>
+      </div>
+      <div style={{marginTop:"10px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:"8px"}}>{visibleStudents.map(st=>{const rs=referralSummary(st); const color=rs.eligible?C.d:(rs.count>=3?C.w:C.mu); return <div key={st.id} style={{background:"#fff",border:"1px solid "+(rs.eligible?"#fecaca":C.br),borderRadius:"12px",padding:"9px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · تحويلات سابقة: {rs.refs.length}</div></div><div style={{fontSize:"16px",fontWeight:900,color:color}}>{Math.min(rs.count,5)} / 5</div></div>
+        <div style={{fontSize:"10px",fontWeight:900,color:color,marginTop:"5px"}}>{rs.eligible?"⚠️ مؤهل للتحويل":"متابعة حالية"} · النوع الغالب: {rs.mainCategory}</div>
+        <div style={{fontSize:"10px",color:C.mu,marginTop:"5px",lineHeight:1.5}}>{rs.items.slice(-3).map(x=>x.date+" — "+x.label).join("، ")||"لا توجد ملاحظات سلبية في الدورة الحالية"}</div>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}><Btn size="sm" color={C.p} onClick={()=>copyReferralMessage(st)}>📋 نسخ بطاقة</Btn><Btn size="sm" color={rs.eligible?C.d:C.mu} onClick={()=>markReferralDone(st)} disabled={!rs.eligible}>✅ تم التحويل</Btn></div>
+      </div>;})}</div>
+    </Card>}
 
     {bulkOpen&&<Card style={{marginBottom:"12px",border:"2px solid "+C.p,background:"#eff6ff"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"14px",color:C.tx}}>➕ إضافة مشاركات جماعية لليوم</strong><button onClick={()=>setBulkOpen(false)} style={{border:"none",background:"transparent",fontSize:"18px",cursor:"pointer"}}>×</button></div>
