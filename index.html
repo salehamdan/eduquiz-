@@ -204,6 +204,7 @@ try{
 <!-- SAFE_RESTORE_NO_SW_FIREBASE_FALLBACK -->
 <!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
+<meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
 <div id="root">
@@ -9634,7 +9635,7 @@ function cleanupIsProtectedHusseinRp(r){
   }catch(e){ return false; }
 }
 
-// ── YEAR-END CLEANUP ADDON V1: safe scoped deletion with preview, backup, and typed confirmation ──
+// ── YEAR-END CLEANUP ADDON V1 + SAFETY 264: results-only cleanup; quiz/task definitions locked ──
 const CLEANUP_ITEMS = [
   {id:"students", label:"Students", danger:true, desc:"Student accounts in the selected scope"},
   {id:"classes", label:"Classes", danger:true, desc:"Selected class records"},
@@ -9657,6 +9658,9 @@ const CLEANUP_ITEMS = [
   {id:"legacyLocalCaches", label:"Legacy Local Caches", desc:"Old local Writing/student-number caches on this device"},
   {id:"cleanupLogs", label:"Cleanup Logs", desc:"Previous cleanup log records"}
 ];
+// SAFETY_264_RESULTS_ONLY: definitions/tasks are protected and can never be deleted from Cleanup.
+const CLEANUP_PROTECTED_DEFINITIONS = new Set(["quizzes","projects","readingTasks","readingTheoryItems","announcements"]);
+
 const CLEANUP_CONFIRM_CLASS = "DELETE SELECTED CLASS DATA";
 const CLEANUP_CONFIRM_ALL = "DELETE SELECTED ALL CLASSES DATA";
 const CLEANUP_CONFIRM_STUDENTS = "DELETE SELECTED STUDENTS";
@@ -10323,7 +10327,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"");
   const [selectedStudentIds,setSelectedStudentIds]=useState({});
   const [deleteAll,setDeleteAll]=useState(false);
-  const [items,setItems]=useState({quizResponses:true,gradebookRecords:true,reading:true,zipgrade:true,projectSubmissions:true,projectGrades:true,writing:true,aiReading:true,notes:true,quizzes:true,projects:true,readingTasks:true,readingTheoryItems:true,announcements:true,followupData:true,legacyWritingDocs:true,legacyLocalCaches:true});
+  const [items,setItems]=useState({quizResponses:true,gradebookRecords:true,reading:true,zipgrade:true,projectSubmissions:true,projectGrades:true,writing:true,aiReading:true,notes:true,quizzes:false,projects:false,readingTasks:false,readingTheoryItems:false,announcements:false,followupData:true,legacyWritingDocs:true,legacyLocalCaches:true});
   const [preview,setPreview]=useState(null);
   const [busy,setBusy]=useState(false);
   const [confirmText,setConfirmText]=useState("");
@@ -10334,7 +10338,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const [legacyConfirm,setLegacyConfirm]=useState("");
   const [legacyBusy,setLegacyBusy]=useState(false);
   const [extra,setExtra]=useState({gradebook:[],cleanupLogs:[]});
-  const selectedItemIds=deleteAll?CLEANUP_ITEMS.map(x=>x.id):Object.keys(items).filter(k=>items[k]);
+  const selectedItemIds=(deleteAll?CLEANUP_ITEMS.map(x=>x.id):Object.keys(items).filter(k=>items[k])).filter(id=>!CLEANUP_PROTECTED_DEFINITIONS.has(id));
   const currentClass=(myClasses||[]).find(c=>String(c.id)===String(classId)) || null;
   const currentClassAliases=new Set(adminClassAliases(currentClass||{id:classId}).map(canonicalClassId));
   const studentsInCurrentClass=(myStudents||[]).filter(st=>st&&st.role==="student"&&!st.deleted&&currentClassAliases.has(canonicalClassId(st.classId||st.className||st.class||"")));
@@ -10351,7 +10355,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
   const idSet=cleanupIdSet(selectedStudents);
   const correctConfirm=scope==="all"?CLEANUP_CONFIRM_ALL:(scope==="students"?CLEANUP_CONFIRM_STUDENTS:CLEANUP_CONFIRM_CLASS);
   function toggleItem(id){ setPreview(null); setDeleteAll(false); setItems(prev=>({...prev,[id]:!prev[id]})); }
-  function setEverything(v){ setPreview(null); setDeleteAll(v); if(v){ const all={}; CLEANUP_ITEMS.forEach(x=>all[x.id]=true); setItems(all); } }
+  function setEverything(v){ setPreview(null); setDeleteAll(v); if(v){ const all={}; CLEANUP_ITEMS.forEach(x=>all[x.id]=!CLEANUP_PROTECTED_DEFINITIONS.has(x.id)); setItems(all); } }
   async function loadExtra(){
     const [gradebook,cleanupLogs,dailyFollowup,followupHomeworkTasks,followupHomeworkScores,followupReferrals,followupSettings,appSettingsFresh]=await Promise.all([
       fsAll("gradebook"),fsAll("cleanupLogs"),fsAll("dailyFollowup"),fsAll("followupHomeworkTasks"),fsAll("followupHomeworkScores"),fsAll("followupReferrals"),fsAll("followupSettings"),fsAll("appSettings")
@@ -10463,7 +10467,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     const p=preview||await buildPreview(); if(!p)return;
     if(!adminConfirmOk(confirmText,correctConfirm)){setMsg("اكتب جملة التأكيد بالضبط قبل الحذف.");return;}
     setBusy(true); setProgress({stage:"Preparing delete",done:0,total:cleanupTotalRows(p)}); setMsg("جاري الحذف...");
-    const selected=new Set(p.itemIds||selectedItemIds); const deleted={};
+    const selected=new Set((p.itemIds||selectedItemIds).filter(id=>!CLEANUP_PROTECTED_DEFINITIONS.has(id))); const deleted={};
     const progressState={done:0,total:cleanupTotalRows(p)};
     try{
       if(selected.has("quizResponses")){ deleted.quizResponses=await cleanupDeleteRows("responses",p.rows.quizResponses||[],"Deleting quiz responses",progressState); }
@@ -10493,11 +10497,11 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
         deleted.writing=(p.rows.writing||[]).length; progressState.done+=deleted.writing; setProgress({stage:"Deleting writing submissions",done:progressState.done,total:progressState.total});
       }
       if(selected.has("notes")){ deleted.notes=await cleanupDeleteRows("notes",p.rows.notes||[],"Deleting teacher notes",progressState); }
-      if(selected.has("quizzes")){ deleted.quizzes=await cleanupDeleteRows("quizzes",p.rows.quizzes||[],"Deleting quiz definitions",progressState); }
-      if(selected.has("projects")){ deleted.projects=await cleanupDeleteRows("projects",p.rows.projects||[],"Deleting project definitions",progressState); }
-      if(selected.has("readingTasks")){ deleted.readingTasks=await cleanupDeleteRows("readingTasks",p.rows.readingTasks||[],"Deleting Reading Progress tasks",progressState); }
-      if(selected.has("readingTheoryItems")){ deleted.readingTheoryItems=await cleanupDeleteRows("readingTheoryItems",p.rows.readingTheoryItems||[],"Deleting Reading Theory items",progressState); }
-      if(selected.has("announcements")){ deleted.announcements=await cleanupDeleteRows("announcements",p.rows.announcements||[],"Deleting announcements",progressState); }
+      // SAFETY_264: protected definition/task collection — never deleted by Cleanup.
+      // SAFETY_264: protected definition/task collection — never deleted by Cleanup.
+      // SAFETY_264: protected definition/task collection — never deleted by Cleanup.
+      // SAFETY_264: protected definition/task collection — never deleted by Cleanup.
+      // SAFETY_264: protected definition/task collection — never deleted by Cleanup.
       if(selected.has("followupData")){
         const fr=p.rows.followupData||[]; let n=0;
         for(const col of ["dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings"]){
@@ -10651,7 +10655,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     </Card>
     <Card style={{marginBottom:"10px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"8px"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>Select Data to Delete</b><label style={{fontSize:"12px",fontWeight:"800",color:C.d,fontFamily:F}}><input type="checkbox" checked={deleteAll} onChange={e=>setEverything(e.target.checked)}/> Delete Everything</label></div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"8px"}}>{CLEANUP_ITEMS.map(it=><label key={it.id} style={{display:"flex",gap:"8px",alignItems:"flex-start",padding:"9px",border:"1px solid "+(it.danger?"#fecaca":C.br),borderRadius:"10px",background:items[it.id]?"#eff6ff":"#fff",fontFamily:F}}><input type="checkbox" checked={!!items[it.id]} onChange={()=>toggleItem(it.id)}/><span><b style={{fontSize:"12px",color:it.danger?C.d:C.tx}}>{it.label}</b><br/><span style={{fontSize:"10px",color:C.mu}}>{it.desc}</span></span></label>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"8px"}}>{CLEANUP_ITEMS.map(it=>{const protectedDef=CLEANUP_PROTECTED_DEFINITIONS.has(it.id);return <label key={it.id} style={{display:"flex",gap:"8px",alignItems:"flex-start",padding:"9px",border:"1px solid "+(protectedDef?"#86efac":(it.danger?"#fecaca":C.br)),borderRadius:"10px",background:protectedDef?"#f0fdf4":(items[it.id]?"#eff6ff":"#fff"),fontFamily:F,opacity:protectedDef?.85:1}}><input type="checkbox" disabled={protectedDef} checked={protectedDef?false:!!items[it.id]} onChange={()=>{if(!protectedDef)toggleItem(it.id)}}/><span><b style={{fontSize:"12px",color:protectedDef?"#166534":(it.danger?C.d:C.tx)}}>{it.label}{protectedDef?" — 🔒 محمي":""}</b><br/><span style={{fontSize:"10px",color:C.mu}}>{protectedDef?"تعريف/مهمة محفوظة: لا يمكن حذفها من Cleanup.":it.desc}</span></span></label>})}</div>
     </Card>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Btn color={C.p} disabled={busy} onClick={buildPreview}>🔎 Preview Before Delete</Btn><Btn color={C.s} disabled={!preview} onClick={exportBackup}>⬇️ Export Backup</Btn></div>
     {preview&&<Card style={{marginBottom:"10px",border:"2px solid "+C.p}}>
@@ -11566,8 +11570,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return base + "?quiz=" + quiz.code;
   }
 
-  if(view==="create")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
-  if(view==="edit")return <CreateQuiz teacher={user} classes={data.classes} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
+  if(view==="create")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
+  if(view==="edit")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
   const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
 
   return (
@@ -15044,5 +15048,6 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
 })();
 </script>
 
+<!-- QUIZ_CREATE_USES_LIVE_MYCLASSES_FIX_20260919 -->
 </body>
 </html>
