@@ -1174,20 +1174,41 @@ function eqRealActiveClassesFromData(d){
       });
     });
 
-    // If Third Second was hidden only by an old tombstone, restore it when active students still exist.
+    // LOGIN_ROSTER_FALLBACK_267:
+    // If current active Firebase students still belong to a class, the student login must show that class
+    // even when the class document was lost/filtered by an older cleanup tombstone.
+    // We only derive from ACTIVE Firebase student rows, never from bundled/preloaded data.
     try{
-      if(!seen.has("class_3_2")){
-        const has32=(Array.isArray(d.users)?d.users:[]).some(function(u){
-          if(!u || String(u.role||"")!=="student") return false;
-          const cid=canonicalClassId(u.classId||u.className||u.class||"");
-          return cid==="class_3_2" && u.deleted!==true && u.status!=="deleted" && !u.permanentDeleted && !u.hidePreloaded;
+      const activeUsers = Array.isArray(d.firebaseUsers) ? d.firebaseUsers : [];
+      activeUsers.forEach(function(u){
+        if(!u || String(u.role||"")!=="student") return;
+        if(typeof isStudentTombstone==="function" && isStudentTombstone(u)) return;
+        if(u.deleted===true || String(u.status||"").toLowerCase()==="deleted" || u.permanentDeleted===true || u.hidePreloaded===true) return;
+        const rawClass=u.classId||u.className||u.class||u.grade||"";
+        const cid=(typeof canonicalClassId==="function")?canonicalClassId(rawClass):String(rawClass||"").trim();
+        if(!cid || cid==="class_3_5" || seen.has(cid)) return;
+        const existing=rows.find(function(c){
+          if(!c) return false;
+          try{return sameClassId(c.id||c.classId||c.grade||c.name||c.className||c.class||c._id||"",cid);}catch(_e){return false;}
+        }) || null;
+        const off=(typeof officialClassRow==="function")?officialClassRow(cid):null;
+        const label=(off&&off.name) || (existing&&(existing.name||existing.className)) || u.className || u.class || cid;
+        out.push({
+          ...(existing||{}),
+          id:cid,
+          classId:cid,
+          name:label,
+          grade:(off&&off.grade) || (existing&&existing.grade) || u.grade || "",
+          deleted:false,
+          status:"active",
+          active:true,
+          hidePreloaded:false,
+          permanentDeleted:false,
+          preloaded:false,
+          source:"active-student-roster-fallback"
         });
-        if(has32){
-          const off=officialClassRow("class_3_2")||{id:"class_3_2",name:"ثالث ثاني",grade:"3-2"};
-          out.push({...off,classId:"class_3_2",active:true,deleted:false,status:"active",preloaded:false,source:"restored-active-students"});
-          seen.add("class_3_2");
-        }
-      }
+        seen.add(cid);
+      });
     }catch(_e){}
 
     return out.sort(function(a,b){
@@ -3491,9 +3512,9 @@ function Landing({onLogin, prefillQuiz}) {
     // Student login is allowed only for active Firebase students, not PRELOADED_USERS.
     const u = activeReimportedStudent || firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && (u.studentId||"").toLowerCase()===id);
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
-    const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(d):adminDeletedClassSet();
-    const cid=canonicalClassId(u.classId||"");
-    if(delCls.has(cid)||delCls.has(String(u.classId||""))){setErr("تم أرشفة هذا الفصل أو حذف حساب الطالب. تواصل مع المعلم.\nThis class/account is archived. Contact your teacher.");setLoading(false);return;}
+    const cid=canonicalClassId(u.classId||u.className||u.class||"");
+    // LOGIN_ROSTER_FALLBACK_267: an ACTIVE current student row wins over stale class tombstones.
+    // The live login-class list below is the final authority.
     const liveLoginClasses=activeLoginClassesFromData(d);
     if(!liveLoginClasses.some(function(c){return sameClassId(c.id||c.classId, f.classId) && sameClassId(c.id||c.classId, cid);})){
       setErr("هذا الفصل غير موجود في Classes حاليًا. تواصل مع المعلم.\nThis class is not currently active in Classes.");
@@ -11674,11 +11695,25 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               {/* Data computation */}
               {(function(){
                 var fQuizzes = qrdQuiz==="all" ? myQuizzes : myQuizzes.filter(function(q){return q.id===qrdQuiz;});
+                var selectedQuizForScope = qrdQuiz==="all" ? null : (myQuizzes.find(function(q){return q.id===qrdQuiz;})||null);
+                function quizAllowsStudent(q,s){
+                  if(!q||!s) return true;
+                  var assigned=Array.isArray(q.assignedStudents)?q.assignedStudents.map(function(x){return String(x||"");}):[];
+                  var studentTokens=[s.id,s.studentId,s.email].filter(Boolean).map(function(x){return String(x);});
+                  if(assigned.length>0) return assigned.some(function(x){return studentTokens.includes(x);});
+                  var qClassIds=Array.isArray(q.classIds)?q.classIds:(q.classIds?[q.classIds]:[]);
+                  if(qClassIds.length>0){
+                    var sc=canonicalClassId(s.classId||s.className||s.class||"");
+                    return qClassIds.map(canonicalClassId).filter(Boolean).includes(sc) || qClassIds.map(function(x){return String(x||"");}).includes(String(s.classId||""));
+                  }
+                  return true;
+                }
                 var fStudents = myStudents.filter(function(s){
+                  var assignmentOk = selectedQuizForScope ? quizAllowsStudent(selectedQuizForScope,s) : true;
                   var clsOk = qrdClass==="all" || sameClassId(s.classId||s.className, qrdClass);
                   var srch = qrdSearch.trim();
                   var srchOk = studentMatchesSearch(s, srch);
-                  return clsOk && srchOk;
+                  return assignmentOk && clsOk && srchOk;
                 });
                 var qrdIdx = buildQrdResponseIndex(data.responses, fStudents, fQuizzes, qrdQuiz);
                 var allResps = qrdIdx.responses;
@@ -11686,7 +11721,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 var avg = scores.length ? Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length) : null;
                 var highest = scores.length ? Math.max.apply(null,scores) : null;
                 var lowest = scores.length ? Math.min.apply(null,scores) : null;
-                var missing = fStudents.filter(function(s){return !(qrdIdx.byStudentId[s.id]||[]).length;});
+                var missing = qrdQuiz==="all" ? [] : fStudents.filter(function(s){return !(qrdIdx.byStudentId[s.id]||[]).length;});
                 var participants = fStudents.filter(function(s){return (qrdIdx.byStudentId[s.id]||[]).length>0;}).length;
 
                 /* ── OVERVIEW TAB ── */
@@ -11697,7 +11732,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     {label:"Average",val:avg!==null?avg+"%":"—",icon:"📊",color:avg===null?C.mu:gc(avg)},
                     {label:"Highest",val:highest!==null?highest+"%":"—",icon:"🏆",color:C.s},
                     {label:"Lowest",val:lowest!==null?lowest+"%":"—",icon:"📉",color:lowest!==null?gc(lowest):C.mu},
-                    {label:"Missing",val:missing.length,icon:"❌",color:missing.length>0?C.d:C.s}
+                    {label:"Missing",val:qrdQuiz==="all"?"—":missing.length,icon:"❌",color:qrdQuiz==="all"?C.mu:(missing.length>0?C.d:C.s)}
                   ];
                   return <div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"6px",marginBottom:"11px"}}>
@@ -11730,7 +11765,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                         </div>
                       </Card>;
                     })()}
-                    {missing.length>0 && <Card style={{marginBottom:"10px",background:"#fef2f2",border:"1px solid #fecaca"}}>
+                    {qrdQuiz!=="all" && missing.length>0 && <Card style={{marginBottom:"10px",background:"#fef2f2",border:"1px solid #fecaca"}}>
                       <strong style={{fontSize:"12px",color:C.d,fontFamily:F,display:"block",marginBottom:"7px"}}>❌ Missing Students by Class</strong>
                       {myClasses.filter(function(c){return qrdClass==="all"||c.id===qrdClass;}).map(function(c){
                         var miss=missing.filter(function(s){return sameClassId(s.classId||s.className, c.id);});
@@ -14823,6 +14858,9 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
 <!-- BUILD_PROJECTS_V1_20260629 -->
 <!-- FOLLOWUP223_PROJECTS_PERIOD_MANUAL_ARABIC_STUDENT_20260708 -->
 <!-- INDEX255_WRITING_LIVE_ROSTER_ONLY_20260919 -->
+<!-- QUIZ_RESULTS_ASSIGNMENT_SCOPE_FIX_20260919 -->
+<!-- CLEANUP_RED_FLOATING_BUTTON_REMOVED_20260919 -->
+<!-- STUDENT_LOGIN_LIVE_CLASSES_ROSTER_FALLBACK_267_20260919 -->
 </body>
 </html>
 
@@ -15037,7 +15075,8 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
   function open(){const p=document.getElementById('eq263-panel');if(p)p.style.display='block';}
   function close(){const p=document.getElementById('eq263-panel');if(p)p.style.display='none';}
   function build(){
-    if(!teacher()||document.getElementById('eq263-fab'))return;
+    // CLEAN_UI_266: old-results cleanup is available only from the Cleanup tab; no floating red button.
+    return;
     const b=document.createElement('button');b.id='eq263-fab';b.textContent='🧹 تصفية النتائج القديمة';b.style.cssText='position:fixed;left:14px;bottom:74px;z-index:100020;border:0;border-radius:999px;background:#dc2626;color:#fff;padding:11px 14px;font-weight:1000;box-shadow:0 8px 24px rgba(15,23,42,.25);font-size:12px';b.onclick=open;document.body.appendChild(b);
     const p=document.createElement('div');p.id='eq263-panel';p.dir='rtl';p.style.cssText='display:none;position:fixed;inset:18px;z-index:100021;background:#f8fafc;border:1px solid #cbd5e1;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.35);overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;color:#0f172a';
     p.innerHTML='<div style="position:sticky;top:0;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:1000">🧹 تصفية شاملة للنتائج القديمة</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">العام الحالي يبدأ من '+CUT_TEXT+' · حسين #3209 Reading Progress محمي</div></div><button id="eq263-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:white;font-weight:900">إغلاق</button></div><div style="padding:14px;max-width:760px;margin:auto"><div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:11px;line-height:1.8;font-size:12px;color:#9a3412"><b>ماذا سيُحذف؟</b> نتائج الاختبارات القديمة وZipGrade/Gradebook ونتائج المشاريع وReading Theory وWriting والمتابعة القديمة. لا تُحذف أكواد المزايا ولا الطلاب الحاليون. تسجيلات حسين في Reading Progress وأجزاء الصوت المتبقية لا تُمس.</div><button id="eq263-scan" style="width:100%;margin-top:10px;border:0;border-radius:12px;padding:13px;background:#2563eb;color:white;font-weight:1000">🔎 فحص النتائج القديمة</button><div id="eq263-status" style="margin-top:9px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px;font-weight:900">جاهز.</div><div id="eq263-counts" style="margin-top:7px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:11px;line-height:1.8;color:#475569">لا توجد نتائج في المعاينة.</div><button id="eq263-purge" style="width:100%;margin:10px 0 22px;border:0;border-radius:12px;padding:13px;background:#dc2626;color:white;font-weight:1000">🗑️ حذف النتائج القديمة من المصدر</button></div>';
