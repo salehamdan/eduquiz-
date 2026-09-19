@@ -207,6 +207,8 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
+<!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
+
 <div id="root">
   <div style="min-height:100vh;background:#0f172a;display:flex;align-items:center;justify-content:center;flex-direction:column;">
     <div style="font-size:44px;margin-bottom:14px;">🎓</div>
@@ -5212,30 +5214,30 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
 
 function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
   const [tab,setTab] = useState("home");
-  const [taking,setTaking] = useState(directQuiz||null);
-  const [profileOpen,setProfileOpen] = useState(false);
-  const [reviewResp,setReviewResp] = useState(null);
-
-  const myResps = responsesForStudent(data.responses,user);
-  const myClass = data.classes.find(c=>c.id===user.classId);
-  const available = data.quizzes.filter(q=>{
-    // QUIZ_CLASS_LINK_ONLY_20260916:
-    // Keep the student UI unchanged. Only make quiz visibility use the same canonical class key
-    // so quizzes sent to Third Second/Fourth/Sixth appear even if older rows stored 3-2, 2-3, or class_3_2.
+  function quizAvailableToStudent(q){
+    if(!q || q.status!=="open" || (q.closeDate&&new Date(q.closeDate)<new Date())) return false;
     const studentCid = canonicalClassId(user.classId || user.className || user.class || "");
     const assigned = Array.isArray(q.assignedStudents) ? q.assignedStudents.map(x=>String(x||"")) : [];
     const myStudentTokens = [user.id,user.studentId,user.email].filter(Boolean).map(x=>String(x));
-    if(assigned.length>0){
-      if(!assigned.some(x=>myStudentTokens.includes(x))) return false;
-    } else {
-      const qClassIds = Array.isArray(q.classIds) ? q.classIds : (q.classIds ? [q.classIds] : []);
-      const canonicalQuizClasses = qClassIds.map(canonicalClassId).filter(Boolean);
-      const forMe = canonicalQuizClasses.length===0 || canonicalQuizClasses.includes(studentCid) || qClassIds.map(x=>String(x||"")).includes(String(user.classId||""));
-      if(!forMe) return false;
-    }
-    const open=q.status!=="closed"&&(!q.closeDate||new Date(q.closeDate)>=new Date());
-    return open;
-  });
+    if(assigned.length>0) return assigned.some(x=>myStudentTokens.includes(x));
+    const qClassIds = Array.isArray(q.classIds) ? q.classIds : (q.classIds ? [q.classIds] : []);
+    const canonicalQuizClasses = qClassIds.map(canonicalClassId).filter(Boolean);
+    // SAFE_DRAFT_268: empty audience is teacher-only. Direct links cannot bypass assignment.
+    if(canonicalQuizClasses.length===0) return false;
+    return canonicalQuizClasses.includes(studentCid) || qClassIds.map(x=>String(x||"")).includes(String(user.classId||""));
+  }
+  const [taking,setTaking] = useState(()=>directQuiz&&quizAvailableToStudent(directQuiz)?directQuiz:null);
+  const [profileOpen,setProfileOpen] = useState(false);
+  const [reviewResp,setReviewResp] = useState(null);
+  useEffect(()=>{
+    if(!directQuiz) return;
+    if(quizAvailableToStudent(directQuiz)) setTaking(directQuiz);
+    else if(clearDirect) clearDirect();
+  },[directQuiz&&directQuiz.id,directQuiz&&directQuiz.status,user&&user.id,user&&user.classId]);
+
+  const myResps = responsesForStudent(data.responses,user);
+  const myClass = data.classes.find(c=>c.id===user.classId);
+  const available = data.quizzes.filter(quizAvailableToStudent);
   const myAnn = data.announcements.filter(a=>!a.classIds||a.classIds.length===0||a.classIds.includes(user.classId));
   const skills = calcSkills(myResps,data.quizzes);
   const badges = calcBadges(myResps,data.quizzes);
@@ -5752,7 +5754,11 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(type==="Listening" && audioFile && String(audioFile).startsWith("worker-tts:")){
       setErr("⚠️ This old temporary AI voice cannot be saved. Generate AI Voice again to create a ready MP3 link, or use Device Voice.");window.scrollTo(0,0);return;
     }
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:(classIds||[]).map(canonicalClassId).filter(Boolean),timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:visibility==="private"?assignedStudents:[],openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:E.id?(E.status||"open"):"open",createdAt:E.createdAt||today()});
+    const saveClassIds=visibility==="classes"?(classIds||[]).map(canonicalClassId).filter(Boolean):[];
+    const saveAssignedStudents=visibility==="private"?assignedStudents:[];
+    const hasAudience=saveAssignedStudents.length>0 || (visibility==="classes" && saveClassIds.length>0);
+    const saveStatus=hasAudience?((E.status==="closed")?"closed":"open"):"draft";
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today()});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -5804,17 +5810,18 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           <div style={{marginTop:"11px"}}>
             <Label text="Who can see this quiz?"/>
             <div style={{display:"flex",gap:"6px",marginBottom:"9px",flexWrap:"wrap"}}>
-              <button onClick={()=>setVisibility("classes")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(visibility==="classes"?C.p:C.br),background:visibility==="classes"?"#eff6ff":"#fff",color:visibility==="classes"?C.p:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>👥 Classes / Everyone</button>
+              <button onClick={()=>setVisibility("classes")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(visibility==="classes"?C.p:C.br),background:visibility==="classes"?"#eff6ff":"#fff",color:visibility==="classes"?C.p:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>👥 اختر الفصول</button>
               <button onClick={()=>setVisibility("private")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(visibility==="private"?C.pu:C.br),background:visibility==="private"?"#faf5ff":"#fff",color:visibility==="private"?C.pu:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>🔒 Private (pick students)</button>
             </div>
             {visibility==="classes" && <div>
               {myClasses.length>0 ? <>
-                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 6px",fontFamily:F}}>Pick classes (or leave empty = all students see it) — all platform classes shown:</p>
+                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 6px",fontFamily:F}}>اختر فصلًا أو أكثر. إذا لم تحدد أي فصل فسيبقى الاختبار عندك فقط ولن يظهر لأي طالب.</p>
                 <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
                   {myClasses.map(c=>{const sel=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(sel?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"4px 11px",borderRadius:"7px",border:"2px solid "+(sel?C.p:C.br),background:sel?"#eff6ff":"#f8fafc",color:sel?C.p:C.mu,fontWeight:"600",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{c.name}</button>;})}
                 </div>
-              </> : <p style={{fontSize:"11px",color:C.mu,fontFamily:F}}>No classes yet — all students will see this quiz.</p>}
+              </> : <p style={{fontSize:"11px",color:C.mu,fontFamily:F}}>لا توجد فصول متاحة حاليًا — سيبقى الاختبار عندك فقط.</p>}
             </div>}
+            {((visibility==="classes" && (classIds||[]).length===0) || (visibility==="private" && assignedStudents.length===0)) && <div style={{marginTop:"8px",padding:"8px 10px",borderRadius:"8px",background:"#fffbeb",border:"1px solid #fde68a",color:"#92400e",fontSize:"11px",fontWeight:"800",fontFamily:F}}>🔒 محفوظ عند المعلم فقط — لن يظهر للطلاب حتى تحدد فصلًا أو طالبًا ثم تحفظ.</div>}
             {visibility==="private" && <div style={{background:"#faf5ff",borderRadius:"9px",padding:"10px"}}>
               <p style={{fontSize:"10px",color:"#6b21a8",margin:"0 0 7px",fontFamily:F}}>Pick whole classes and/or individual students from any class. ({assignedStudents.length} selected)</p>
               {classes.length>0 && <div style={{marginBottom:"9px"}}>
@@ -6081,7 +6088,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                   <option value="level3">Level 3 Intermediate</option>
                   <option value="level4">Level 4 Advanced</option>
                 </select></div>
-                <div><Label text="Words"/><input type="number" value={aiReadingWords} onChange={e=>setAiReadingWords(Math.max(60,Math.min(500,Number(e.target.value)||120)))} style={inp}/></div>
+                <div><Label text="Words"/><input type="number" min="60" max="500" step="1" value={aiReadingWords} onChange={e=>setAiReadingWords(e.target.value)} onBlur={()=>setAiReadingWords(v=>Math.max(60,Math.min(500,Number(v)||120)))} style={inp}/><div style={{fontSize:"9px",color:C.mu,marginTop:"3px",fontFamily:F}}>اكتب أي عدد من 60 إلى 500 كلمة، مثل 150 أو 200 أو 275.</div></div>
               </div>
               <Label text="Question type mode"/>
               <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
@@ -11018,7 +11025,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // QUIZ_FAST_ACTIONS_20260630: edit/open/close should not reload the whole platform.
   async function startEditQuiz(quiz){
     const current = fastPatchedQuiz(quiz);
-    const wasOpen = current.status!=="closed";
+    const wasOpen = current.status==="open";
     const editing = {...current, status: wasOpen ? "closed" : current.status};
     setResumeAfterEdit(wasOpen);
     setEditingQuiz(editing);
@@ -11034,7 +11041,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   }
   // On save while editing: reopen the quiz if it was open before editing. No full reload.
   async function saveEditedQuiz(q){
-    const finalQuiz = {...q, status: resumeAfterEdit ? "open" : q.status};
+    const finalQuiz = {...q, status: q.status==="draft" ? "draft" : (resumeAfterEdit ? "open" : q.status)};
     patchQuizFast(q.id, finalQuiz);
     setQuizBusy(prev=>({...prev,[q.id]:true}));
     setQuizPerfMsg("Saving quiz...");
@@ -11062,6 +11069,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   async function toggleQuiz(quiz){
     if(quizBusy[quiz.id]) return;
     const oldStatus=quiz.status;
+    if(oldStatus==="draft"){ setQuizPerfMsg("🔒 هذا الاختبار عندك فقط. افتح Edit وحدد فصلًا أو طلابًا ثم احفظ ليظهر لهم."); setTimeout(()=>setQuizPerfMsg(""),2600); return; }
     const newStatus=oldStatus==="closed"?"open":"closed";
     const next={...quiz,status:newStatus};
     patchQuizFast(quiz.id,{status:newStatus});
@@ -11957,12 +11965,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
                     <div style={{width:"36px",height:"36px",borderRadius:"8px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="closed"?C.d:C.s,fontFamily:F}}>{quiz.status==="closed"?"🔒 Closed":"🟢 Open"} · Code: {quiz.code}</span></div>
+                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
-                      <Btn size="sm" color={C.s} onClick={()=>setShareModal(quiz)}>🔗 Share</Btn>
+                      <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
                       <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
-                      <Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>
+                      {quiz.status==="draft"?<Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>:<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}
                       <Btn size="sm" color={C.d} onClick={()=>delQuiz(quiz.id)}>🗑</Btn>
                     </div>
                   </div>
@@ -12386,14 +12394,14 @@ function App() {
       if(useCachedStartup){
         try{
           setData(cached);
-          if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase());if(cq)setDirectQuiz(cq);}
+          if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(cq)setDirectQuiz(cq);}
           if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cached))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));else if(sess.role==="student"){ try{clearSession();localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} }}
           setLoading(false);
         }catch(e){}
       }
       const d=await loadAllData();setData(d);
       // Check for ?quiz=CODE link
-      if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase());if(q)setDirectQuiz(q);}
+      if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
       else if(FIREBASE_OK && auth && auth.currentUser){
         const au=auth.currentUser;
