@@ -14843,3 +14843,406 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
 
 <!-- CLEANUP256_FULL_LEGACY_CLEANUP_PROTECT_HUSSEIN_RP_20260919 -->
 <!-- PROJECT224_ARABIC_RUBRIC_ENGLISH_REQUIREMENT_20260708 -->
+<script>
+// RP257_HUSSEIN_FAYEZ_RECOVERY_20260919
+(function(){
+  'use strict';
+  const R257 = {
+    sid:'3209',
+    fullName:'حسين بن محمد بن حسين الفايز',
+    shortName:'حسين الفايز',
+    candidates:[],
+    tasks:new Map(),
+    currentIds:new Set(),
+    currentPaths:new Set(),
+    scanning:false,
+    restoring:false
+  };
+
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
+  function digits(v){return String(v||'').replace(/\D/g,'');}
+  function normAr(v){return String(v||'').toLowerCase().replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\u064B-\u065F\u0670]/g,'').replace(/\s+/g,' ').trim();}
+  function isTeacher(){
+    try{
+      const s=JSON.parse(localStorage.getItem('eq_session')||'{}');
+      const r=String(s.role||s.type||'').toLowerCase();
+      if(r.includes('teacher')) return true;
+    }catch(e){}
+    const t=(document.body&&document.body.innerText)||'';
+    return /TEACHER DASHBOARD|Teacher Dashboard/i.test(t);
+  }
+  function isHussein(r){
+    if(!r || typeof r!=='object') return false;
+    const vals=[r.studentNumber,r.studentNo,r.studentId,r.studentUserId,r.userId,r.uid,r.password,r.idNumber,r.studentCode];
+    if(vals.some(v=>digits(v)===R257.sid)) return true;
+    const n=normAr([r.studentName,r.name,r.fullName,r.shortName].filter(Boolean).join(' '));
+    return n.includes('حسين') && n.includes('محمد') && n.includes('الفايز');
+  }
+  function looksLikeRpRecord(r){
+    return !!(r && typeof r==='object' && (r.audioId||r.audioUrl||r.audioDataUrl||r.audioPath||r.taskId||r.taskTitle||r.referenceText||r.transcript||r.analysis||r.analysisStatus||r.submittedAt||r.recordingSeconds||r.wcpm||r.accuracy));
+  }
+  function recordTime(r){
+    const raw=r&&(r.submittedAt||r.createdAt||r.updatedAt||r.recordedAt||r.timestamp||r.ts);
+    const n=typeof raw==='number'?raw:Date.parse(raw||'');
+    return Number.isFinite(n)?n:0;
+  }
+  function parseStorageName(item){
+    const name=String(item.name||'');
+    const base=name.replace(/\.[^.]+$/,'');
+    const m=base.match(/^(.*)-(\d{12,14})$/);
+    const ts=m?Number(m[2]):0;
+    return {taskId:m?m[1]:'', ts:Number.isFinite(ts)?ts:0};
+  }
+  function classFromPath(path){
+    const m=String(path||'').match(/^reading-progress\/([^/]+)\/(?:student_)?3209\//i);
+    return m?m[1]:'class_3_2';
+  }
+  function classLabel(cid){
+    const c=String(cid||'');
+    if(c==='class_3_2'||c==='3-2'||c==='2'||c==='32') return 'ثالث ثاني';
+    return c||'ثالث ثاني';
+  }
+  function cleanForJson(c){
+    return {
+      key:c.key, sources:Array.from(c.sources||[]), id:c.id||'', taskId:c.taskId||'', taskTitle:c.taskTitle||'',
+      date:c.date||'', fullPath:c.fullPath||'', audioId:c.audioId||'', hasStorage:!!c.downloadURL,
+      hasIndexedDb:!!c.localAudioAvailable, hasDataUrl:!!c.audioDataUrl, existing:!!c.existing,
+      status:c.status||'', score:c.score==null?'':c.score, classId:c.classId||''
+    };
+  }
+
+  async function loadTasksAndExisting(){
+    R257.tasks.clear(); R257.currentIds.clear(); R257.currentPaths.clear();
+    if(typeof db==='undefined' || !db || !db.collection) throw new Error('Firebase Firestore غير متاح في هذه الصفحة.');
+    try{
+      const ts=await db.collection('readingTasks').get();
+      ts.docs.forEach(d=>{const x={...d.data(),id:d.id}; R257.tasks.set(String(x.id),x);});
+    }catch(e){ console.warn('RP257 tasks scan',e); }
+    try{
+      const ss=await db.collection('readingSubmissions').get();
+      ss.docs.forEach(d=>{
+        const x={...d.data(),id:d.id};
+        if(isHussein(x)){
+          R257.currentIds.add(String(x.id||d.id));
+          if(x.audioPath) R257.currentPaths.add(String(x.audioPath));
+        }
+      });
+    }catch(e){ console.warn('RP257 current submissions scan',e); }
+  }
+
+  function addCandidate(map, raw){
+    const rec=raw.record||null;
+    const path=String(raw.fullPath || (rec&&rec.audioPath) || '');
+    const id=String(raw.id || (rec&&(rec.id||rec._id)) || '');
+    const audioId=String(raw.audioId || (rec&&rec.audioId) || '');
+    let key=path?'path:'+path:(id?'id:'+id:(audioId?'audio:'+audioId:'anon:'+(raw.taskId||'')+':'+(raw.ts||Date.now())));
+    let c=map.get(key);
+    if(!c){
+      c={key,sources:new Set(),record:null,fullPath:'',downloadURL:'',metadata:null,id:'',audioId:'',audioDataUrl:'',localAudioAvailable:false,localAudioBlob:null,taskId:'',taskTitle:'',referenceText:'',ts:0,date:'',classId:'class_3_2',existing:false,status:'',score:null};
+      map.set(key,c);
+    }
+    if(raw.source) c.sources.add(raw.source);
+    if(rec){
+      if(!c.record || recordTime(rec)>recordTime(c.record)) c.record=rec;
+      c.id=c.id||String(rec.id||rec._id||'');
+      c.audioId=c.audioId||String(rec.audioId||'');
+      c.audioDataUrl=c.audioDataUrl||String(rec.audioDataUrl||'');
+      c.fullPath=c.fullPath||String(rec.audioPath||'');
+      c.taskId=c.taskId||String(rec.taskId||rec.taskKey||'');
+      c.taskTitle=c.taskTitle||String(rec.taskTitle||rec.title||rec.taskName||'');
+      c.referenceText=c.referenceText||String(rec.referenceText||rec.taskText||rec.text||'');
+      c.ts=c.ts||recordTime(rec);
+      c.classId=String(rec.classId||rec.className||c.classId||'class_3_2');
+      c.status=String(rec.status||rec.reviewStatus||'');
+      const sc=Number(rec.teacherScore??rec.finalScore??rec.score??(rec.analysis&&rec.analysis.finalScore));
+      if(Number.isFinite(sc)) c.score=sc;
+    }
+    if(raw.fullPath) c.fullPath=String(raw.fullPath);
+    if(raw.downloadURL) c.downloadURL=String(raw.downloadURL);
+    if(raw.metadata) c.metadata=raw.metadata;
+    if(raw.id) c.id=c.id||String(raw.id);
+    if(raw.audioId) c.audioId=c.audioId||String(raw.audioId);
+    if(raw.audioDataUrl) c.audioDataUrl=c.audioDataUrl||String(raw.audioDataUrl);
+    if(raw.taskId) c.taskId=c.taskId||String(raw.taskId);
+    if(raw.taskTitle) c.taskTitle=c.taskTitle||String(raw.taskTitle);
+    if(raw.referenceText) c.referenceText=c.referenceText||String(raw.referenceText);
+    if(raw.ts) c.ts=c.ts||Number(raw.ts)||0;
+    if(raw.classId) c.classId=String(raw.classId);
+    if(c.fullPath) c.classId=classFromPath(c.fullPath)||c.classId;
+    const task=R257.tasks.get(String(c.taskId||''));
+    if(task){
+      c.taskTitle=c.taskTitle||String(task.title||task.name||'');
+      c.referenceText=c.referenceText||String(task.text||task.referenceText||'');
+    }
+    if(!c.taskTitle) c.taskTitle=c.taskId?('مهمة مستعادة · '+c.taskId):'Reading Progress مستعاد';
+    const dt=c.ts || (c.metadata&&Date.parse(c.metadata.timeCreated||c.metadata.updated||'')) || 0;
+    c.ts=dt;
+    c.date=dt?new Date(dt).toLocaleString('ar-SA'):'غير معروف';
+    c.existing=!!((c.id&&R257.currentIds.has(c.id)) || (c.fullPath&&R257.currentPaths.has(c.fullPath)));
+    return c;
+  }
+
+  function walkJson(value, keyName, out, depth){
+    if(depth>7 || value==null) return;
+    if(Array.isArray(value)){
+      value.forEach(v=>walkJson(v,keyName,out,depth+1)); return;
+    }
+    if(typeof value!=='object') return;
+    if(isHussein(value) && looksLikeRpRecord(value)) out.push({keyName,record:value});
+    Object.keys(value).forEach(k=>{
+      if(k==='blob' || k==='audioDataUrl') return;
+      const v=value[k];
+      if(v && (typeof v==='object')) walkJson(v,keyName,out,depth+1);
+    });
+  }
+
+  async function scanLocal(map, log){
+    const found=[];
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k || !/(rp|reading|fast_data_cache)/i.test(k)) continue;
+      try{
+        const txt=localStorage.getItem(k); if(!txt || txt.length<2) continue;
+        const obj=JSON.parse(txt);
+        walkJson(obj,k,found,0);
+      }catch(e){}
+    }
+    found.forEach(x=>addCandidate(map,{source:'LocalStorage: '+x.keyName,record:x.record}));
+    log('السجلات المحلية المطابقة: '+found.length);
+
+    // Check IndexedDB audio only for known audioIds from matching Hussein records.
+    let dbi=null;
+    try{
+      dbi=await new Promise((resolve,reject)=>{const q=indexedDB.open('EduQuizRP_AudioDB',1);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);q.onupgradeneeded=()=>{};});
+    }catch(e){ dbi=null; }
+    if(dbi){
+      for(const c of map.values()){
+        if(!c.audioId) continue;
+        try{
+          const item=await new Promise((resolve,reject)=>{const tx=dbi.transaction('audios','readonly');const q=tx.objectStore('audios').get(c.audioId);q.onsuccess=()=>resolve(q.result||null);q.onerror=()=>reject(q.error);});
+          if(item&&item.blob){c.localAudioAvailable=true;c.localAudioBlob=item.blob;c.sources.add('IndexedDB audio');}
+        }catch(e){}
+      }
+      try{dbi.close();}catch(e){}
+    }
+  }
+
+  async function listAllDeep(ref, out, depth){
+    if(depth>4) return;
+    const res=await ref.listAll();
+    (res.items||[]).forEach(x=>out.push(x));
+    for(const p of (res.prefixes||[])) await listAllDeep(p,out,depth+1);
+  }
+
+  async function scanStorage(map, log){
+    if(typeof firebase==='undefined' || !firebase.storage) throw new Error('Firebase Storage غير متاح.');
+    const st=firebase.storage();
+    const root=st.ref().child('reading-progress');
+    let top;
+    try{top=await root.listAll();}catch(e){throw new Error('تعذر استعراض مجلد reading-progress في Storage: '+(e.message||e));}
+    let folders=0, files=0;
+    for(const classPref of (top.prefixes||[])){
+      let cl;
+      try{cl=await classPref.listAll();}catch(e){continue;}
+      for(const studentPref of (cl.prefixes||[])){
+        if(digits(studentPref.name)!==R257.sid) continue;
+        folders++;
+        const items=[];
+        try{await listAllDeep(studentPref,items,0);}catch(e){console.warn('RP257 folder scan',e);}
+        for(const item of items){
+          files++;
+          let meta=null,url='';
+          try{meta=await item.getMetadata();}catch(e){}
+          try{url=await item.getDownloadURL();}catch(e){}
+          const p=parseStorageName(item);
+          addCandidate(map,{source:'Firebase Storage',fullPath:item.fullPath||item.location&&item.location.path||'',downloadURL:url,metadata:meta,taskId:p.taskId,ts:p.ts,classId:classPref.name});
+        }
+      }
+    }
+    log('مجلدات 3209 في Storage: '+folders+' · ملفات الصوت الموجودة: '+files);
+  }
+
+  async function scan(){
+    if(R257.scanning) return;
+    R257.scanning=true; R257.candidates=[];
+    setStatus('جاري الفحص فقط — لن يتم حذف أو استعادة أي شيء الآن…');
+    setLog('');
+    const map=new Map();
+    try{
+      await loadTasksAndExisting();
+      appendLog('تم تحميل مهام Reading Progress الحالية وسجلات 3209 الموجودة حاليًا.');
+      try{ await scanLocal(map,appendLog); }catch(e){appendLog('⚠️ الفحص المحلي: '+(e.message||e));}
+      try{ await scanStorage(map,appendLog); }catch(e){appendLog('⚠️ Storage: '+(e.message||e));}
+      R257.candidates=Array.from(map.values()).sort((a,b)=>(b.ts||0)-(a.ts||0));
+      renderCandidates();
+      const recoverable=R257.candidates.filter(c=>!c.existing&&(c.downloadURL||c.localAudioAvailable||c.audioDataUrl)).length;
+      setStatus('✅ انتهى الفحص. تم العثور على '+R257.candidates.length+' أثر/تسجيل، منها '+recoverable+' قابل للاستعادة الآن. لم يتم تغيير أي بيانات.');
+    }catch(e){
+      setStatus('❌ فشل الفحص: '+(e.message||e));
+    }
+    R257.scanning=false;
+  }
+
+  function sessionTeacherId(){
+    try{const s=JSON.parse(localStorage.getItem('eq_session')||'{}');return String(s.id||s.uid||s.email||'GLOBAL');}catch(e){return 'GLOBAL';}
+  }
+  function clearDeleteTombstone(id){
+    if(!id) return;
+    try{
+      const k='rp_deleted_attempt_ids_v2_exact';
+      const a=JSON.parse(localStorage.getItem(k)||'[]');
+      localStorage.setItem(k,JSON.stringify((Array.isArray(a)?a:[]).filter(x=>String(x)!==String(id))));
+    }catch(e){}
+  }
+  function mergeLocalRecord(rec){
+    for(const k of ['rp_attempt_records_v11','eq_readingSubmissions']){
+      try{
+        const a=JSON.parse(localStorage.getItem(k)||'[]');
+        const arr=Array.isArray(a)?a:[];
+        const next=arr.filter(x=>String(x&&(x.id||x._id)||'')!==String(rec.id));
+        next.push(rec); localStorage.setItem(k,JSON.stringify(next));
+      }catch(e){}
+    }
+  }
+  function dataUrlToBlob(dataUrl){
+    const parts=String(dataUrl||'').split(','); if(parts.length<2) return null;
+    const mime=(parts[0].match(/data:([^;]+)/)||[])[1]||'audio/webm';
+    const bin=atob(parts[1]); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+    return new Blob([u],{type:mime});
+  }
+  async function ensureAudio(c){
+    if(c.downloadURL) return {url:c.downloadURL,path:c.fullPath||'',dataUrl:''};
+    let blob=c.localAudioBlob||null;
+    if(!blob && c.audioDataUrl){ try{blob=dataUrlToBlob(c.audioDataUrl);}catch(e){} }
+    if(blob && typeof firebase!=='undefined' && firebase.storage){
+      const ts=c.ts||Date.now();
+      const tid=String(c.taskId||'recovered-task').replace(/[^a-zA-Z0-9_\-]/g,'_').slice(0,80);
+      const path='reading-progress/class_3_2/3209/'+tid+'-'+ts+'-recovered257.webm';
+      const ref=firebase.storage().ref().child(path);
+      await ref.put(blob,{contentType:blob.type||'audio/webm',customMetadata:{recoveredBy:'RP257',studentNumber:'3209'}});
+      return {url:await ref.getDownloadURL(),path:path,dataUrl:''};
+    }
+    if(c.audioDataUrl && c.audioDataUrl.length<700000) return {url:'',path:'',dataUrl:c.audioDataUrl};
+    throw new Error('لا يوجد ملف صوت متاح لهذا السجل.');
+  }
+  function normalizeRecoveredStatus(base){
+    const s=String(base.status||base.reviewStatus||'').toLowerCase();
+    const score=Number(base.teacherScore??base.finalScore??base.score??(base.analysis&&base.analysis.finalScore));
+    if((s==='accepted'||s==='approved'||base.accepted===true||base.approved===true) && Number.isFinite(score)) return 'accepted';
+    if(s==='rejected') return 'rejected';
+    return 'submitted';
+  }
+  async function restoreCandidate(c){
+    const base={...(c.record||{})};
+    const audio=await ensureAudio(c);
+    const task=R257.tasks.get(String(c.taskId||base.taskId||''))||{};
+    let id=String(base.id||base._id||'');
+    if(!id || /^local_counter_/i.test(id) || /^deleted_/i.test(id)) id='recovered_3209_'+(c.ts||Date.now())+'_'+Math.random().toString(36).slice(2,8);
+    const now=new Date().toISOString();
+    const status=normalizeRecoveredStatus(base);
+    const rec={...base};
+    ['_id','deletedAt','cleanupDeletedAt','adminDeletedAt','rpExactDeleted','exactAttemptDeleted','deletedAttemptExact','deleteScope','deleteMode','tombstoneFor'].forEach(k=>delete rec[k]);
+    rec.id=id;
+    rec.source='rp_recovered_257';
+    rec.recoverySource=Array.from(c.sources||[]).join(' + ');
+    rec.recoveryVersion='257';
+    rec.recoveredAt=now;
+    rec.studentId=String(base.studentId||base.studentUserId||'student_3209').includes('3209')?String(base.studentId||base.studentUserId):'student_3209';
+    rec.studentUserId=rec.studentId; rec.userId=rec.studentId; rec.studentNumber='3209'; rec.studentName=R257.fullName;
+    rec.classId=String(base.classId||c.classId||'class_3_2'); rec.className=String(base.className||classLabel(rec.classId));
+    rec.taskId=String(base.taskId||c.taskId||task.id||'recovered-rp-task');
+    rec.taskTitle=String(base.taskTitle||c.taskTitle||task.title||'Reading Progress مستعاد');
+    rec.referenceText=String(base.referenceText||c.referenceText||task.text||task.referenceText||'');
+    rec.teacherId=String(base.teacherId||task.teacherId||sessionTeacherId());
+    rec.audioUrl=audio.url||''; rec.audioPath=audio.path||String(base.audioPath||c.fullPath||''); rec.audioDataUrl=audio.dataUrl||'';
+    rec.audioType=String(base.audioType||(c.localAudioBlob&&c.localAudioBlob.type)||'audio/webm');
+    if(c.metadata&&c.metadata.size) rec.audioSize=Number(c.metadata.size)||base.audioSize||0;
+    rec.createdAt=base.createdAt||base.submittedAt||(c.ts?new Date(c.ts).toISOString():now);
+    rec.submittedAt=base.submittedAt||rec.createdAt; rec.updatedAt=now;
+    rec.deleted=false; rec.visibleToStudent=true;
+    if(status==='accepted'){
+      rec.status='accepted'; rec.reviewStatus='accepted'; rec.teacherReview='accepted'; rec.teacherReviewStatus='accepted'; rec.studentStatus='accepted'; rec.accepted=true; rec.approved=true; rec.teacherAccepted=true; rec.teacherApproved=true; rec.pending=false; rec.scoreVisible=true;
+    }else if(status==='rejected'){
+      rec.status='rejected'; rec.reviewStatus='rejected'; rec.teacherReview='rejected'; rec.teacherReviewStatus='rejected'; rec.studentStatus='rejected'; rec.pending=false; rec.accepted=false; rec.approved=false; rec.scoreVisible=false;
+    }else{
+      rec.status='submitted'; rec.reviewStatus='pending'; rec.teacherReview='pending'; rec.teacherReviewStatus='pending'; rec.studentStatus='pending'; rec.pending=true; rec.accepted=false; rec.approved=false; rec.teacherAccepted=false; rec.teacherApproved=false; rec.scoreVisible=false;
+      if(!rec.analysisStatus || /deleted/i.test(String(rec.analysisStatus))) rec.analysisStatus=rec.analysis?'Completed':'Pending';
+    }
+    await db.collection('readingSubmissions').doc(id).set(rec);
+    clearDeleteTombstone(id); mergeLocalRecord(rec);
+    c.existing=true; c.id=id;
+    return rec;
+  }
+
+  async function restoreSelected(){
+    if(R257.restoring) return;
+    const checked=Array.from(document.querySelectorAll('.rp257-check:checked')).map(x=>Number(x.value)).filter(Number.isFinite);
+    if(!checked.length){alert('حدد تسجيلًا واحدًا على الأقل للاستعادة.');return;}
+    const phrase=prompt('سيتم إنشاء/إعادة إنشاء '+checked.length+' سجل Reading Progress لحسين الفايز #3209 فقط.\nلا يوجد حذف في هذه العملية.\nاكتب بالضبط: استعادة 3209');
+    if(String(phrase||'').trim()!=='استعادة 3209') return;
+    R257.restoring=true; setStatus('جاري الاستعادة… لا تغلق الصفحة.');
+    let ok=0,fail=0; const errors=[];
+    for(const idx of checked){
+      const c=R257.candidates[idx]; if(!c||c.existing) continue;
+      try{await restoreCandidate(c);ok++;appendLog('✅ تمت استعادة: '+c.taskTitle+' · '+c.date);}catch(e){fail++;errors.push(c.taskTitle+': '+(e.message||e));appendLog('❌ فشل: '+c.taskTitle+' · '+(e.message||e));}
+    }
+    R257.restoring=false;
+    renderCandidates();
+    setStatus('انتهت الاستعادة. نجح: '+ok+' · فشل: '+fail+(fail?' — راجع سجل التفاصيل.':''));
+    try{window.dispatchEvent(new CustomEvent('rp-live-refresh',{detail:{collection:'readingSubmissions',recovery:'257'}}));}catch(e){}
+  }
+
+  function exportScan(){
+    if(!R257.candidates.length){alert('نفذ الفحص أولًا.');return;}
+    const data={exportedAt:new Date().toISOString(),studentNumber:'3209',studentName:R257.fullName,candidates:R257.candidates.map(cleanForJson)};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RP257_Hussein_3209_scan_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+  }
+
+  function setStatus(t){const el=document.getElementById('rp257-status');if(el)el.textContent=t;}
+  function setLog(t){const el=document.getElementById('rp257-log');if(el)el.textContent=t||'';}
+  function appendLog(t){const el=document.getElementById('rp257-log');if(el)el.textContent+=(el.textContent?'\n':'')+t;}
+  function sourceText(c){return Array.from(c.sources||[]).join(' + ')||'غير معروف';}
+  function renderCandidates(){
+    const box=document.getElementById('rp257-results'); if(!box)return;
+    if(!R257.candidates.length){box.innerHTML='<div style="padding:12px;color:#64748b;text-align:center">لم تظهر نتائج بعد. اضغط «فحص فقط».</div>';return;}
+    box.innerHTML=R257.candidates.map((c,i)=>{
+      const can=!c.existing && !!(c.downloadURL||c.localAudioAvailable||c.audioDataUrl);
+      const audio=c.downloadURL?'Firebase Storage':(c.localAudioAvailable?'صوت محلي IndexedDB':(c.audioDataUrl?'Audio Data محلي':'لا يوجد صوت'));
+      const st=c.existing?'✅ موجود حاليًا':(can?'🛟 قابل للاستعادة':'⚠️ بيانات دون صوت');
+      return '<div style="border:1px solid #dbeafe;border-radius:12px;padding:10px;background:#fff;margin-bottom:8px">'+
+        '<div style="display:flex;gap:9px;align-items:flex-start"><input class="rp257-check" type="checkbox" value="'+i+'" '+(can?'':'disabled')+' style="width:20px;height:20px;margin-top:3px">'+
+        '<div style="flex:1;min-width:0"><div style="font-weight:900;color:#0f172a">'+esc(c.taskTitle)+'</div>'+ 
+        '<div style="font-size:12px;color:#475569;margin-top:3px">'+esc(c.date)+' · '+esc(st)+'</div>'+ 
+        '<div style="font-size:11px;color:#64748b;margin-top:4px">المصدر: '+esc(sourceText(c))+' · الصوت: '+esc(audio)+'</div>'+ 
+        (c.fullPath?'<div dir="ltr" style="font-size:10px;color:#94a3b8;overflow-wrap:anywhere;margin-top:4px">'+esc(c.fullPath)+'</div>':'')+
+        (c.status?'<div style="font-size:11px;color:#475569;margin-top:4px">الحالة القديمة: '+esc(c.status)+(c.score!=null?' · الدرجة: '+esc(c.score):'')+'</div>':'')+
+        '</div></div></div>';
+    }).join('');
+  }
+
+  function openPanel(){const p=document.getElementById('rp257-panel');if(p){p.style.display='block';setTimeout(()=>p.scrollIntoView({block:'start'}),50);}}
+  function closePanel(){const p=document.getElementById('rp257-panel');if(p)p.style.display='none';}
+  function buildUi(){
+    if(document.getElementById('rp257-fab')) return;
+    const fab=document.createElement('button');fab.id='rp257-fab';fab.type='button';fab.textContent='🛟 RP 3209';
+    fab.style.cssText='position:fixed;left:14px;bottom:18px;z-index:100000;border:0;border-radius:999px;background:#0f766e;color:#fff;padding:12px 15px;font-weight:1000;box-shadow:0 10px 28px rgba(15,23,42,.28);font-size:13px';fab.onclick=openPanel;document.body.appendChild(fab);
+    const p=document.createElement('div');p.id='rp257-panel';p.dir='rtl';p.style.cssText='display:none;position:fixed;inset:10px;z-index:100001;background:#f8fafc;border:1px solid #cbd5e1;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.35);overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;color:#0f172a';
+    p.innerHTML='<div style="position:sticky;top:0;z-index:2;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;gap:10px;align-items:center"><div><div style="font-size:18px;font-weight:1000">🛟 استعادة Reading Progress — حسين الفايز #3209</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">Recovery 257 · فحص واستعادة فقط — لا توجد أي وظيفة حذف في هذه اللوحة</div></div><button id="rp257-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:#fff;font-weight:900">إغلاق</button></div>'+ 
+    '<div style="padding:12px;max-width:900px;margin:auto"><div style="background:#ecfdf5;border:1px solid #86efac;border-radius:12px;padding:10px;font-size:12px;line-height:1.7;color:#166534"><b>ماذا يفعل الفحص؟</b> يبحث أولًا عن ملفات الصوت الباقية في Firebase Storage تحت الطالب 3209، ثم يبحث في ذاكرة هذا الجهاز وIndexedDB عن أي سجل/صوت قديم لحسين. لا يكتب شيئًا في Firebase أثناء الفحص.</div>'+ 
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><button id="rp257-scan" style="border:0;border-radius:10px;padding:10px 13px;background:#2563eb;color:white;font-weight:900">🔎 فحص فقط</button><button id="rp257-export" style="border:0;border-radius:10px;padding:10px 13px;background:#64748b;color:white;font-weight:900">⬇️ تصدير نتيجة الفحص</button><button id="rp257-restore" style="border:0;border-radius:10px;padding:10px 13px;background:#16a34a;color:white;font-weight:900">🛟 استعادة المحدد</button></div>'+ 
+    '<div id="rp257-status" style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:9px;font-size:12px;font-weight:800;margin-bottom:8px">جاهز للفحص.</div>'+ 
+    '<pre id="rp257-log" style="white-space:pre-wrap;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px;font-size:11px;max-height:150px;overflow:auto;color:#7c2d12"></pre>'+ 
+    '<div id="rp257-results" style="margin-top:10px"></div></div>';
+    document.body.appendChild(p);
+    document.getElementById('rp257-close').onclick=closePanel;
+    document.getElementById('rp257-scan').onclick=scan;
+    document.getElementById('rp257-export').onclick=exportScan;
+    document.getElementById('rp257-restore').onclick=restoreSelected;
+    renderCandidates();
+  }
+  function boot(){if(!isTeacher())return;buildUi();}
+  setTimeout(boot,1200);setTimeout(boot,3500);document.addEventListener('click',function(){setTimeout(boot,100);},true);
+  window.RP257_HusseinRecovery={scan,restoreSelected,open:openPanel};
+})();
+</script>
