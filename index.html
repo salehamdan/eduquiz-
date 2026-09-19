@@ -583,6 +583,22 @@ function responseBelongsToStudent(resp, student){
   if(!resp || !student) return false;
   const __ck = __eqRespStudentCacheKey(resp, student);
   if(__eqRespStudentMemo.has(__ck)) return __eqRespStudentMemo.get(__ck);
+  // ACADEMIC_YEAR_1448_RESULT_ISOLATION_20260919
+  // Never attach a clearly old result to a newly imported student just because the numeric ID was reused.
+  try{
+    const __cut=Date.parse("2026-08-01T00:00:00");
+    const __vals=[resp.updatedAt,resp.reviewedAt,resp.submittedAt,resp.completedAt,resp.importedAt,resp.createdAt,resp.date,resp.timestamp,resp.ts];
+    let __t=0;
+    for(const __v of __vals){
+      if(__v===undefined||__v===null||__v==="") continue;
+      if(typeof __v==="number"&&Number.isFinite(__v)){__t=__v<100000000000?__v*1000:__v;break;}
+      const __n=Number(__v); if(Number.isFinite(__n)&&String(__v).trim()!==""){__t=__n<100000000000?__n*1000:__n;break;}
+      const __d=Date.parse(String(__v)); if(Number.isFinite(__d)){__t=__d;break;}
+    }
+    if(__t&&__t<__cut) return __eqMemoReturn(__ck,false);
+    const __rn=String(resp.studentName||resp.name||resp.restoredFromName||"").trim();
+    if(__rn&&String(student.name||student.shortName||"").trim()&&!studentNameMatches(student,__rn)) return __eqMemoReturn(__ck,false);
+  }catch(_e){}
   const studentDigits = eqDigits(student.studentId || student.id || student.number || student.studentNumber || "");
   const studentAliasIds = [].concat(student.aliasIds||[], student.linkedIds||[], student.mergeIds||[]);
   const studentAliasNums = [].concat(student.aliasStudentIds||[], student.linkedStudentIds||[], student.mergeStudentIds||[]);
@@ -591,10 +607,7 @@ function responseBelongsToStudent(resp, student){
   if(rids.some(x=>ids.includes(x))) return __eqMemoReturn(__ck,true);
   const rDigits = rids.map(eqDigits).filter(Boolean);
   if(studentDigits && rDigits.includes(studentDigits)) return __eqMemoReturn(__ck,true);
-  // NUMERIC_STUDENT_ID_LINK_FIX_20260610
-  // النتائج القديمة قد تحفظ رقم الطالب فقط مثل 2410/2415/2420 أو بصيغة أطول تنتهي برقم الطالب.
-  // نربطها بالقائمة الرسمية حتى تظهر الأسماء بدل الأرقام.
-  if(studentDigits && studentDigits.length>=4 && rDigits.some(function(x){return x && x.length>studentDigits.length && x.endsWith(studentDigits);})){ return __eqMemoReturn(__ck,true); }
+  // Old suffix-based numeric linking disabled for 1448: reused student numbers must not inherit previous-year results.
   const rText = [resp.studentName, resp.name, resp.restoredFromName, resp.email].filter(Boolean).join(" ");
   if(rText && studentNameMatches(student, rText)) return __eqMemoReturn(__ck,true);
   return __eqMemoReturn(__ck,false);
@@ -14834,7 +14847,153 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
         'table{border-collapse:separate;border-spacing:0;width:100%;min-width:1200px;background:white;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden}th,td{border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:8px 9px;font-size:12px;text-align:center;vertical-align:top}th{background:#0f172a;color:white;position:sticky;top:0;z-index:2}.name{text-align:right;font-weight:900}.total{font-weight:900;color:#2563eb}.grand{font-weight:900;color:#7c3aed}.ok{color:#166534;background:#ecfdf5}.warn{color:#92400e;background:#fffbeb}.notes{text-align:right;min-width:260px;color:#475569}.wrap{overflow:auto;max-height:72vh;border-radius:14px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.summary div{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:10px;font-weight:900}.ltr{direction:ltr;display:inline-block}@media print{button,.actions{display:none}.wrap{max-height:none;overflow:visible}body{background:white;margin:8px}th{position:static}}'+
         '</style></head><body><div class="top"><div><h1>📊 كشف الاستحقاقات قبل نور</h1><div class="muted">'+esc(meta.term||'')+' · '+esc(meta.period||'')+' · '+esc(meta.className||'')+' · التاريخ: <span class="ltr">'+esc(meta.date||'')+'</span></div></div><div class="actions"><button class="print" onclick="window.print()">🖨️ طباعة / PDF</button><button onclick="location.reload()">🔄 تحديث النافذة</button><button class="close" onclick="window.close()">إغلاق</button></div></div>'+ 
         '<div class="summary"><div>عدد الطلاب: '+rows.length+'</div><div>مكتمل: '+rows.filter(function(r){return !(r.notes||[]).length}).length+'</div><div>لديهم نواقص محددة: '+rows.filter(function(r){return (r.notes||[]).length}).length+'</div></div>'+ 
-        '<div class="wrap"><table><thead><tr><th>#</th><th>ID</th><th>الطالب</th><th>الفصل</th><th>المشاركة /10</th><th>الواجبات /10</th><th>المشاريع /10</th><th>المهام الأدائية /10</th><th>أعمال الفترة /40</th><th>الشفوي /10</th><th>التحريري /10</th><th>الاختبارات /20</th><th>الإجمالي /60</th><th>الحالة</th><th>النواقص المحددة</th></tr></thead><tbody>'+bodyRows+'</tbody></table></div></body></html>';
+        '<div class="wrap"><table><thead><tr><th>#</th><th>ID</th><th>الطالب</th><th>الفصل</th><th>المشاركة /10</th><th>الواجبات /10</th><th>المشاريع /10</th><th>المهام الأدائية /10</th><th>أعمال الفترة /40</th><th>الشفوي /10</th><th>التحريري /10</th><th>الاختبارات /20</th><th>الإجمالي /60</th><th>الحالة</th><th>النواقص المحددة</th></tr></thead><tbody>'+bodyRows+'</tbody></table></div>
+
+<!-- OLD_RESULTS_1448_HARD_PURGE_KEEP_HUSSEIN_RP_20260919 -->
+<script>
+(function(){
+  const CUT_TEXT='2026-08-01';
+  const CUT=Date.parse(CUT_TEXT+'T00:00:00');
+  const KEEP_SID='3209';
+  const KEEP_NAME='حسين بن محمد بن حسين الفايز';
+  const STATE={preview:null,busy:false};
+  function digits(v){return String(v==null?'':v).replace(/\D/g,'');}
+  function norm(v){return String(v||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').replace(/ـ/g,'').replace(/\bبن\b/g,' ').replace(/\bابن\b/g,' ').replace(/[^\u0600-\u06FFa-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+  function timeMs(r){
+    if(!r)return 0;
+    const vals=[r.updatedAt,r.reviewedAt,r.acceptedAt,r.approvedAt,r.analyzedAt,r.submittedAt,r.completedAt,r.importedAt,r.createdAt,r.date,r.timestamp,r.ts,r.recordedAt,r.uploadedAt];
+    for(const v of vals){
+      if(v===undefined||v===null||v==='')continue;
+      if(typeof v==='number'&&Number.isFinite(v))return v<100000000000?v*1000:v;
+      const n=Number(v);if(Number.isFinite(n)&&String(v).trim()!=='')return n<100000000000?n*1000:n;
+      const t=Date.parse(String(v));if(Number.isFinite(t))return t;
+    }
+    return 0;
+  }
+  function sidOf(r){return digits(r&&(r.studentNumber||r.studentId||r.student_id||r.userId||r.uid||r.ownerId||r.student&&r.student.studentId||''));}
+  function rname(r){return String(r&&(r.studentName||r.name||r.restoredFromName||'')||'').trim();}
+  function isChunk(r){return !!(r&&(String(r.source||'')==='rp_audio_chunk'||String(r.id||r._id||'').includes('__rp_audio_chunk__')||String(r.id||r._id||'').includes('_chunk_')));}
+  function isHussein(r){
+    const sid=sidOf(r); if(sid===KEEP_SID)return true;
+    const n=norm(rname(r)); return !!(n&&n===norm(KEEP_NAME));
+  }
+  function teacher(){try{const s=JSON.parse(localStorage.getItem('eq_session')||'{}');return s&&s.role==='teacher';}catch(e){return false;}}
+  async function all(name){try{return (typeof fsAll==='function')?(await fsAll(name)||[]):[];}catch(e){return [];}}
+  async function delRows(col,rows){
+    let ok=0,fail=0;
+    for(const r of (rows||[])){
+      const id=r&&(r.id||r._id);if(!id)continue;
+      try{if(typeof fsDel==='function')await fsDel(col,String(id));else if(typeof db!=='undefined'&&db&&db.collection)await db.collection(col).doc(String(id)).delete();ok++;}catch(e){fail++;}
+    }
+    return {ok,fail};
+  }
+  function currentRoster(users){
+    const m=new Map();
+    (users||[]).forEach(u=>{
+      if(!u||String(u.role||'')!=='student'||u.deleted===true||String(u.status||'').toLowerCase()==='deleted')return;
+      const sid=digits(u.studentId||u.studentNumber||u.id||'');if(!sid)return;
+      m.set(sid,u);
+    });
+    return m;
+  }
+  function clearlyNotCurrentStudent(r,roster){
+    const sid=sidOf(r);if(!sid)return false;
+    const cur=roster.get(sid);if(!cur)return true;
+    const rn=rname(r);if(rn&&cur.name&&norm(rn)!==norm(cur.name))return true;
+    return false;
+  }
+  function oldOrOrphanResult(r,roster,related){
+    const t=timeMs(r)||timeMs(related);
+    if(t)return t<CUT;
+    if(clearlyNotCurrentStudent(r,roster))return true;
+    const sid=sidOf(r);
+    if(sid&&!roster.has(sid))return true;
+    // Undated result with no current related activity is legacy; current 1448 saves all carry timestamps.
+    if(!t&&!related)return true;
+    return false;
+  }
+  async function scan(){
+    if(STATE.busy)return;STATE.busy=true;setStatus('🔎 جاري فحص النتائج القديمة…');
+    try{
+      const names=['users','responses','gradebook','projectSubmissions','projects','readingTheoryResponses','readingTheoryItems','readingSubmissions','readingAttemptResets','notes','dailyFollowup','followupHomeworkScores','followupReferrals','appSettings','quizzes'];
+      const vals=await Promise.all(names.map(all));
+      const D=Object.fromEntries(names.map((n,i)=>[n,vals[i]||[]]));
+      const roster=currentRoster(D.users);
+      const qmap=new Map((D.quizzes||[]).map(x=>[String(x.id||x._id||''),x]));
+      const pmap=new Map((D.projects||[]).map(x=>[String(x.id||x._id||''),x]));
+      const imap=new Map((D.readingTheoryItems||[]).map(x=>[String(x.id||x._id||''),x]));
+      const rows={};
+      rows.responses=(D.responses||[]).filter(r=>oldOrOrphanResult(r,roster,qmap.get(String(r.quizId||''))));
+      rows.gradebook=(D.gradebook||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.projectSubmissions=(D.projectSubmissions||[]).filter(r=>oldOrOrphanResult(r,roster,pmap.get(String(r.projectId||''))));
+      rows.readingTheoryResponses=(D.readingTheoryResponses||[]).filter(r=>oldOrOrphanResult(r,roster,imap.get(String(r.itemId||r.readingId||r.taskId||''))));
+      rows.readingAttemptResets=(D.readingAttemptResets||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT);});
+      // Preserve every Hussein RP record. Also preserve ALL rp_audio_chunk rows for now so orphan audio recovery remains possible.
+      rows.readingSubmissions=(D.readingSubmissions||[]).filter(r=>!isChunk(r)&&!isHussein(r)&&oldOrOrphanResult(r,roster,null));
+      rows.notes=(D.notes||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.dailyFollowup=(D.dailyFollowup||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT)||clearlyNotCurrentStudent(r,roster);});
+      rows.followupHomeworkScores=(D.followupHomeworkScores||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.followupReferrals=(D.followupReferrals||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT)||clearlyNotCurrentStudent(r,roster);});
+      const w12=(D.appSettings||[]).find(x=>String(x.id||x._id||'')==='writing_independent_v12')||null;
+      let oldWritingSubs=[];
+      if(w12){oldWritingSubs=(w12.submissions||[]).filter(r=>oldOrOrphanResult(r,roster,null));}
+      const counts={};Object.keys(rows).forEach(k=>counts[k]=(rows[k]||[]).length);counts.writingSubmissions=oldWritingSubs.length;
+      const total=Object.values(counts).reduce((a,b)=>a+Number(b||0),0);
+      STATE.preview={D,rows,w12,oldWritingSubs,counts,total};
+      renderCounts(counts,total);
+      setStatus('✅ الفحص انتهى. النتائج القديمة المرشحة للحذف: '+total+' · تسجيلات حسين RP محمية بالكامل.');
+    }catch(e){setStatus('❌ تعذر الفحص: '+(e.message||e));}
+    STATE.busy=false;
+  }
+  async function purge(){
+    if(STATE.busy)return;
+    if(!STATE.preview){await scan();if(!STATE.preview)return;}
+    const p=STATE.preview;
+    if(!p.total){setStatus('✅ لا توجد نتائج قديمة متبقية للحذف.');return;}
+    const phrase=prompt('سيتم حذف النتائج القديمة فقط قبل '+CUT_TEXT+' والنتائج اليتيمة القديمة.\nلن تُحذف وظائف المنصة أو الطلاب الحاليون.\nReading Progress لحسين #3209 محمي، وأجزاء الصوت rp_audio_chunk لن تُمس.\n\nاكتب بالضبط: تصفية النتائج القديمة');
+    if(String(phrase||'').trim()!=='تصفية النتائج القديمة')return;
+    STATE.busy=true;setStatus('🧹 جاري حذف النتائج القديمة من Firebase… لا تغلق الصفحة.');
+    const out={};
+    try{
+      for(const col of ['responses','gradebook','projectSubmissions','readingTheoryResponses','readingAttemptResets','readingSubmissions','notes','dailyFollowup','followupHomeworkScores','followupReferrals']){
+        const z=await delRows(col,p.rows[col]||[]);out[col]=z.ok;if(z.fail)out[col+'_fail']=z.fail;
+      }
+      if(p.w12&&p.oldWritingSubs.length){
+        const clone=JSON.parse(JSON.stringify(p.w12));
+        const ids=new Set(p.oldWritingSubs.map(x=>String(x.id||x._id||'')));
+        clone.submissions=(clone.submissions||[]).filter(x=>!ids.has(String(x.id||x._id||'')));
+        clone.updatedAt=new Date().toISOString();clone.cleanupLastUpdatedAt=new Date().toISOString();
+        await fsSet('appSettings','writing_independent_v12',clone);out.writingSubmissions=p.oldWritingSubs.length;
+      }
+      try{
+        Object.keys(localStorage).forEach(k=>{if(/^eq_fast_data_cache/i.test(k)||/^eduquiz_active_login_classes/i.test(k)||/^eq_response/i.test(k))localStorage.removeItem(k);});
+        if(typeof __eqRespStudentMemo!=='undefined'&&__eqRespStudentMemo&&__eqRespStudentMemo.clear)__eqRespStudentMemo.clear();
+        if(typeof responsesForStudent!=='undefined'&&responsesForStudent.__cache)responsesForStudent.__cache.clear();
+      }catch(_e){}
+      const logId='old_results_purge_1448_'+Date.now();
+      try{await fsSet('cleanupLogs',logId,{id:logId,type:'old_results_1448_purge',cutoff:CUT_TEXT,protectedStudentId:KEEP_SID,protectedStudentName:KEEP_NAME,deleted:out,createdAt:new Date().toISOString()});}catch(_e){}
+      STATE.preview=null;renderCounts({},0);
+      setStatus('✅ تمت تصفية النتائج القديمة من المصدر. المحذوف: '+Object.entries(out).filter(x=>!x[0].endsWith('_fail')).map(x=>x[0]+': '+x[1]).join(' · '));
+      setTimeout(()=>{try{location.reload();}catch(e){}},1200);
+    }catch(e){setStatus('❌ توقف الحذف: '+(e.message||e));}
+    STATE.busy=false;
+  }
+  function setStatus(t){const e=document.getElementById('eq262-status');if(e)e.textContent=t;}
+  function renderCounts(c,total){const e=document.getElementById('eq262-counts');if(!e)return;const xs=Object.entries(c||{}).filter(x=>x[1]);e.innerHTML=xs.length?('<b>المجموع: '+total+'</b><br>'+xs.map(x=>x[0]+': '+x[1]).join(' · ')):'لا توجد نتائج في المعاينة.';}
+  function open(){const p=document.getElementById('eq262-panel');if(p)p.style.display='block';}
+  function close(){const p=document.getElementById('eq262-panel');if(p)p.style.display='none';}
+  function build(){
+    if(!teacher()||document.getElementById('eq262-fab'))return;
+    const b=document.createElement('button');b.id='eq262-fab';b.textContent='🧹 تصفية النتائج القديمة';b.style.cssText='position:fixed;left:14px;bottom:74px;z-index:100020;border:0;border-radius:999px;background:#dc2626;color:#fff;padding:11px 14px;font-weight:1000;box-shadow:0 8px 24px rgba(15,23,42,.25);font-size:12px';b.onclick=open;document.body.appendChild(b);
+    const p=document.createElement('div');p.id='eq262-panel';p.dir='rtl';p.style.cssText='display:none;position:fixed;inset:18px;z-index:100021;background:#f8fafc;border:1px solid #cbd5e1;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.35);overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;color:#0f172a';
+    p.innerHTML='<div style="position:sticky;top:0;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:1000">🧹 تصفية شاملة للنتائج القديمة</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">العام الحالي يبدأ من '+CUT_TEXT+' · حسين #3209 Reading Progress محمي</div></div><button id="eq262-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:white;font-weight:900">إغلاق</button></div><div style="padding:14px;max-width:760px;margin:auto"><div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:11px;line-height:1.8;font-size:12px;color:#9a3412"><b>ماذا سيُحذف؟</b> نتائج الاختبارات القديمة وZipGrade/Gradebook ونتائج المشاريع وReading Theory وWriting والمتابعة القديمة. لا تُحذف أكواد المزايا ولا الطلاب الحاليون. تسجيلات حسين في Reading Progress وأجزاء الصوت المتبقية لا تُمس.</div><button id="eq262-scan" style="width:100%;margin-top:10px;border:0;border-radius:12px;padding:13px;background:#2563eb;color:white;font-weight:1000">🔎 فحص النتائج القديمة</button><div id="eq262-status" style="margin-top:9px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px;font-weight:900">جاهز.</div><div id="eq262-counts" style="margin-top:7px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:11px;line-height:1.8;color:#475569">لا توجد نتائج في المعاينة.</div><button id="eq262-purge" style="width:100%;margin:10px 0 22px;border:0;border-radius:12px;padding:13px;background:#dc2626;color:white;font-weight:1000">🗑️ حذف النتائج القديمة من المصدر</button></div>';
+    document.body.appendChild(p);document.getElementById('eq262-close').onclick=close;document.getElementById('eq262-scan').onclick=scan;document.getElementById('eq262-purge').onclick=purge;
+  }
+  setTimeout(build,1200);setTimeout(build,3500);document.addEventListener('click',()=>setTimeout(build,50),true);
+  window.EQ262_OldResultsCleanup={scan,purge,open};
+})();
+</script>
+</body></html>';
       w.document.open(); w.document.write(html); w.document.close();
     }catch(e){ console.error(e); alert('تعذر فتح كشف نور.'); }
   };
