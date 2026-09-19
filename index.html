@@ -14844,7 +14844,7 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
 <!-- CLEANUP256_FULL_LEGACY_CLEANUP_PROTECT_HUSSEIN_RP_20260919 -->
 <!-- PROJECT224_ARABIC_RUBRIC_ENGLISH_REQUIREMENT_20260708 -->
 <script>
-// RP257_HUSSEIN_FAYEZ_RECOVERY_20260919
+// RP259_HUSSEIN_FAYEZ_RECOVERY_MANUAL_PATH_UPLOAD_20260919
 (function(){
   'use strict';
   const R257 = {
@@ -14856,7 +14856,8 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
     currentIds:new Set(),
     currentPaths:new Set(),
     scanning:false,
-    restoring:false
+    restoring:false,
+    uploadedFiles:[]
   };
 
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
@@ -15083,6 +15084,104 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
     if(!files && denied===paths.length) throw new Error('Storage يمنع استعراض الملفات بصلاحيات الحساب الحالي.');
   }
 
+  function rp259DecodeStoragePath(v){
+    v=String(v||'').trim();
+    if(!v) return '';
+    // Raw object path copied from Cloud Storage console.
+    if(/^reading-progress\//i.test(v)) return v.replace(/^\/+/, '');
+    // gs://bucket/object/path
+    if(/^gs:\/\//i.test(v)){
+      const m=v.match(/^gs:\/\/[^/]+\/(.+)$/i); return m?decodeURIComponent(m[1]):'';
+    }
+    // Firebase download URL: .../o/<encoded-object>?alt=media...
+    try{
+      const u=new URL(v);
+      const m=u.pathname.match(/\/o\/(.+)$/);
+      if(m) return decodeURIComponent(m[1]);
+      // storage.googleapis.com/<bucket>/<object>
+      if(/storage\.googleapis\.com$/i.test(u.hostname)){
+        const p=u.pathname.replace(/^\/+/, '').split('/');
+        if(p.length>1) return decodeURIComponent(p.slice(1).join('/'));
+      }
+    }catch(e){}
+    // A filename only: assume Hussein's standard folder.
+    if(!v.includes('/')) return 'reading-progress/class_3_2/3209/'+v;
+    return v.replace(/^\/+/, '');
+  }
+
+  async function rp259ScanExactPaths(map, log){
+    const ta=document.getElementById('rp259-paths');
+    const raw=ta?String(ta.value||''):'';
+    const lines=raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    if(!lines.length){ log('ℹ️ لم تُدخل مسارات Cloud Storage يدوية.'); return {checked:0,found:0}; }
+    if(typeof firebase==='undefined' || !firebase.storage) throw new Error('Firebase Storage غير متاح.');
+    const st=firebase.storage();
+    let checked=0,found=0;
+    for(const line of lines){
+      const path=rp259DecodeStoragePath(line);
+      if(!path){log('⚠️ تعذر فهم المسار: '+line);continue;}
+      checked++;
+      log('🎯 فحص ملف مباشر: '+path);
+      try{
+        const ref=st.ref().child(path);
+        const meta=await rp258WithTimeout(ref.getMetadata(),10000,'قراءة '+path);
+        let url='';
+        try{url=await rp258WithTimeout(ref.getDownloadURL(),10000,'رابط '+path);}catch(e){}
+        const fake={name:path.split('/').pop()||'',fullPath:path};
+        const p=parseStorageName(fake);
+        addCandidate(map,{source:'مسار Cloud مباشر',fullPath:path,downloadURL:url,metadata:meta,taskId:p.taskId,ts:p.ts,classId:classFromPath(path)});
+        found++;
+        log('✅ موجود: '+path);
+      }catch(e){
+        log('❌ غير قابل للقراءة: '+path+' — '+String(e&&e.message||e));
+      }
+    }
+    log('نتيجة المسارات المباشرة: '+found+' من '+checked+' ملف.');
+    return {checked,found};
+  }
+
+  function rp259FileTs(file){
+    const name=String(file&&file.name||'');
+    const m=name.match(/(\d{12,14})/); if(m){const n=Number(m[1]); if(Number.isFinite(n)) return n;}
+    return Number(file&&file.lastModified)||Date.now();
+  }
+  function rp259TaskFromFile(file){
+    const name=String(file&&file.name||'').replace(/\.[^.]+$/,'');
+    const m=name.match(/^(.*?)-(\d{12,14})(?:-|$)/); return m?m[1]:'';
+  }
+  function rp259AddUploadedFiles(map, log){
+    const inp=document.getElementById('rp259-files');
+    const files=inp&&inp.files?Array.from(inp.files):[];
+    if(!files.length){log('ℹ️ لم تختر ملفات صوت من الجهاز.');return 0;}
+    R257.uploadedFiles=files;
+    files.forEach((f,i)=>{
+      const ts=rp259FileTs(f), taskId=rp259TaskFromFile(f);
+      addCandidate(map,{source:'ملف صوت مختار من الجهاز',id:'uploaded_'+i+'_'+ts,taskId,ts,classId:'class_3_2',localAudioBlob:f,localAudioAvailable:true,metadata:{name:f.name,size:f.size,contentType:f.type||'audio/webm',timeCreated:new Date(ts).toISOString()}});
+    });
+    log('📱 ملفات الصوت المختارة من الجهاز: '+files.length);
+    return files.length;
+  }
+
+  async function rp259ManualScanOnly(){
+    if(R257.scanning) return;
+    R257.scanning=true; R257.candidates=[];
+    setStatus('جاري فحص المسارات/الملفات المحددة فقط… لا يوجد حذف.'); setLog('');
+    const map=new Map();
+    try{
+      await loadTasksAndExisting();
+      appendLog('تم تحميل مهام Reading Progress الحالية وسجلات 3209 الموجودة حاليًا.');
+      try{await scanLocal(map,appendLog);}catch(e){appendLog('⚠️ الفحص المحلي: '+(e.message||e));}
+      try{await rp259ScanExactPaths(map,appendLog);}catch(e){appendLog('⚠️ المسارات المباشرة: '+(e.message||e));}
+      try{rp259AddUploadedFiles(map,appendLog);}catch(e){appendLog('⚠️ ملفات الجهاز: '+(e.message||e));}
+      R257.candidates=Array.from(map.values()).sort((a,b)=>(b.ts||0)-(a.ts||0));
+      renderCandidates();
+      const recoverable=R257.candidates.filter(c=>!c.existing&&(c.downloadURL||c.localAudioAvailable||c.audioDataUrl)).length;
+      setStatus('✅ انتهى الفحص المباشر. تم العثور على '+R257.candidates.length+' أثر/تسجيل، منها '+recoverable+' قابل للاستعادة.');
+    }catch(e){setStatus('❌ فشل الفحص المباشر: '+(e.message||e));}
+    R257.scanning=false;
+  }
+
+
   async function scan(){
     if(R257.scanning) return;
     R257.scanning=true; R257.candidates=[];
@@ -15093,6 +15192,8 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
       await loadTasksAndExisting();
       appendLog('تم تحميل مهام Reading Progress الحالية وسجلات 3209 الموجودة حاليًا.');
       try{ await scanLocal(map,appendLog); }catch(e){appendLog('⚠️ الفحص المحلي: '+(e.message||e));}
+      try{ await rp259ScanExactPaths(map,appendLog); }catch(e){appendLog('⚠️ المسارات المباشرة: '+(e.message||e));}
+      try{ rp259AddUploadedFiles(map,appendLog); }catch(e){appendLog('⚠️ ملفات الجهاز: '+(e.message||e));}
       try{ await scanStorage(map,appendLog); }catch(e){appendLog('⚠️ Storage: '+(e.message||e));}
       R257.candidates=Array.from(map.values()).sort((a,b)=>(b.ts||0)-(a.ts||0));
       renderCandidates();
@@ -15138,9 +15239,9 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
     if(blob && typeof firebase!=='undefined' && firebase.storage){
       const ts=c.ts||Date.now();
       const tid=String(c.taskId||'recovered-task').replace(/[^a-zA-Z0-9_\-]/g,'_').slice(0,80);
-      const path='reading-progress/class_3_2/3209/'+tid+'-'+ts+'-recovered257.webm';
+      const path='reading-progress/class_3_2/3209/'+tid+'-'+ts+'-recovered259.webm';
       const ref=firebase.storage().ref().child(path);
-      await ref.put(blob,{contentType:blob.type||'audio/webm',customMetadata:{recoveredBy:'RP257',studentNumber:'3209'}});
+      await ref.put(blob,{contentType:blob.type||'audio/webm',customMetadata:{recoveredBy:'RP259',studentNumber:'3209'}});
       return {url:await ref.getDownloadURL(),path:path,dataUrl:''};
     }
     if(c.audioDataUrl && c.audioDataUrl.length<700000) return {url:'',path:'',dataUrl:c.audioDataUrl};
@@ -15210,14 +15311,14 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
     R257.restoring=false;
     renderCandidates();
     setStatus('انتهت الاستعادة. نجح: '+ok+' · فشل: '+fail+(fail?' — راجع سجل التفاصيل.':''));
-    try{window.dispatchEvent(new CustomEvent('rp-live-refresh',{detail:{collection:'readingSubmissions',recovery:'257'}}));}catch(e){}
+    try{window.dispatchEvent(new CustomEvent('rp-live-refresh',{detail:{collection:'readingSubmissions',recovery:'259'}}));}catch(e){}
   }
 
   function exportScan(){
     if(!R257.candidates.length){alert('نفذ الفحص أولًا.');return;}
     const data={exportedAt:new Date().toISOString(),studentNumber:'3209',studentName:R257.fullName,candidates:R257.candidates.map(cleanForJson)};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RP258_Hussein_3209_scan_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RP259_Hussein_3209_scan_'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
   }
 
   function setStatus(t){const el=document.getElementById('rp257-status');if(el)el.textContent=t;}
@@ -15249,21 +15350,23 @@ setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);
     const fab=document.createElement('button');fab.id='rp257-fab';fab.type='button';fab.textContent='🛟 RP 3209';
     fab.style.cssText='position:fixed;left:14px;bottom:18px;z-index:100000;border:0;border-radius:999px;background:#0f766e;color:#fff;padding:12px 15px;font-weight:1000;box-shadow:0 10px 28px rgba(15,23,42,.28);font-size:13px';fab.onclick=openPanel;document.body.appendChild(fab);
     const p=document.createElement('div');p.id='rp257-panel';p.dir='rtl';p.style.cssText='display:none;position:fixed;inset:10px;z-index:100001;background:#f8fafc;border:1px solid #cbd5e1;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.35);overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;color:#0f172a';
-    p.innerHTML='<div style="position:sticky;top:0;z-index:2;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;gap:10px;align-items:center"><div><div style="font-size:18px;font-weight:1000">🛟 استعادة Reading Progress — حسين الفايز #3209</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">Recovery 258 · فحص مباشر واستعادة فقط — لا توجد أي وظيفة حذف في هذه اللوحة</div></div><button id="rp257-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:#fff;font-weight:900">إغلاق</button></div>'+ 
-    '<div style="padding:12px;max-width:900px;margin:auto"><div style="background:#ecfdf5;border:1px solid #86efac;border-radius:12px;padding:10px;font-size:12px;line-height:1.7;color:#166534"><b>ماذا يفعل الفحص؟</b> يبحث أولًا عن ملفات الصوت الباقية في Firebase Storage تحت الطالب 3209، ثم يبحث في ذاكرة هذا الجهاز وIndexedDB عن أي سجل/صوت قديم لحسين. لا يكتب شيئًا في Firebase أثناء الفحص.</div>'+ 
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><button id="rp257-scan" style="border:0;border-radius:10px;padding:10px 13px;background:#2563eb;color:white;font-weight:900">🔎 فحص فقط</button><button id="rp257-export" style="border:0;border-radius:10px;padding:10px 13px;background:#64748b;color:white;font-weight:900">⬇️ تصدير نتيجة الفحص</button><button id="rp257-restore" style="border:0;border-radius:10px;padding:10px 13px;background:#16a34a;color:white;font-weight:900">🛟 استعادة المحدد</button></div>'+ 
+    p.innerHTML='<div style="position:sticky;top:0;z-index:2;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;gap:10px;align-items:center"><div><div style="font-size:18px;font-weight:1000">🛟 استعادة Reading Progress — حسين الفايز #3209</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">Recovery 259 · استعادة بالمسار المباشر أو رفع ملف الصوت — لا توجد أي وظيفة حذف في هذه اللوحة</div></div><button id="rp257-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:#fff;font-weight:900">إغلاق</button></div>'+ 
+    '<div style="padding:12px;max-width:900px;margin:auto"><div style="background:#ecfdf5;border:1px solid #86efac;border-radius:12px;padding:10px;font-size:12px;line-height:1.7;color:#166534"><b>Recovery 259:</b> إذا كان Storage يمنع عرض قائمة الملفات، انسخ من Google Cloud اسم/مسار كل ملف مستعاد والصقه هنا. ويمكنك أيضًا تنزيل ملفات الصوت إلى الهاتف واختيارها مباشرة. الفحص لا يحذف شيئًا.</div>'+
+    '<div style="background:#fff;border:1px solid #cbd5e1;border-radius:12px;padding:10px;margin-top:10px"><b style="font-size:12px">🎯 مسارات الملفات المستعادة من Google Cloud</b><div style="font-size:10px;color:#64748b;margin:4px 0 6px">سطر لكل ملف. يقبل المسار مثل reading-progress/class_3_2/3209/file.webm أو gs://... أو رابط Firebase Storage.</div><textarea id="rp259-paths" dir="ltr" placeholder="reading-progress/class_3_2/3209/اسم-الملف.webm" style="width:100%;min-height:92px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;padding:8px;font-size:11px"></textarea><div style="margin-top:8px"><b style="font-size:12px">📱 أو اختر ملفات الصوت التي نزلتها من Cloud</b><input id="rp259-files" type="file" accept="audio/*,.webm,.m4a,.mp3,.wav,.ogg" multiple style="display:block;width:100%;margin-top:5px;font-size:11px"></div></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><button id="rp259-manual-scan" style="border:0;border-radius:10px;padding:10px 13px;background:#7c3aed;color:white;font-weight:900">🎯 فحص المسارات/الملفات</button><button id="rp257-scan" style="border:0;border-radius:10px;padding:10px 13px;background:#2563eb;color:white;font-weight:900">🔎 فحص شامل</button><button id="rp257-export" style="border:0;border-radius:10px;padding:10px 13px;background:#64748b;color:white;font-weight:900">⬇️ تصدير نتيجة الفحص</button><button id="rp257-restore" style="border:0;border-radius:10px;padding:10px 13px;background:#16a34a;color:white;font-weight:900">🛟 استعادة المحدد</button></div>'+ 
     '<div id="rp257-status" style="background:white;border:1px solid #e2e8f0;border-radius:10px;padding:9px;font-size:12px;font-weight:800;margin-bottom:8px">جاهز للفحص.</div>'+ 
     '<pre id="rp257-log" style="white-space:pre-wrap;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px;font-size:11px;max-height:150px;overflow:auto;color:#7c2d12"></pre>'+ 
     '<div id="rp257-results" style="margin-top:10px"></div></div>';
     document.body.appendChild(p);
     document.getElementById('rp257-close').onclick=closePanel;
     document.getElementById('rp257-scan').onclick=scan;
+    document.getElementById('rp259-manual-scan').onclick=rp259ManualScanOnly;
     document.getElementById('rp257-export').onclick=exportScan;
     document.getElementById('rp257-restore').onclick=restoreSelected;
     renderCandidates();
   }
   function boot(){if(!isTeacher())return;buildUi();}
   setTimeout(boot,1200);setTimeout(boot,3500);document.addEventListener('click',function(){setTimeout(boot,100);},true);
-  window.RP257_HusseinRecovery={scan,restoreSelected,open:openPanel}; window.RP258_HusseinRecovery=window.RP257_HusseinRecovery;
+  window.RP257_HusseinRecovery={scan,restoreSelected,open:openPanel}; window.RP258_HusseinRecovery=window.RP257_HusseinRecovery; window.RP259_HusseinRecovery={scan,manualScan:rp259ManualScanOnly,restoreSelected,open:openPanel};
 })();
 </script>
