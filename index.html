@@ -2460,8 +2460,61 @@ async function rpResolveAudioDataUrl(sub){
 }
 function rpHasAnyAudio(sub){ return !!(sub && (sub.audioUrl || sub.audioDataUrl || (sub.audioChunked && sub.audioChunkCount))); }
 
-// ---- AI Text-to-Speech (OpenAI tts-1-hd) ----
-// Generates a natural-sounding MP3 for a Listening Script and uploads it to
+
+// ---- AI Voice v270 helpers ----
+// Speaker labels are editor-only metadata. They must never be spoken.
+function eqDialogueRoleRegex(){
+  return /\b(Speaker\s*[A-Z]|Dad|Father|Mom|Mother|Boy|Girl|Son|Daughter|Man|Woman|Teacher|Student|Coach|Doctor|Nurse|Customer|Clerk|Passenger|Driver|Announcer|Narrator)\s*:\s*/gi;
+}
+function eqStripSpeakerLabels(script){
+  return String(script||"")
+    .replace(eqDialogueRoleRegex()," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
+function eqParseDialogueTurns(script){
+  const raw=String(script||"").replace(/\r/g," ").replace(/\n+/g," ").replace(/\s+/g," ").trim();
+  if(!raw) return [];
+  const re=eqDialogueRoleRegex();
+  const hits=[];
+  let m;
+  while((m=re.exec(raw))!==null){
+    hits.push({role:String(m[1]||"").trim(), start:m.index, contentStart:re.lastIndex});
+    if(hits.length>=60) break;
+  }
+  if(!hits.length) return [{role:"Narrator",text:eqStripSpeakerLabels(raw)}];
+  const out=[];
+  for(let i=0;i<hits.length;i++){
+    const end=i+1<hits.length?hits[i+1].start:raw.length;
+    const t=raw.slice(hits[i].contentStart,end).trim().replace(/\s+/g," ");
+    if(t) out.push({role:hits[i].role,text:eqStripSpeakerLabels(t)});
+  }
+  return out.length?out:[{role:"Narrator",text:eqStripSpeakerLabels(raw)}];
+}
+function eqRoleKey(role){
+  const r=String(role||"").trim().toLowerCase();
+  if(/\b(speaker\s*a|dad|father|man|doctor|driver|coach|boy|son)\b/i.test(r)) return "a";
+  if(/\b(speaker\s*b|mom|mother|woman|nurse|girl|daughter)\b/i.test(r)) return "b";
+  return /speaker\s*[13579]|teacher|announcer|narrator/i.test(r)?"a":"b";
+}
+function eqEmotionHint(text,tone){
+  const x=String(text||"").toLowerCase();
+  const t=String(tone||"natural").toLowerCase();
+  if(t!=="mixed" && t!=="expressive") return t;
+  if(/[!?]{2,}/.test(String(text||""))||/\b(amazing|great|won|fantastic|excellent|wow)\b/i.test(x)) return "excited";
+  if(/\b(afraid|scared|worried|nervous|what if|danger)\b/i.test(x)) return "afraid";
+  if(/\b(sorry|sad|lost|miss|disappointed)\b/i.test(x)) return "sad";
+  if(/\b(stop|angry|upset|not again)\b/i.test(x)) return "angry";
+  if(/\b(funny|laugh|silly|haha)\b/i.test(x)) return "funny";
+  if(/\b(don't worry|do not worry|stay calm|it's okay|it is okay|i'll help|i will help)\b/i.test(x)) return "calm";
+  if(/\?$/.test(String(text||"").trim())) return "curious";
+  return "natural";
+}
+
+// ---- AI Text-to-Speech (OpenAI gpt-4o-mini-tts) ----
+// Generates natural listening audio; speaker labels are metadata only and are never spoken.
+// The worker uses gpt-4o-mini-tts and can render dialogue turn-by-turn.
+// Uploads the finished audio to
 // Firebase Storage (same upload helper used for student audio submissions),
 // returning a downloadable URL suitable for storing in quiz.audioFile.
 async function eqGenerateTTS(text, voice, path, meta={}){
@@ -2481,12 +2534,19 @@ async function eqGenerateTTS(text, voice, path, meta={}){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         text:script.slice(0,6000),
-        voice:voice || "nova",
+        cleanText:eqStripSpeakerLabels(script).slice(0,6000),
+        dialogueTurns:eqParseDialogueTurns(script).slice(0,60).map(t=>({role:t.role,text:t.text,emotion:eqEmotionHint(t.text,meta.tone||"natural")})),
+        voice:voice || "marin",
+        voiceA:"cedar",
+        voiceB:"marin",
+        model:"gpt-4o-mini-tts",
         format:"mp3",
         save:true,
         multiVoice: meta.voiceStyle==="multi",
         voiceStyle: meta.voiceStyle || "single",
         tone: meta.tone || "natural",
+        instructionsVersion:"v270",
+        stripSpeakerLabels:true,
         quizId: meta.quizId || "quiz",
         title: meta.title || "listening"
       }),
@@ -2531,7 +2591,7 @@ async function eqPlayWorkerTTS(audioFile, scriptText){
     resp=await fetch(endpoint,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:txt.slice(0,2200),voice:cfg.voice||"nova",format:"mp3"}),
+      body:JSON.stringify({text:eqStripSpeakerLabels(txt).slice(0,2200),cleanText:eqStripSpeakerLabels(txt).slice(0,2200),voice:cfg.voice||"marin",model:"gpt-4o-mini-tts",format:"mp3",stripSpeakerLabels:true}),
       signal:controller.signal
     });
   }catch(e){
@@ -5543,17 +5603,39 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
         if(a){ a.src=url; a.playbackRate=tSpeed; await a.play(); }
         return;
       }
-      if(audioFile){ const a=tPreviewRef.current; if(a){a.playbackRate=tSpeed;a.play();} return; }
+      if(audioFile){ const a=tPreviewRef.current; if(a){a.playbackRate=tSpeed;await a.play();} return; }
       if(!passage.trim()){setErr("Write or generate a script first.");return;}
+
+      // Preview before AI generation uses device voices, but NEVER reads Speaker A/B labels.
+      // Multi-Voice preview alternates two English device voices turn-by-turn.
       window.speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance(passage);
-      u.rate=0.9*tSpeed;
-      const voices=window.speechSynthesis.getVoices();
-      const en=voices.find(v=>/en-(US|GB)/i.test(v.lang)&&/(natural|google|samantha|daniel|aria|libby)/i.test(v.name))||voices.find(v=>/en/i.test(v.lang));
-      if(en)u.voice=en;
-      window.speechSynthesis.speak(u);
+      const allVoices=window.speechSynthesis.getVoices();
+      const english=allVoices.filter(v=>/en/i.test(v.lang||""));
+      const voiceA=english.find(v=>/(daniel|david|male|google uk english male|mark)/i.test(v.name||"")) || english[0] || allVoices[0];
+      const voiceB=english.find(v=>v!==voiceA && /(samantha|aria|libby|female|google uk english female|victoria|zira)/i.test(v.name||"")) || english.find(v=>v!==voiceA) || voiceA;
+      const turns=(ttsVoiceStyle==="multi"?eqParseDialogueTurns(passage):[{role:"Narrator",text:eqStripSpeakerLabels(passage)}]).filter(t=>String(t.text||"").trim());
+      if(!turns.length){setErr("The listening script has no speakable text.");return;}
+      setTtsMsg(ttsVoiceStyle==="multi"?"ℹ️ Preview uses device voices. Speaker labels are removed. Generate AI Voice for the natural emotional version.":"ℹ️ Preview uses device voice. Speaker labels are removed.");
+      let i=0;
+      const speakNext=()=>{
+        if(i>=turns.length) return;
+        const turn=turns[i++];
+        const u=new SpeechSynthesisUtterance(eqStripSpeakerLabels(turn.text));
+        u.rate=0.9*tSpeed;
+        u.pitch=1;
+        u.lang="en-US";
+        if(ttsVoiceStyle==="multi") u.voice=eqRoleKey(turn.role)==="a"?voiceA:voiceB;
+        else {
+          const preferred=ttsVoice==="man"?voiceA:voiceB;
+          if(preferred)u.voice=preferred;
+        }
+        u.onend=speakNext;
+        u.onerror=()=>{};
+        window.speechSynthesis.speak(u);
+      };
+      speakNext();
     }catch(e){
-      setTtsMsg("⚠️ "+(e.message||"Could not play AI Voice."));
+      setTtsMsg("⚠️ "+(e.message||"Could not play voice preview."));
     }
   }
   function tStop(){ window.speechSynthesis.cancel(); if(tPreviewRef.current)tPreviewRef.current.pause(); }
@@ -5578,12 +5660,12 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     setTtsBusy(true); setTtsMsg(""); setErr("");
     try{
       if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
-      const voiceId = ttsVoice==="man" ? "onyx" : "nova";
+      const voiceId = ttsVoice==="man" ? "cedar" : "marin";
       const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3", {quizId:E.id||"new-quiz", title:title||"listening", voiceStyle:ttsVoiceStyle, tone:ttsTone});
       if(!url || !String(url).startsWith("http")) throw new Error("Generated MP3 URL is invalid.");
       setVoiceMode("ai");
       setAudioFile(url);
-      setTtsMsg("✅ AI Voice MP3 saved as a ready link. Save the quiz. Students will hear it immediately with the normal audio player.");
+      setTtsMsg("✅ AI Voice ready. Speaker labels were removed automatically. Save the quiz; students will hear the finished audio directly.");
     }catch(e){
       setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
     }finally{
@@ -5914,7 +5996,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           {type==="Listening" && <>
             <p style={{fontSize:"11px",color:C.mu,margin:"6px 0 9px",fontFamily:F}}>🔊 Students will HEAR this (they won't see the text).</p>
              <div style={{background:"#dcfce7",border:"2px solid #22c55e",borderRadius:"9px",padding:"8px 10px",marginBottom:"9px",fontSize:"12px",fontWeight:"900",color:"#166534",fontFamily:F}}>
-               ✅ VOICE FIX ACTIVE: Student will use Device Voice or Ready MP3 only. No Worker delay for students.
+               ✅ AI VOICE v270: Speaker labels are never spoken. Multi-Voice uses separate dialogue turns and natural emotion.
              </div>
              <div style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"9px",padding:"9px",marginBottom:"9px"}}>
                <Label text="🔊 Voice Mode"/>
@@ -5931,7 +6013,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <Btn size="sm" color={C.pu} onClick={tCycleSpeed}>⚡ {tSpeed}x</Btn>
             </div>
             {voiceMode==="ai" && <div style={{background:"#f5f3ff",border:"1px solid #ddd6fe",borderRadius:"7px",padding:"10px 11px",marginBottom:"9px"}}>
-              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice → Ready MP3 for students</p>
+              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice → Ready natural audio for students</p>
               <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
                 <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
                 <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
@@ -5944,6 +6026,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <Label text="😊 Tone / Emotion"/>
               <select value={ttsTone} onChange={e=>{setTtsTone(e.target.value);setTtsMsg("");}} style={{...inp,marginBottom:"8px",fontSize:"11px"}}>
                 <option value="natural">Natural conversation</option>
+                <option value="expressive">Expressive dialogue — emotion follows each sentence</option>
+                <option value="exam">Exam listening — clear, neutral, moderate pace</option>
                 <option value="happy">Happy / cheerful</option>
                     <option value="mixed">Mixed Emotions / مشاعر متنوعة</option>
                 <option value="sad">Sad / disappointed</option>
@@ -5953,10 +6037,10 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
                 <option value="funny">Funny / light laughter</option>
                 <option value="calm">Calm / clear</option>
               </select>
-                  <div style={{fontSize:"11px",color:"#64748b",marginTop:"5px"}}>Mixed Emotions = fear, reassurance, light laugh, sadness, mild pain, controlled anger, joy.</div>
-              <div style={{fontSize:"10px",color:"#6b21a8",margin:"-3px 0 8px",fontFamily:F}}>Multi‑Voice works best when the script uses labels like Dad:, Mom:, Boy:, Girl:, Speaker A:, Speaker B:</div>
+                  <div style={{fontSize:"11px",color:"#64748b",marginTop:"5px"}}>Expressive/Mixed analyzes each dialogue turn separately: questions, excitement, worry, reassurance, sadness, controlled anger, and joy can sound different in the same conversation.</div>
+              <div style={{fontSize:"10px",color:"#6b21a8",margin:"-3px 0 8px",fontFamily:F}}>Multi‑Voice accepts labels inline or on separate lines (Speaker A:, Speaker B:, etc.). Labels are used only to choose voices and are NEVER spoken.</div>
               <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
-              <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Creating MP3…":"✨ Generate AI MP3 Voice"}</Btn>
+              <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Creating natural audio…":"✨ Generate Natural AI Voice"}</Btn>
               {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
             </div>}
             <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px",marginTop:"4px"}}>
