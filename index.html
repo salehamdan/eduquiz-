@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v165</title>
+<title>EduQuiz — Smart Assessment v271</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -207,6 +207,8 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
+<!-- EDUQUIZ_BUILD: v271 | login/classes + Reading Progress visibility + compact nav + follow-up attendance accordion -->
+
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
 <div id="root">
@@ -495,10 +497,10 @@ function eqActiveFirebaseStudentBySid(data, sid, classId){
   const list=Array.isArray(data&&data.firebaseUsers) ? data.firebaseUsers : (FIREBASE_OK ? [] : ((data&&data.users)||[]));
   return (list||[]).find(function(u){
     if(!u || String(u.role||"")!=="student") return false;
-    if(isStudentTombstone(u)) return false;
+    // V271: explicit current deletion flags block login; stale deletedAt/adminDeletedAt or old roster tokens do not.
+    if(u.deleted===true || String(u.status||"").toLowerCase()==="deleted" || u.hidePreloaded===true || u.permanentDeleted===true) return false;
     if(eqDigits(u.studentId||u.id||"")!==cleanSid) return false;
     if(canon && !sameClassId(u.classId||u.className||u.class||"", canon)) return false;
-    if(canon && !eqStudentMatchesClassRosterToken(u, canon, data||{})) return false;
     return true;
   }) || null;
 }
@@ -518,14 +520,20 @@ function activeStudentInData(user,data){
   const rawList = Array.isArray(data&&data.firebaseUsers) ? data.firebaseUsers : (FIREBASE_OK ? [] : ((data&&data.users)||[]));
   const found=activeOverride || rawList.find(function(u){
     if(!u || String(u.role||"")!=="student") return false;
-    if(isStudentTombstone(u)) return false;
+    // V271: trust the current Firebase roster unless the row is explicitly deleted now.
+    if(u.deleted===true || String(u.status||"").toLowerCase()==="deleted" || u.hidePreloaded===true || u.permanentDeleted===true) return false;
     return String(u.id||"")===String(user.id||"") || (sid && eqDigits(u.studentId||u.id||"")===sid);
   });
   if(!found) return false;
 
   const cid=canonicalClassId(found.classId||user.classId||"");
+  if(!cid) return false;
+  // A class that is currently rebuilt from the active Firebase roster wins over old class tombstones.
+  const liveClasses=(typeof eqRealActiveClassesFromData==="function")?eqRealActiveClassesFromData(data||{}):[];
+  const liveClass=liveClasses.some(function(c){ try{return sameClassId(c.id||c.classId||c.name||c.grade||"",cid);}catch(_e){return false;} });
+  if(liveClass) return true;
   const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
-  if(!cid || delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
+  if(delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
 
   return true;
 }
@@ -3836,7 +3844,7 @@ function Landing({onLogin, prefillQuiz}) {
         )}
 
         <div style={box}>
-          {err && <div style={{background:"rgba(239,68,68,0.2)",border:"1px solid rgba(239,68,68,0.5)",borderRadius:"8px",padding:"9px 12px",color:"#fca5a5",fontSize:"12px",marginBottom:"11px",fontFamily:F}}>⚠️ {err}</div>}
+          {err && <div style={{background:"#fff1f2",border:"1px solid #fda4af",borderRadius:"10px",padding:"10px 12px",color:"#991b1b",fontSize:"12px",fontWeight:800,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:"11px",fontFamily:F}}>⚠️ {err}</div>}
 
           {mode==="quickstart" && <>
             <p style={{color:C.mu,fontSize:"12px",margin:"0 0 12px",fontFamily:F}}>{T.quickHint}</p>
@@ -3849,9 +3857,9 @@ function Landing({onLogin, prefillQuiz}) {
           {mode==="login" && <>
             <p style={{color:C.mu,fontSize:"11px",margin:"0 0 10px",fontFamily:F}}>{T.loginHint}</p>
             <input value={f.name} onChange={e=>upd("name",e.target.value)} placeholder={T.nameStu} style={iS}/>
-            <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={iS}>
-              <option value="">{T.classStu}</option>
-              {classes.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
+            <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,background:"#fff",color:C.tx,colorScheme:"light"}}>
+              <option value="" style={{color:C.mu,background:"#fff"}}>{T.classStu}</option>
+              {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx,background:"#fff"}}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
             </select>
             <input value={f.email} onChange={e=>upd("email",e.target.value)} placeholder={T.idOrEmail} style={iS}/>
             <input type="password" value={f.password} onChange={e=>upd("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder={T.password} style={iS}/>
@@ -3875,9 +3883,9 @@ function Landing({onLogin, prefillQuiz}) {
             </div>
             {linkRole==="student" && <>
               <input value={f.studentId} onChange={e=>upd("studentId",e.target.value)} placeholder={T.studentId} style={iS}/>
-              <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,color:f.classId?"#fff":"rgba(255,255,255,0.5)"}}>
-                <option value="">{T.selectClass}</option>
-                {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
+              <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,background:"#fff",color:f.classId?C.tx:C.mu,colorScheme:"light"}}>
+                <option value="" style={{color:C.mu,background:"#fff"}}>{T.selectClass}</option>
+                {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx,background:"#fff"}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
               </select>
               <button onClick={linkPendingStudent} disabled={loading} style={{width:"100%",padding:"12px",background:C.s,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>Link and Enter</button>
             </>}
@@ -3895,9 +3903,9 @@ function Landing({onLogin, prefillQuiz}) {
             <input type="password" value={f.password} onChange={e=>upd("password",e.target.value)} placeholder={T.createPw} style={iS}/>
             <input value={f.fatherName} onChange={e=>upd("fatherName",e.target.value)} placeholder={T.fatherName} style={iS}/>
             <input value={f.email} onChange={e=>upd("email",e.target.value)} placeholder={T.emailOpt} style={iS}/>
-            <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,color:f.classId?"#fff":"rgba(255,255,255,0.5)"}}>
-              <option value="">{T.selectClass}</option>
-              {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
+            <select value={f.classId} onChange={e=>upd("classId",e.target.value)} style={{...iS,background:"#fff",color:f.classId?C.tx:C.mu,colorScheme:"light"}}>
+              <option value="" style={{color:C.mu,background:"#fff"}}>{T.selectClass}</option>
+              {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx,background:"#fff"}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
             </select>
             {classes.length===0 && <p style={{color:"#fbbf24",fontSize:"11px",margin:"-4px 0 8px",fontFamily:F}}>{T.noClasses}</p>}
             <button onClick={doStudentReg} disabled={loading} style={{width:"100%",padding:"12px",background:C.s,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.registering:T.register}</button>
@@ -6389,14 +6397,19 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   }
   const tasks=(data.readingTasks||[]).filter(t=>t.status!=="closed").filter(t=>{
     if(t.status==="closed") return false;
-    const userCid=canonicalClassId(user.classId||"");
-    const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
-    if(!userCid || delCls.has(userCid) || delCls.has(String(user.classId||""))) return false;
-    const classOk=!t.classIds||t.classIds.length===0||t.classIds.map(canonicalClassId).includes(userCid)||t.classIds.includes(user.classId);
-    const studentOk=!t.studentIds||t.studentIds.length===0||t.studentIds.includes(user.id)||t.studentIds.includes(user.studentId);
-    const now=new Date();
+    const userCid=canonicalClassId(user.classId||user.className||user.class||"");
+    if(!userCid) return false;
+    const classIds=Array.isArray(t.classIds)?t.classIds.filter(Boolean):(t.classIds?[t.classIds]:[]);
+    const studentIds=Array.isArray(t.studentIds)?t.studentIds.filter(Boolean):(t.studentIds?[t.studentIds]:[]);
+    const hasClassTargets=classIds.length>0, hasStudentTargets=studentIds.length>0;
+    const classOk=hasClassTargets && classIds.some(function(x){try{return sameClassId(x,userCid);}catch(_e){return canonicalClassId(x)===userCid;}});
+    const userTokens=[user.id,user.studentId,user.email].filter(Boolean).map(function(x){return String(x);});
+    const userDigits=eqDigits(user.studentId||user.id||"");
+    const studentOk=hasStudentTargets && studentIds.some(function(x){const sx=String(x||""); return userTokens.includes(sx) || (!!userDigits && eqDigits(sx)===userDigits);});
+    // V271: public task = no targets. Otherwise class OR individually assigned student is enough.
+    const assignmentOk=(!hasClassTargets && !hasStudentTargets) || classOk || studentOk;
     const timeOk=rpTaskDateVisible(t);
-    return classOk && studentOk && timeOk;
+    return assignmentOk && timeOk;
   });
   const [localRpSubmissions,setLocalRpSubmissions]=useState([]);
   useEffect(()=>{ setLocalRpSubmissions([]); },[user&&user.id,user&&user.studentId]);
@@ -7760,6 +7773,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [selectedReferralStudentId,setSelectedReferralStudentId]=useState("");
   const [referralDraft,setReferralDraft]=useState("");
   const [studentDashboardId,setStudentDashboardId]=useState("");
+  const [expandedStudentId,setExpandedStudentId]=useState("");
+  const [attendanceSummaryOpen,setAttendanceSummaryOpen]=useState(false);
   const autosaveTimerRef=useRef(null);
   const autosaveSuppressRef=useRef(true);
   const lastDailySavedRef=useRef("");
@@ -8064,7 +8079,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     }
     loadFollowupDay();
   }
-  function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); sel[s.id]=(r.attendance||"")!=="absent";}); setBulkSelected(sel); setBulkOpen(true);}
+  function openBulk(){const sel={}; classStudents.forEach(s=>{const r=getRec(s.id); const a=r.attendance||""; sel[s.id]=a!=="absent"&&a!=="excused";}); setBulkSelected(sel); setBulkOpen(true);}
   const bulkSelectedCount=classStudents.filter(s=>!!bulkSelected[s.id]).length;
   function clearBulkSelection(){setBulkSelected({});}
   function applyBulk(){const n=Math.max(0,safeNum(bulkCount,1)); const next={}; classStudents.forEach(s=>{if(bulkSelected[s.id]){const r=getRec(s.id); next[s.id]={...r,participation:safeNum(r.participation,0)+n};}}); setRecords(prev=>({...prev,...next})); setMsg("✅ تمت إضافة المشاركات للمحددين. سيتم الحفظ تلقائيًا."); setBulkOpen(false);}
@@ -8080,6 +8095,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const totalPart=arr.reduce((a,r)=>a+safeNum(r.participation,0),0);
     const late=arr.filter(r=>r.attendance==="late").length;
     const absent=arr.filter(r=>r.attendance==="absent").length;
+    const excused=arr.filter(r=>r.attendance==="excused").length;
     const book=arr.filter(r=>r.book).length, behavior=arr.filter(r=>r.behavior).length, exit=arr.filter(r=>r.exit).length;
     const homeworkDone=arr.filter(r=>r.dailyHomework==="done").length, homeworkMissing=arr.filter(r=>r.dailyHomework==="missing").length, homeworkPartial=arr.filter(r=>r.dailyHomework==="partial").length;
     const noteTagCount=arr.reduce((a,r)=>a+(Array.isArray(r.noteTags)?r.noteTags.length:0),0);
@@ -8090,12 +8106,18 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     const attPen=0;
     const otherPen=0;
     const final=Math.max(0,Math.min(full,base));
-    return {totalPart,late,absent,book,behavior,exit,homeworkDone,homeworkMissing,homeworkPartial,noteTagCount,base,attPen,otherPen,final,days:arr.length};
+    return {totalPart,late,absent,excused,book,behavior,exit,homeworkDone,homeworkMissing,homeworkPartial,noteTagCount,base,attPen,otherPen,final,days:arr.length};
   }
   const summaries=classStudents.map(st=>periodStats(st));
-  const presentCount=classStudents.filter(s=>(getRec(s.id).attendance||"")==="present").length;
-  const lateCount=classStudents.filter(s=>getRec(s.id).attendance==="late").length;
-  const absentCount=classStudents.filter(s=>getRec(s.id).attendance==="absent").length;
+  const presentStudents=classStudents.filter(s=>(getRec(s.id).attendance||"")==="present");
+  const lateStudents=classStudents.filter(s=>getRec(s.id).attendance==="late");
+  const absentStudents=classStudents.filter(s=>getRec(s.id).attendance==="absent");
+  const excusedStudents=classStudents.filter(s=>getRec(s.id).attendance==="excused");
+  const unsetAttendanceStudents=classStudents.filter(s=>!(getRec(s.id).attendance||""));
+  const presentCount=presentStudents.length;
+  const lateCount=lateStudents.length;
+  const absentCount=absentStudents.length;
+  const excusedCount=excusedStudents.length;
   const avgScore=summaries.length?Math.round((summaries.reduce((a,x)=>a+x.final,0)/summaries.length)*100)/100:0;
   function cleanId(x){return String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_");}
   function taskScoreKey(tid,sid){return String(tid)+"__"+String(sid);}
@@ -8522,7 +8544,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     <Card style={{marginBottom:"12px",background:"linear-gradient(135deg,#0f172a,#1e3a5f)",border:"none",color:"#fff"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
         <div><div style={{fontSize:"20px",fontWeight:900}}>📘 المتابعة اليومية</div><div style={{fontSize:"11px",color:"#cbd5e1",marginTop:"4px"}}>{termLabel(term)} · {periodLabel(period)} · التاريخ تلقائي: {date}</div></div>
-        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={saveDay} disabled={loading}>💾 حفظ اليوم</Btn><Btn size="sm" color={C.pu} onClick={()=>setSettingsOpen(!settingsOpen)}>⚙️ إعدادات الفترة</Btn></div>
+        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={saveDay} disabled={loading}>💾 حفظ اليوم</Btn><Btn size="sm" color={C.p} onClick={()=>setAttendanceSummaryOpen(!attendanceSummaryOpen)}>📊 ملخص حضور اليوم</Btn><Btn size="sm" color={C.pu} onClick={()=>setSettingsOpen(!settingsOpen)}>⚙️ إعدادات الفترة</Btn></div>
       </div>
     </Card>
     {msg&&<div style={{margin:"0 0 10px",fontSize:"12px",fontWeight:900,color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.d:C.mu)}}>{msg}</div>}
@@ -8568,11 +8590,16 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>⚡ سجل سريع للحصة</div>
       <div style={{fontSize:"11px",color:C.mu,marginTop:"4px",fontWeight:800}}>هذه الإضافات للتوثيق اليومي فقط: حضور، تأخير، غياب، مشاركات، حالة واجب يومية، وملاحظات مصنفة إيجابية/سلبية للمعلم. لا تعرض للطالب ولا تغيّر حساب الدرجات الحالي.</div>
     </Card>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"7px",marginBottom:"12px"}}>{stat("طلاب",classStudents.length,C.p,"👥")}{stat("حاضر",presentCount,C.s,"✅")}{stat("متأخر",lateCount,C.w,"⏰")}{stat("غائب",absentCount,C.d,"🚫")}</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(105px,1fr))",gap:"7px",marginBottom:"12px"}}>{stat("طلاب",classStudents.length,C.p,"👥")}{stat("حاضر",presentCount,C.s,"✅")}{stat("متأخر",lateCount,C.w,"⏰")}{stat("غائب",absentCount,C.d,"🚫")}{stat("بعذر",excusedCount,"#7c3aed","🟣")}</div>
+    {attendanceSummaryOpen&&classId!=="all"&&<Card style={{marginBottom:"12px",border:"2px solid #bfdbfe",background:"#eff6ff"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}><strong style={{fontSize:"15px",color:C.tx}}>📊 ملخص حضور اليوم — {date}</strong><button onClick={()=>setAttendanceSummaryOpen(false)} style={{border:"none",background:"transparent",fontSize:"18px",cursor:"pointer"}}>×</button></div>
+      <div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginTop:"8px"}}>إجمالي الفصل: {classStudents.length} · حاضر: {presentCount} · متأخر: {lateCount} · غائب: {absentCount} · بعذر: {excusedCount} · غير محدد: {unsetAttendanceStudents.length}</div>
+      {[ ["🚫 الغياب",absentStudents,C.d],["🟣 الغياب بعذر",excusedStudents,"#7c3aed"],["⏰ المتأخرون",lateStudents,C.w],["✅ الحضور",presentStudents,C.s] ].map(x=><div key={x[0]} style={{marginTop:"9px",padding:"8px 10px",background:"#fff",border:"1px solid "+C.br,borderRadius:"10px"}}><div style={{fontSize:"11px",fontWeight:900,color:x[2]}}>{x[0]} ({x[1].length})</div><div style={{fontSize:"12px",color:C.tx,marginTop:"4px",lineHeight:1.7}}>{x[1].length?x[1].map(st=>st.name).join("، "):"لا يوجد"}</div></div>)}
+    </Card>}
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx}}>متوسط الفترة الحالي: <span style={{color:gc(avgScore*10)}}>{fmt(avgScore)} / {settings.fullScore}</span></div>
-        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={setAllPresent}>{classStudents.length>0 && classStudents.every(s=>(getRec(s.id).attendance||"")==="present")?"↩️ إلغاء الكل حاضر":"✅ الكل حاضر"}</Btn><Btn size="sm" color={C.p} onClick={openBulk}>➕ إضافة مشاركين اليوم</Btn><Btn size="sm" color={C.mu} onClick={safeRefreshDay}>🔄 تحديث البيانات</Btn></div>
+        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.s} onClick={setAllPresent}>{classStudents.length>0 && classStudents.every(s=>(getRec(s.id).attendance||"")==="present")?"↩️ إلغاء الكل حاضر":"✅ تحضير الكل حاضر"}</Btn><Btn size="sm" color={C.p} onClick={()=>setAttendanceSummaryOpen(!attendanceSummaryOpen)}>📊 ملخص الحضور</Btn><Btn size="sm" color={C.p} onClick={openBulk}>➕ إضافة مشاركين اليوم</Btn><Btn size="sm" color={C.mu} onClick={safeRefreshDay}>🔄 تحديث البيانات</Btn></div>
       </div>
     </Card>
     <Card style={{marginBottom:"12px",border:"1px solid #c7d2fe",background:"linear-gradient(180deg,#ffffff,#f8fafc)"}}>
@@ -8729,22 +8756,31 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{maxHeight:"240px",overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:"6px",marginTop:"10px"}}>{classStudents.map(s=><label key={s.id} style={{display:"flex",gap:"7px",alignItems:"center",background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"12px",fontWeight:800,color:C.tx}}><input type="checkbox" checked={!!bulkSelected[s.id]} onChange={e=>setBulkSelected({...bulkSelected,[s.id]:e.target.checked})}/><span>{s.name}<br/><small style={{color:C.mu}}>#{s.studentId||""}</small></span></label>)}</div>
       <div style={{marginTop:"10px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap"}}><Btn size="sm" color={C.d} onClick={zeroBulkToday}>تصفير مشاركات اليوم للمحددين</Btn><Btn size="sm" color={C.p} onClick={applyBulk}>إضافة للمحددين</Btn></div>
     </Card>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:"10px"}}>{visibleStudents.map(st=>{const r=getRec(st.id), sum=periodStats(st); return <Card key={st.id} style={{padding:"13px",border:"1px solid "+(sum.final>=8?"#bbf7d0":sum.final>=6?"#fde68a":"#fecaca")}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"flex-start"}}><div><button onClick={()=>setStudentDashboardId(st.id)} style={{border:"none",background:"transparent",padding:0,fontSize:"14px",color:C.p,fontWeight:900,cursor:"pointer",textDecoration:"underline",textUnderlineOffset:"3px"}}>{st.name}</button><div style={{fontSize:"10px",color:C.mu}}>#{st.studentId||""} · اضغط الاسم لفتح لوحة الأداء</div></div><div style={{fontSize:"18px",fontWeight:900,color:gc((sum.final/safeNum(settings.fullScore,10))*100)}}>{fmt(sum.final)} / {settings.fullScore}</div></div>
-      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{chip(r.attendance==="present","حاضر",()=>setRec(st.id,{attendance:"present"}),C.s)}{chip(r.attendance==="late","متأخر",()=>setRec(st.id,{attendance:"late"}),C.w)}{chip(r.attendance==="absent","غائب",()=>setRec(st.id,{attendance:"absent"}),C.d)}</div>
-      <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px"}}><span style={{fontSize:"12px",fontWeight:900,color:C.tx}}>مشاركات اليوم</span><button onClick={()=>setRec(st.id,{participation:Math.max(0,safeNum(r.participation,0)-1)})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:"#fff",fontWeight:900}}>-</button><div style={{minWidth:"32px",textAlign:"center",fontWeight:900}}>{safeNum(r.participation,0)}</div><button onClick={()=>setRec(st.id,{participation:safeNum(r.participation,0)+1})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:C.p,color:"#fff",fontWeight:900}}>+</button></div>
-      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>حالة واجب اليوم</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{chip(r.dailyHomework==="done","واجب مكتمل",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="done"?"":"done"}),C.s)}{chip(r.dailyHomework==="partial","واجب ناقص",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="partial"?"":"partial"}),C.w)}{chip(r.dailyHomework==="missing","لم يسلم",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="missing"?"":"missing"}),C.d)}</div></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"5px",marginTop:"10px",fontSize:"12px",color:C.tx}}>
-        <label><input type="checkbox" checked={!!r.book} onChange={e=>setRec(st.id,{book:e.target.checked})}/> لم يحضر الكتاب</label>
-        <label><input type="checkbox" checked={!!r.behavior} onChange={e=>setRec(st.id,{behavior:e.target.checked})}/> عدم انضباط</label>
-        <label><input type="checkbox" checked={!!r.exit} onChange={e=>setRec(st.id,{exit:e.target.checked})}/> خروج بدون استئذان</label>
-      </div>
-      <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>ملاحظات سريعة متعددة</div>
-        <div style={{fontSize:"11px",fontWeight:900,color:C.s,margin:"5px 0"}}>إيجابية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{positiveNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.s))}</div>
-        <div style={{fontSize:"11px",fontWeight:900,color:C.d,margin:"8px 0 5px"}}>سلبية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{negativeNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.d))}</div>
-        {noteTagsOf(r).length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginTop:"7px"}}>{noteTagsOf(r).map(tag=><span key={tag} style={{fontSize:"10px",fontWeight:900,color:"#fff",background:noteToneColor(noteTagTone(tag)),borderRadius:"999px",padding:"4px 7px"}}>{noteTagTone(tag)==="positive"?"🟢":"🔴"} {tag}</span>)}</div>}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1.2fr",gap:"8px",marginTop:"10px"}}><div><Label text="درجة يدوية للفترة"/><input value={r.manualScore} onChange={e=>setRec(st.id,{manualScore:e.target.value})} placeholder="اختياري" type="number" step="0.25" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div><Label text="ملاحظة يدوية"/><input value={r.note} onChange={e=>setRec(st.id,{note:e.target.value})} placeholder="اكتب ملاحظة اختيارية" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><div style={{display:"flex",gap:"6px",marginTop:"6px",alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:"10px",fontWeight:900,color:C.mu}}>نوع الملاحظة:</span>{chip((r.noteTone||"negative")==="negative","🔴 سلبية",()=>setRec(st.id,{noteTone:"negative"}),C.d)}{chip((r.noteTone||"negative")==="positive","🟢 إيجابية",()=>setRec(st.id,{noteTone:"positive"}),C.s)}</div></div></div>
-      <div style={{marginTop:"10px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"11px",color:C.mu,lineHeight:1.6}}>إجمالي الفترة: <b>{sum.totalPart}</b> مشاركة / المطلوب <b>{settings.requiredParticipation}</b> · تأخير <b>{sum.late}</b> · غياب <b>{sum.absent}</b><br/>واجب يومي: مكتمل <b>{sum.homeworkDone}</b> · ناقص <b>{sum.homeworkPartial}</b> · لم يسلم <b>{sum.homeworkMissing}</b> · ملاحظات <b>{sum.noteTagCount}</b><br/><span style={{color:C.s,fontWeight:900}}>هذه المتابعة لا تخصم من الدرجات.</span></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"8px"}}>{visibleStudents.map((st,idx)=>{const r=getRec(st.id), sum=periodStats(st), isOpen=String(expandedStudentId)===String(st.id); const att=r.attendance||""; const attText=att==="present"?"حاضر":att==="late"?"متأخر":att==="absent"?"غائب":att==="excused"?"غائب بعذر":"لم يحدد"; const attColor=att==="present"?C.s:att==="late"?C.w:att==="absent"?C.d:att==="excused"?"#7c3aed":C.mu; return <Card key={st.id} style={{padding:"10px 12px",border:"1px solid "+(isOpen?"#93c5fd":C.br),background:isOpen?"#f8fbff":"#fff"}}>
+      <button onClick={()=>setExpandedStudentId(isOpen?"":st.id)} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",gap:"10px",border:"none",background:"transparent",padding:0,cursor:"pointer",textAlign:"start"}}>
+        <div style={{minWidth:0}}><div style={{fontSize:"14px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{st.name}</div><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>#{st.studentId||""} · مشاركة اليوم {safeNum(r.participation,0)} · ملاحظات {noteTagsOf(r).length}</div></div>
+        <div style={{display:"flex",gap:"7px",alignItems:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:900,color:attColor,background:"#fff",border:"1px solid "+attColor,borderRadius:"999px",padding:"4px 7px"}}>{attText}</span><span style={{fontSize:"16px",color:C.p}}>{isOpen?"▲":"▼"}</span></div>
+      </button>
+      {isOpen&&<div style={{marginTop:"10px",paddingTop:"10px",borderTop:"1px solid "+C.br}}>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{chip(att==="present","حاضر",()=>setRec(st.id,{attendance:"present"}),C.s)}{chip(att==="late","متأخر",()=>setRec(st.id,{attendance:"late"}),C.w)}{chip(att==="absent","غائب",()=>setRec(st.id,{attendance:"absent"}),C.d)}{chip(att==="excused","غائب بعذر",()=>setRec(st.id,{attendance:"excused"}),"#7c3aed")}</div>
+        <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"10px"}}><span style={{fontSize:"12px",fontWeight:900,color:C.tx}}>مشاركات اليوم</span><button onClick={()=>setRec(st.id,{participation:Math.max(0,safeNum(r.participation,0)-1)})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:"#fff",fontWeight:900}}>-</button><div style={{minWidth:"32px",textAlign:"center",fontWeight:900}}>{safeNum(r.participation,0)}</div><button onClick={()=>setRec(st.id,{participation:safeNum(r.participation,0)+1})} style={{width:"32px",height:"32px",borderRadius:"9px",border:"1px solid "+C.br,background:C.p,color:"#fff",fontWeight:900}}>+</button></div>
+        <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>حالة واجب اليوم</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{chip(r.dailyHomework==="done","واجب مكتمل",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="done"?"":"done"}),C.s)}{chip(r.dailyHomework==="partial","واجب ناقص",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="partial"?"":"partial"}),C.w)}{chip(r.dailyHomework==="missing","لم يسلم",()=>setRec(st.id,{dailyHomework:r.dailyHomework==="missing"?"":"missing"}),C.d)}</div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"5px",marginTop:"10px",fontSize:"12px",color:C.tx}}>
+          <label><input type="checkbox" checked={!!r.book} onChange={e=>setRec(st.id,{book:e.target.checked})}/> لم يحضر الكتاب</label>
+          <label><input type="checkbox" checked={!!r.behavior} onChange={e=>setRec(st.id,{behavior:e.target.checked})}/> عدم انضباط</label>
+          <label><input type="checkbox" checked={!!r.exit} onChange={e=>setRec(st.id,{exit:e.target.checked})}/> خروج بدون استئذان</label>
+        </div>
+        <div style={{marginTop:"10px"}}><div style={{fontSize:"12px",fontWeight:900,color:C.tx,marginBottom:"6px"}}>ملاحظات سريعة متعددة</div>
+          <div style={{fontSize:"11px",fontWeight:900,color:C.s,margin:"5px 0"}}>إيجابية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{positiveNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.s))}</div>
+          <div style={{fontSize:"11px",fontWeight:900,color:C.d,margin:"8px 0 5px"}}>سلبية</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{negativeNoteOptions.map(tag=>chip(noteTagsOf(r).includes(tag),tag,()=>toggleNoteTag(st.id,tag),C.d))}</div>
+          {noteTagsOf(r).length>0&&<div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginTop:"7px"}}>{noteTagsOf(r).map(tag=><span key={tag} style={{fontSize:"10px",fontWeight:900,color:"#fff",background:noteToneColor(noteTagTone(tag)),borderRadius:"999px",padding:"4px 7px"}}>{noteTagTone(tag)==="positive"?"🟢":"🔴"} {tag}</span>)}</div>}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1.2fr",gap:"8px",marginTop:"10px"}}><div><Label text="درجة يدوية للفترة"/><input value={r.manualScore} onChange={e=>setRec(st.id,{manualScore:e.target.value})} placeholder="اختياري" type="number" step="0.25" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/></div><div><Label text="ملاحظة يدوية"/><input value={r.note} onChange={e=>setRec(st.id,{note:e.target.value})} placeholder="اكتب ملاحظة اختيارية" style={{width:"100%",padding:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/><div style={{display:"flex",gap:"6px",marginTop:"6px",alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:"10px",fontWeight:900,color:C.mu}}>نوع الملاحظة:</span>{chip((r.noteTone||"negative")==="negative","🔴 سلبية",()=>setRec(st.id,{noteTone:"negative"}),C.d)}{chip((r.noteTone||"negative")==="positive","🟢 إيجابية",()=>setRec(st.id,{noteTone:"positive"}),C.s)}</div></div></div>
+        <div style={{marginTop:"10px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px",fontSize:"11px",color:C.mu,lineHeight:1.6}}>إجمالي الفترة: <b>{sum.totalPart}</b> مشاركة / المطلوب <b>{settings.requiredParticipation}</b> · تأخير <b>{sum.late}</b> · غياب <b>{sum.absent}</b> · بعذر <b>{sum.excused||0}</b><br/>واجب يومي: مكتمل <b>{sum.homeworkDone}</b> · ناقص <b>{sum.homeworkPartial}</b> · لم يسلم <b>{sum.homeworkMissing}</b> · ملاحظات <b>{sum.noteTagCount}</b><br/><span style={{color:C.s,fontWeight:900}}>هذه المتابعة لا تخصم من الدرجات.</span></div>
+        <div style={{display:"flex",justifyContent:"space-between",gap:"7px",flexWrap:"wrap",marginTop:"10px"}}>
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.mu} disabled={idx===0} onClick={()=>idx>0&&setExpandedStudentId(visibleStudents[idx-1].id)}>◀ السابق</Btn><Btn size="sm" color={C.mu} disabled={idx>=visibleStudents.length-1} onClick={()=>idx<visibleStudents.length-1&&setExpandedStudentId(visibleStudents[idx+1].id)}>التالي ▶</Btn></div>
+          <Btn size="sm" color={C.p} onClick={()=>setStudentDashboardId(st.id)}>📊 لوحة الأداء الشاملة</Btn>
+        </div>
+      </div>}
     </Card>;})}</div>
     {classId==="all"&&<Card style={{marginTop:"12px",background:"#fff7ed",border:"1px solid #fed7aa",color:"#9a3412",fontSize:"12px",fontWeight:800}}>اختر فصلًا محددًا حتى تظهر بطاقات الطلاب وتحفظ المتابعة اليومية.</Card>}
   </div>;
@@ -10904,6 +10940,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [qrdClass,setQrdClass]=useState("all");
   const [qrdSearch,setQrdSearch]=useState("");
   const [profileOpen,setProfileOpen]=useState(false);
+  const [navOpen,setNavOpen]=useState(false);
   const [quizFastPatch,setQuizFastPatch]=useState({});
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
@@ -11739,11 +11776,25 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   if(view==="create")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
   const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const currentTab=tabs.find(t=>t.id===tab)||tabs[0];
+  const tabGroups=[
+    {label:"الرئيسية والمتابعة",ids:["overview","followup"]},
+    {label:"التقييم والاختبارات",ids:["quizzes","gradebook","projects"]},
+    {label:"القراءة",ids:["reading","readingReport","readingTheory"]},
+    {label:"الطلاب والفصول",ids:["classes","students","heatmap","announce"]},
+    {label:"الإدارة",ids:["cleanup"]}
+  ];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
-      <TabBar tabs={tabs} active={tab} onChange={setTab}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v271" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
+        <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
+        <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
+        {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
+          {tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}</button>;})}</div></div>)}
+        </div>}
+      </div>
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
