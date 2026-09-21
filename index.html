@@ -207,7 +207,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- EDUQUIZ_BUILD: v271 | login/classes + Reading Progress visibility + compact nav + follow-up attendance accordion -->
+<!-- EDUQUIZ_BUILD: v272 | RP duplicate/upload retry + Third Second login hotfix -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -528,13 +528,8 @@ function activeStudentInData(user,data){
 
   const cid=canonicalClassId(found.classId||user.classId||"");
   if(!cid) return false;
-  // A class that is currently rebuilt from the active Firebase roster wins over old class tombstones.
-  const liveClasses=(typeof eqRealActiveClassesFromData==="function")?eqRealActiveClassesFromData(data||{}):[];
-  const liveClass=liveClasses.some(function(c){ try{return sameClassId(c.id||c.classId||c.name||c.grade||"",cid);}catch(_e){return false;} });
-  if(liveClass) return true;
-  const delCls=(typeof deletedClassSetFromData==="function")?deletedClassSetFromData(data):adminDeletedClassSet();
-  if(delCls.has(String(cid)) || delCls.has(String(found.classId||"")) || delCls.has(String(user.classId||""))) return false;
-
+  // V272 LOGIN HOTFIX: the current active Firebase student row is the source of truth.
+  // Old class tombstones must never eject a currently enrolled student (notably class 3-2).
   return true;
 }
 function adminClassAliases(c){
@@ -6447,7 +6442,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return function(){ alive=false; try{unsub&&unsub();}catch(_e){} };
   },[user&&user.id,user&&user.studentId,user&&user.email]);
 
-  const subs=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
+  // V272: live snapshot and app data can contain the SAME submission. Merge by id so one recording = one attempt.
+  const __rpStudentSubMap={};
+  [...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent).forEach(function(x){
+    if(!x) return; const k=String(x.id||[x.taskId,x.studentId||x.studentNumber,x.submittedAt].join("|"));
+    __rpStudentSubMap[k]={...(__rpStudentSubMap[k]||{}),...x};
+  });
+  const subs=Object.values(__rpStudentSubMap);
   const resets=(data.readingAttemptResets||[]);
   function resetCutoffForTask(taskId){
     const sidSet=[String(user.id||""),String(user.studentId||""),String(user.email||"")].filter(Boolean);
@@ -6844,7 +6845,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     markRecordingSubmitted(recordingId);
     setSentBlobKey(key);
     setMsg("✅ Submitted + Pending Review. Saving for teacher…");
-    setBlob(null); setAudioUrl("");
+    // V272: keep the draft until cloud save is confirmed, so the student can retry/re-record after a failure.
 
     // RP105: save the real submission document FIRST, before Storage/chunk upload.
     // This prevents the teacher side from seeing nothing when audio upload is slow or fails.
@@ -6859,7 +6860,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     let finalSubmission={...baseSubmission};
     try{
       let url="";
-      try{ url=await rpUploadAudio(blob,path); }catch(uploadErr){ console.warn("RP audio upload failed", uploadErr); }
+      // V272: small recordings are already stored safely in Firestore as audioDataUrl.
+      // Do not start a redundant Storage upload that can leave the button stuck on Uploading.
+      if(!audioDataUrl){
+        try{
+          url=await Promise.race([rpUploadAudio(blob,path),new Promise((_,rej)=>setTimeout(()=>rej(new Error("audio upload timeout")),12000))]);
+        }catch(uploadErr){ console.warn("RP audio upload failed", uploadErr); }
+      }
       let chunkInfo={ok:false,count:0};
       if(!audioDataUrl && fullAudioDataUrl){
         try{ chunkInfo=await rpSaveAudioChunks(id, fullAudioDataUrl); }catch(chunkErr){ console.warn("RP audio chunk save failed", chunkErr); }
@@ -6878,6 +6885,8 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       await rpSetReadingSubmissionStrict(id,finalSubmission);
       setLocalRpSubmissions(prev=>{ const clean=(prev||[]).filter(x=>x&&x.id!==id); return [...clean,finalSubmission]; });
       saveStudentAttemptMarker(finalSubmission);
+      try{ if(audioUrl) URL.revokeObjectURL(audioUrl); }catch(_e){}
+      setBlob(null); setAudioUrl("");
       setMsg("✅ Submitted + Pending Review. Audio saved for teacher.");
       stopModelAudio();
       setTask(null);
@@ -11787,7 +11796,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v271" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v272" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
