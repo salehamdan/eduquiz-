@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v271</title>
+<title>EduQuiz — Smart Assessment v274</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -207,7 +207,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- EDUQUIZ_BUILD: v273 | RP single-attempt + audio-first analysis hotfix -->
+<!-- EDUQUIZ_BUILD: v274 | teacher 55-minute idle session + preserve RP v273 -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -1003,9 +1003,37 @@ async function loadAllData() {
   return allData;
 }
 
-// Session (this device only)
-function saveSession(u) { try { localStorage.setItem("eq_session", JSON.stringify(u)); } catch(e){} }
-function loadSession() { try { return JSON.parse(localStorage.getItem("eq_session")||"null"); } catch(e){ return null; } }
+// Session (this device only) — v274: teacher stays signed in while active; expires after 55 minutes of inactivity.
+const EQ_TEACHER_IDLE_MS = 55 * 60 * 1000;
+function saveSession(u) {
+  try {
+    const now=Date.now();
+    const row={...(u||{})};
+    if(String(row.role||"")!=="student"){ row.__eqTeacherLastActivity=now; row.__eqTeacherSessionV=274; }
+    localStorage.setItem("eq_session", JSON.stringify(row));
+  } catch(e){}
+}
+function loadSession() {
+  try {
+    const u=JSON.parse(localStorage.getItem("eq_session")||"null");
+    if(!u) return null;
+    if(String(u.role||"")!=="student"){
+      const last=Number(u.__eqTeacherLastActivity||0);
+      // Migrate an older valid teacher session instead of forcing an immediate login after the update.
+      if(!last){ u.__eqTeacherLastActivity=Date.now(); u.__eqTeacherSessionV=274; localStorage.setItem("eq_session",JSON.stringify(u)); return u; }
+      if(Date.now()-last > EQ_TEACHER_IDLE_MS){ localStorage.removeItem("eq_session"); return null; }
+    }
+    return u;
+  } catch(e){ return null; }
+}
+function touchTeacherSession(){
+  try{
+    const u=JSON.parse(localStorage.getItem("eq_session")||"null");
+    if(!u || String(u.role||"")==="student") return;
+    u.__eqTeacherLastActivity=Date.now(); u.__eqTeacherSessionV=274;
+    localStorage.setItem("eq_session",JSON.stringify(u));
+  }catch(e){}
+}
 function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
 function eqHardCleanLoggedOutUI(){
   try{
@@ -11827,7 +11855,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v273" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v274" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
@@ -12654,6 +12682,24 @@ function App() {
     document.addEventListener("visibilitychange", onVis);
     const timer=setInterval(refresh, 7000);
     return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); clearInterval(timer); };
+  },[user&&user.id,user&&user.role]);
+
+  // v274 — keep the teacher session alive for 55 minutes from the LAST real activity.
+  // Throttled writes avoid touching localStorage on every mouse/touch event.
+  useEffect(()=>{
+    if(!user || String(user.role||"")==="student") return;
+    touchTeacherSession();
+    let lastTouch=0;
+    const mark=()=>{
+      const now=Date.now();
+      if(now-lastTouch<15000) return;
+      lastTouch=now; touchTeacherSession();
+    };
+    const events=["pointerdown","keydown","touchstart","scroll"];
+    events.forEach(ev=>window.addEventListener(ev,mark,{passive:true}));
+    const onVis=()=>{ if(document.visibilityState==="visible") mark(); };
+    document.addEventListener("visibilitychange",onVis);
+    return ()=>{ events.forEach(ev=>window.removeEventListener(ev,mark)); document.removeEventListener("visibilitychange",onVis); };
   },[user&&user.id,user&&user.role]);
 
   useEffect(()=>{
