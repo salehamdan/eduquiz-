@@ -207,7 +207,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- EDUQUIZ_BUILD: v272 | RP duplicate/upload retry + Third Second login hotfix -->
+<!-- EDUQUIZ_BUILD: v273 | RP single-attempt + audio-first analysis hotfix -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -6442,13 +6442,28 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return function(){ alive=false; try{unsub&&unsub();}catch(_e){} };
   },[user&&user.id,user&&user.studentId,user&&user.email]);
 
-  // V272: live snapshot and app data can contain the SAME submission. Merge by id so one recording = one attempt.
-  const __rpStudentSubMap={};
-  [...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent).forEach(function(x){
-    if(!x) return; const k=String(x.id||[x.taskId,x.studentId||x.studentNumber,x.submittedAt].join("|"));
-    __rpStudentSubMap[k]={...(__rpStudentSubMap[k]||{}),...x};
+  // V273: one physical recording = one visible attempt, even if an old rp_direct fallback copy exists.
+  const __rpStudentRows=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
+  const __rpStudentById={};
+  __rpStudentRows.forEach(function(x){ if(x&&x.id)__rpStudentById[String(x.id)]={...(__rpStudentById[String(x.id)]||{}),...x}; });
+  const __rpStudentDedup=[];
+  Object.values(__rpStudentById).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);}).forEach(function(x){
+    const sid=eqDigits(x.studentNumber||x.studentId||x.studentUserId||x.userId||"")||String(x.studentName||"").trim().toLowerCase();
+    const tid=String(x.taskId||x.taskTitle||"");
+    const tm=rpAttemptTimeMs(x);
+    const j=__rpStudentDedup.findIndex(function(y){
+      const ysid=eqDigits(y.studentNumber||y.studentId||y.studentUserId||y.userId||"")||String(y.studentName||"").trim().toLowerCase();
+      return sid&&ysid===sid&&String(y.taskId||y.taskTitle||"")===tid&&Math.abs(rpAttemptTimeMs(y)-tm)<=8000;
+    });
+    if(j<0){__rpStudentDedup.push(x);return;}
+    const old=__rpStudentDedup[j];
+    const oldDirect=String(old.id||"").indexOf("rp_direct_")===0;
+    const newDirect=String(x.id||"").indexOf("rp_direct_")===0;
+    if(oldDirect&&!newDirect) __rpStudentDedup[j]={...old,...x};
+    else if(!oldDirect&&newDirect) __rpStudentDedup[j]={...x,...old};
+    else __rpStudentDedup[j]={...old,...x};
   });
-  const subs=Object.values(__rpStudentSubMap);
+  const subs=__rpStudentDedup;
   const resets=(data.readingAttemptResets||[]);
   function resetCutoffForTask(taskId){
     const sidSet=[String(user.id||""),String(user.studentId||""),String(user.email||"")].filter(Boolean);
@@ -6835,7 +6850,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     try{ fullAudioDataUrl=await rpBlobToDataUrl(blob); }catch(e){}
     let audioDataUrl=rpSafeAudioDataUrlAllowed(blob)?fullAudioDataUrl:"";
 
-    const baseSubmission={id,source:"rp_shared_submission",deliveryVersion:"rp105_base_first",taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds:measuredSeconds,durationSeconds:measuredSeconds,readingSeconds:measuredSeconds,actualReadingSeconds:measuredSeconds,effectiveReadingSeconds:measuredSeconds,recordingSeconds:fullRecordedSeconds,fullRecordingSeconds:fullRecordedSeconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:audioDataUrl?"firestore_audio_saved":"uploading"};
+    const baseSubmission={id,recordingId:recordingId,source:"rp_shared_submission",deliveryVersion:"rp273_single_attempt",taskId:task.id,taskTitle:task.title,studentId:user.id,studentUserId:user.id,userId:user.id,studentNumber:user.studentId,studentName:user.name||user.shortName||"",classId:user.classId,className:user.className,teacherId:task.teacherId,referenceText:task.text||"",audioUrl:"",audioDataUrl:audioDataUrl,audioChunked:!audioDataUrl && !!fullAudioDataUrl,audioChunkCount:0,audioPath:path,audioType:blob.type||"audio/webm",audioSize:blob.size||0,transcript:tx,seconds:measuredSeconds,durationSeconds:measuredSeconds,readingSeconds:measuredSeconds,actualReadingSeconds:measuredSeconds,effectiveReadingSeconds:measuredSeconds,recordingSeconds:fullRecordedSeconds,fullRecordingSeconds:fullRecordedSeconds,createdAt:today(),submittedAt:new Date().toISOString(),status:"submitted",analysis:null,analysisStatus:"queued_for_analysis",analyzedAt:null,uploadStatus:audioDataUrl?"firestore_audio_saved":"uploading"};
 
     // الطالب يرى التسليم فوراً بدون تحديث الصفحة، حتى قبل انتهاء رفع الصوت.
     setAttemptCounter(task.id, Math.max(getAttemptCounter(task.id), beforeCount+1));
@@ -7028,7 +7043,19 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [rpBusy,setRpBusy]=useState({}); const [localTeacherSubs,setLocalTeacherSubs]=useState([]); const [localTeacherTasks,setLocalTeacherTasks]=useState([]);
   function setRpButton(id,label){setRpBusy(prev=>({...prev,[id]:label||"Updating..."}));}
   function clearRpButton(id){setRpBusy(prev=>{const n={...prev}; delete n[id]; return n;});}
-  function rpMergeById(a,b){const m={};[...(a||[]),...(b||[])].forEach(x=>{if(x&&x.id)m[x.id]={...(m[x.id]||{}),...x};});return Object.values(m);}
+  function rpMergeById(a,b){
+    const m={};[...(a||[]),...(b||[])].forEach(x=>{if(x&&x.id)m[x.id]={...(m[x.id]||{}),...x};});
+    const rows=Object.values(m).sort((x,y)=>rpAttemptTimeMs(x)-rpAttemptTimeMs(y)), out=[];
+    rows.forEach(x=>{
+      const sid=eqDigits(x.studentNumber||x.studentId||x.studentUserId||x.userId||"")||String(x.studentName||"").trim().toLowerCase();
+      const tid=String(x.taskId||x.taskTitle||""); const tm=rpAttemptTimeMs(x);
+      const j=out.findIndex(y=>{const ys=eqDigits(y.studentNumber||y.studentId||y.studentUserId||y.userId||"")||String(y.studentName||"").trim().toLowerCase();return sid&&ys===sid&&String(y.taskId||y.taskTitle||"")===tid&&Math.abs(rpAttemptTimeMs(y)-tm)<=8000;});
+      if(j<0){out.push(x);return;}
+      const od=String(out[j].id||"").startsWith("rp_direct_"), nd=String(x.id||"").startsWith("rp_direct_");
+      if(od&&!nd) out[j]={...out[j],...x}; else if(!od&&nd) out[j]={...x,...out[j]}; else out[j]={...out[j],...x};
+    });
+    return out;
+  }
   const tasks=rpMergeById((data.readingTasks||[]),localTeacherTasks).filter(t=>t.teacherId===user.id);
   const taskIds=new Set(tasks.map(t=>String(t.id)));
   const rawSubs=rpMergeById((data.readingSubmissions||[]),localTeacherSubs).filter(s=>s.teacherId===user.id || taskIds.has(String(s.taskId)));
@@ -7145,11 +7172,15 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   async function analyzeOne(sub){
     const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
     if(!task) throw new Error("Task not found");
-    let tx=String(sub.transcript||"").trim();
-    if(!tx && rpHasAnyAudio(sub)){
+    // V273: grading must be based on the submitted recording, not the browser live transcript.
+    // Browser SpeechRecognition can silently autocorrect mispronounced words to the expected spelling.
+    let tx="";
+    if(rpHasAnyAudio(sub)){
       tx=await rpTranscribeSubmissionAudio(sub, task);
+    }else{
+      tx=String(sub.transcript||"").trim();
     }
-    if(!tx) throw new Error("No transcript available. Add OpenAI key or ask student to resubmit with audio.");
+    if(!tx) throw new Error("No audio transcription available. Add OpenAI key or ask student to resubmit with audio.");
     const analysis=rpAnalyze(task.text,tx,rpSecondsFromSubmission(sub)||0,task.level);
     const updated={...sub,transcript:tx,analysis,status:"pending_review",analysisStatus:"completed",analyzedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     setLocalTeacherSubs(prev=>rpMergeById(prev,[updated]));
@@ -11796,7 +11827,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v272" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v273" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
@@ -13473,14 +13504,10 @@ document.addEventListener("click", function(e){
       console.log("RP106 direct delivery saved", rec);
     }catch(err){ console.warn("RP106 direct delivery failed", err); }
   }
-  document.addEventListener("click", function(e){
-    const btn=e.target.closest("button"); if(!btn) return;
-    const label=String(btn.textContent||"").trim().toLowerCase();
-    if(!(label.includes("submit to teacher") || label==="submit" || label.includes("إرسال"))) return;
-    // Do NOT stop React. This is a parallel safety delivery so the teacher gets the audio even if React/Storage fails.
-    setTimeout(rpFallbackDeliverLatestAudio, 350);
-    setTimeout(rpFallbackDeliverLatestAudio, 1400);
-  }, true);
+  // V273: disabled the old parallel safety-delivery click hook.
+  // The React submit path already saves the attempt before audio upload; running a second delivery path
+  // created a second document (rp_direct_...) for the same recording and therefore duplicate evaluations.
+  // Keep rpFallbackDeliverLatestAudio defined only for backward compatibility; do not auto-run it.
 
   function getKey(){
     try{
