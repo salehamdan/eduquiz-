@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v278</title>
+<title>EduQuiz — Smart Assessment v279</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,7 +208,7 @@ try{
 </head>
 <body>
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
-<!-- EDUQUIZ_BUILD: v278 | teacher 55-minute idle session + preserve RP v273 -->
+<!-- EDUQUIZ_BUILD: v279 | v278 preserved + hide orphan Reading Progress pending cards on Overview -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -11921,7 +11921,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v278" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v279" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ الرئيسية</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
@@ -11946,6 +11946,15 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               var taskOk=(data.readingTasks||[]).some(function(t){return String(t.id||"")===String(s.taskId||"")&&String(t.teacherId||"")===String(user.id||"");});
               var teacherOk=String(s.teacherId||"")===String(user.id||"");
               var hasPayload=!!(s.audioUrl||s.audioDataUrl||s.audioChunked||s.audioChunkCount||s.analysis||s.transcript);
+              // v279: Overview must not keep a ghost Pending Review after the real RP attempt was deleted.
+              // A card with no resolvable active student and no meaningful saved student name is an orphan UI/database remainder.
+              var resolvedStudent=rpResolveStudentForSubmission(s,myStudents);
+              var savedName=String(s.studentName||s.name||"").trim();
+              var meaningfulName=!!savedName && savedName.toLowerCase()!=="student" && savedName!=="طالب";
+              var stableNo=String(s.studentNumber||s.studentId||s.sid||"").replace(/\D/g,"");
+              var activeByNumber=!!stableNo && (myStudents||[]).some(function(st){return String(st.studentId||st.studentNumber||st.sid||"").replace(/\D/g,"")===stableNo;});
+              var orphanPending=!resolvedStudent && !activeByNumber && !meaningfulName;
+              if(orphanPending) return false;
               return (taskOk||teacherOk||hasPayload) && rpIsPendingReviewSubmission(s);
             });
             if(!pending.length) return null;
