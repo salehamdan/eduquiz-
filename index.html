@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v280</title>
+<title>EduQuiz — Smart Assessment v281</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,7 +208,7 @@ try{
 </head>
 <body>
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
-<!-- EDUQUIZ_BUILD: v280 | v279 preserved + comprehensive class-scoped delete with safety guards -->
+<!-- EDUQUIZ_BUILD: v281 | v279 preserved + comprehensive class-scoped delete with safety guards -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -9981,11 +9981,6 @@ const CLEANUP_ITEMS = [
   {id:"writing", label:"Writing Submissions", desc:"Independent writing task submissions stored in app settings"},
   {id:"aiReading", label:"AI Reading / Reading Theory Records", desc:"Reading Theory generated responses and records"},
   {id:"notes", label:"Teacher Notes", desc:"Teacher notes and student notes"},
-  {id:"quizzes", label:"Quiz Definitions", desc:"Old quiz definitions, not only attempts"},
-  {id:"projects", label:"Project Definitions", desc:"Old project definitions"},
-  {id:"readingTasks", label:"Reading Progress Tasks", desc:"Old Reading Progress task definitions; Hussein 3209 recordings remain protected"},
-  {id:"readingTheoryItems", label:"Reading Theory Items", desc:"Old generated Reading Theory items"},
-  {id:"announcements", label:"Announcements", desc:"Old announcements"},
   {id:"followupData", label:"Follow-up Data", desc:"Daily follow-up, homework tasks/scores, referrals, and follow-up settings"},
   {id:"legacyWritingDocs", label:"Legacy Writing Docs", desc:"Obsolete Writing appSettings documents v5-v11"},
   {id:"legacyLocalCaches", label:"Legacy Local Caches", desc:"Old local Writing/student-number caches on this device"},
@@ -10789,6 +10784,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     return (p.itemIds||[]).reduce((sum,id)=>sum+((p.rows&&p.rows[id]&&p.rows[id].length)||0),0);
   }
   async function cleanupDeleteRows(col,rows,label,progressState){
+    if(CLEANUP_PROTECTED_DEFINITIONS.has(String(col||""))){ throw new Error("Protected definition collection cannot be deleted by Cleanup: "+col); }
     rows=adminUniqueRows(rows||[]);
     if(!rows.length) return 0;
     const total=progressState.total||rows.length;
@@ -10877,7 +10873,7 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     if(!Number.isFinite(cutoffMs)){setMsg("أدخل تاريخًا صحيحًا لفحص البيانات القديمة.");return;}
     setLegacyBusy(true);setLegacyPreview(null);setMsg("جاري فحص البقايا القديمة...");
     try{
-      const names=["responses","gradebook","readingSubmissions","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","quizzes","projects","readingTasks","readingTheoryItems","announcements","cleanupLogs","appSettings"];
+      const names=["responses","gradebook","readingSubmissions","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","cleanupLogs","appSettings"];
       const vals=await Promise.all(names.map(n=>fsAll(n).catch(()=>[])));
       const all=Object.fromEntries(names.map((n,i)=>[n,vals[i]||[]]));
       const rpAll=all.readingSubmissions||[];
@@ -10886,9 +10882,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
       const protectedTaskIds=new Set(husseinDirect.map(r=>String(r.taskId||"")).filter(Boolean));
       const isProtectedChunk=r=>{const pid=cleanupLegacyRpParentId(r);if(pid&&husseinIds.has(pid))return true;const id=String(r&& (r.id||r._id)||"");for(const k of husseinIds){if(id.includes(k))return true;}return false;};
       const rows={};
-      ["responses","gradebook","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","quizzes","projects","readingTheoryItems","announcements","cleanupLogs"].forEach(col=>{rows[col]=(all[col]||[]).filter(r=>cleanupLegacyBefore(r,cutoffMs));});
+      ["responses","gradebook","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","cleanupLogs"].forEach(col=>{rows[col]=(all[col]||[]).filter(r=>cleanupLegacyBefore(r,cutoffMs));});
       rows.readingSubmissions=rpAll.filter(r=>cleanupLegacyBefore(r,cutoffMs)&&!cleanupIsProtectedHusseinRp(r)&&!isProtectedChunk(r));
-      rows.readingTasks=(all.readingTasks||[]).filter(r=>cleanupLegacyBefore(r,cutoffMs)&&!protectedTaskIds.has(String(r.id||r._id||"")));
       rows.legacyWritingDocs=(all.appSettings||[]).filter(x=>/^writing_independent_v(?:5|6|7|8|9|10|11)$/i.test(String(x&& (x.id||x._id)||"")));
       const w12=(all.appSettings||[]).find(x=>String(x&& (x.id||x._id)||"")==="writing_independent_v12")||null;
       const currentStudentTokens=new Set((myStudents||[]).flatMap(st=>[st.id,st.studentId,st.studentNumber].filter(Boolean).map(String)));
@@ -10910,7 +10905,8 @@ function YearEndCleanupTeacher({user,data,reload,myClasses,myStudents}){
     setLegacyBusy(true);setMsg("جاري حذف البقايا القديمة مع حماية Reading Progress لحسين #3209...");
     const deleted={};
     try{
-      for(const col of ["responses","gradebook","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","quizzes","projects","readingTasks","readingTheoryItems","announcements","cleanupLogs"]){
+      for(const col of ["responses","gradebook","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","dailyFollowup","followupHomeworkTasks","followupHomeworkScores","followupReferrals","followupSettings","cleanupLogs"]){
+        if(CLEANUP_PROTECTED_DEFINITIONS.has(col)) throw new Error("Protected definition collection cannot be deleted by legacy cleanup: "+col);
         deleted[col]=await adminBatchDelete(col,p.rows[col]||[],()=>{});
       }
       let rpStorage=0;for(const r of (p.rows.readingSubmissions||[])){try{if(await cleanupLegacyDeleteStorageAudio(r))rpStorage++;}catch(e){}}
@@ -11989,7 +11985,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v280" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v281" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ الرئيسية</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
