@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v277</title>
+<title>EduQuiz — Smart Assessment v278</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -207,7 +207,8 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- EDUQUIZ_BUILD: v277 | teacher 55-minute idle session + preserve RP v273 -->
+<!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
+<!-- EDUQUIZ_BUILD: v278 | teacher 55-minute idle session + preserve RP v273 -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -7060,6 +7061,43 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     })}</div>;
 }
 
+// RP278: stable student identity + synchronized exact-attempt deletion after roster re-import.
+function rpStableStudentNumber(x){
+  if(!x) return "";
+  return eqDigits(x.studentNumber||x.studentNo||x.officialStudentId||x.studentIdNumber||x.studentId||x.number||"");
+}
+function rpResolveStudentForSubmission(sub, students){
+  const arr=students||[];
+  let st=arr.find(x=>responseBelongsToStudent(sub,x));
+  if(st) return st;
+  const n=rpStableStudentNumber(sub);
+  if(n){ st=arr.find(x=>rpStableStudentNumber(x)===n); if(st) return st; }
+  const nm=String((sub&&(sub.studentName||sub.name))||"").trim();
+  if(nm){ st=arr.find(x=>studentNameMatches(x,nm)); if(st) return st; }
+  return null;
+}
+function rpAttemptAliasSet(r){
+  const z=new Set();
+  if(!r) return z;
+  [r.id,r._id,r.originalAttemptId,r.attemptId,r.recordingId,r.submissionId,r.clientAttemptId].forEach(v=>{if(v)z.add(String(v));});
+  return z;
+}
+function rpSamePhysicalAttempt(a,b){
+  if(!a||!b) return false;
+  const aa=rpAttemptAliasSet(a), bb=rpAttemptAliasSet(b);
+  for(const x of aa) if(bb.has(x)) return true;
+  const an=rpStableStudentNumber(a), bn=rpStableStudentNumber(b);
+  if(an && bn && an!==bn) return false;
+  if(String(a.taskId||"")!==String(b.taskId||"")) return false;
+  // Legacy duplicate copies sometimes received different ids but the same recording time.
+  const at=rpSubmitTime(a)||rpAttemptTimeMs(a), bt=rpSubmitTime(b)||rpAttemptTimeMs(b);
+  if(an && bn && at && bt && Math.abs(at-bt)<=15000) return true;
+  return false;
+}
+function rpDeletedPatch(r, teacherId){
+  const now=new Date().toISOString();
+  return {...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:now,reviewedAt:now,updatedAt:now,deletedBy:teacherId||"teacher",visibleToStudent:false,scoreVisible:false};
+}
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [retakeLimit,setRetakeLimit]=useState(0); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null); const [autoAnalysis,setAutoAnalysis]=useState(true); const [openDate,setOpenDate]=useState(""); const [closeDate,setCloseDate]=useState("");
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState(""); const [msg,setMsg]=useState("");
@@ -7360,9 +7398,14 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(String(ok||"").trim().toUpperCase()!=="DELETE") return;
     setRpButton("delete_attempts_bulk","Deleting..."); setMsg("Deleting selected Reading Progress attempts...");
     let done=0, fail=0;
+    const expanded=[]; const seen=new Set();
     for(const r of matches){
+      const fam=(data.readingSubmissions||[]).filter(x=>rpSamePhysicalAttempt(x,r));
+      (fam.length?fam:[r]).forEach(x=>{if(x&&x.id&&!seen.has(String(x.id))){seen.add(String(x.id));expanded.push(x);}});
+    }
+    for(const r of expanded){
       try{
-        const upd={...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
+        const upd=rpDeletedPatch(r,user.id||"teacher");
         setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
         await fsSet("readingSubmissions",r.id,upd);
         done++;
@@ -7375,15 +7418,24 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function deleteSingleReadingAttempt(s){
     if(!s||!s.id) return;
-    const st=myStudents.find(x=>responseBelongsToStudent(s,x));
+    const st=rpResolveStudentForSubmission(s,myStudents);
     const t=(data.readingTasks||[]).find(x=>String(x.id)===String(s.taskId));
     const ok=window.confirm("Delete this attempt from teacher and student results?\n\nStudent: "+(st?st.name:"Student")+"\nTask: "+(t?t.title:"Task")+"\n\nThis will make it excluded from student performance.");
     if(!ok) return;
     const bid="del_one_"+s.id; setRpButton(bid,"Deleting...");
-    const upd={...s,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:new Date().toISOString(),reviewedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),deletedBy:user.id||"teacher",visibleToStudent:false,scoreVisible:false};
-    setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
-    try{await fsSet("readingSubmissions",s.id,upd); setMsg("✅ Attempt deleted/hidden."); try{await reload();}catch(e){}}
-    finally{setTimeout(()=>clearRpButton(bid),250);}
+    // Delete every stored copy of THIS physical attempt only. This covers an old userId copy
+    // plus the re-imported student's numeric-id copy without touching another attempt.
+    const family=(data.readingSubmissions||[]).filter(r=>rpSamePhysicalAttempt(r,s));
+    if(!family.some(r=>String(r.id||"")===String(s.id||""))) family.push(s);
+    const patches=family.filter(r=>r&&r.id).map(r=>rpDeletedPatch(r,user.id||"teacher"));
+    setLocalTeacherSubs(prev=>rpMergeById(prev,patches));
+    try{
+      for(const upd of patches){ await fsSet("readingSubmissions",upd.id,upd); }
+      // Also mark the exact attempt in the student's local attempt stores when ids/aliases match.
+      try{await rpApplyFinalDecisionToStudentTask(s,"deleted","");}catch(_e){}
+      setMsg("✅ Attempt deleted from teacher and student views"+(patches.length>1?" ("+patches.length+" linked copies).":"."));
+      try{await reload();}catch(e){}
+    } finally{setTimeout(()=>clearRpButton(bid),250);}
   }
 
   async function delTask(t){
@@ -11869,7 +11921,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v277" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v278" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ الرئيسية</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
@@ -11905,7 +11957,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 <button onClick={function(){setTab("reading");}} style={{fontSize:"11px",color:C.p,background:"none",border:"none",cursor:"pointer",fontWeight:"700",fontFamily:F}}>View All →</button>
               </div>
               {visible.map(function(s){
-                var st=myStudents.find(function(x){return responseBelongsToStudent(s,x);});
+                var st=rpResolveStudentForSubmission(s,myStudents);
                 var tt=(data.readingTasks||[]).find(function(x){return String(x.id||"")===String(s.taskId||"");});
                 var acc=rpAcceptedScoreFromSubmission(s);
                 if(acc===""||acc==null) acc=rpMetricFromSubmission(s,"score");
