@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v274</title>
+<title>EduQuiz — Smart Assessment v277</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -207,7 +207,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- EDUQUIZ_BUILD: v276 | teacher 55-minute idle session + preserve RP v273 -->
+<!-- EDUQUIZ_BUILD: v277 | teacher 55-minute idle session + preserve RP v273 -->
 
 <!-- QUIZ_DRAFT_AUDIENCE_WORDCOUNT_FIX_268_20260919 -->
 
@@ -11002,7 +11002,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [localStudentPatch,setLocalStudentPatch]=useState([]);
   const [resettingClassId,setResettingClassId]=useState("");
   const [importTargetClass,setImportTargetClass]=useState("excel");
-  const [moveFromId,setMoveFromId]=useState("3401"),[moveToId,setMoveToId]=useState("3435"),[moveTargetClass,setMoveTargetClass]=useState("");
+  const [moveFromId,setMoveFromId]=useState(""),[moveToId,setMoveToId]=useState(""),[moveSourceClass,setMoveSourceClass]=useState(""),[moveTargetClass,setMoveTargetClass]=useState("");
   const [editStu,setEditStu]=useState(null);
   const [gbClass,setGbClass]=useState("all");
   const [esForm,setEsForm]=useState({name:"",shortName:"",studentId:"",classId:"",email:"",password:"",fatherName:""});
@@ -11620,45 +11620,48 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
 
 
+  function resetMoveRangeForSource(rawClassId){
+    const sourceId=canonicalClassId(rawClassId);
+    setMoveSourceClass(rawClassId||"");
+    const rows=(myStudents||[]).filter(function(st){return st&&st.role==="student"&&!st.deleted&&sameClassId(st.classId||st.className||st.class||"",sourceId);});
+    const nums=rows.map(function(st){return Number(eqDigits(st.studentId||st.id||""));}).filter(function(n){return Number.isFinite(n)&&n>0;}).sort(function(a,b){return a-b;});
+    setMoveFromId(nums.length?String(nums[0]):"");
+    setMoveToId(nums.length?String(nums[nums.length-1]):"");
+  }
+
   async function moveImportedStudentsToClass(){
-    const from=Number(eqDigits(moveFromId));
-    const to=Number(eqDigits(moveToId));
+    const sourceClassId=canonicalClassId(moveSourceClass);
     const targetClassId=canonicalClassId(moveTargetClass);
-    if(!from||!to||from>to){setImportMsg("Enter a valid ID range, for example 3401 to 3435.");return;}
-    const targetMoveRow=classRowFromAnyRef(moveTargetClass, myClasses);
-    if(!targetMoveRow || !myClasses.some(function(c){return sameClassId(c.id||c.classId||c.grade||c.name, targetClassId);})){setImportMsg("اختر فصلًا موجودًا من قائمة الفصول الهدف.");return;}
-    const cls=targetMoveRow||officialClassRow(targetClassId)||{id:targetClassId,name:targetClassId};
-    if(!window.confirm("Move students "+from+"-"+to+" to "+cls.name+"?\nNo students or results will be deleted.")) return;
-    setImportMsg("Moving students to "+cls.name+"…");
+    const sourceRow=classRowFromAnyRef(moveSourceClass,myClasses);
+    const targetMoveRow=classRowFromAnyRef(moveTargetClass,myClasses);
+    if(!sourceRow||!myClasses.some(function(c){return sameClassId(c.id||c.classId||c.grade||c.name,sourceClassId);})){setImportMsg("اختر الفصل المصدر أولًا.");return;}
+    if(!targetMoveRow||!myClasses.some(function(c){return sameClassId(c.id||c.classId||c.grade||c.name,targetClassId);})){setImportMsg("اختر الفصل الهدف أولًا.");return;}
+    if(sameClassId(sourceClassId,targetClassId)){setImportMsg("الفصل المصدر والهدف متطابقان. لم يتم تغيير أي بيانات.");return;}
+    const from=Number(eqDigits(moveFromId)), to=Number(eqDigits(moveToId));
+    if(!from||!to||from>to){setImportMsg("حدد نطاق أرقام صحيح من طلاب الفصل المصدر.");return;}
+    let liveUsers=[];
+    try{liveUsers=await Promise.race([fsAll("users"),new Promise(resolve=>setTimeout(()=>resolve([]),5000))]);}catch(_e){liveUsers=[];}
+    const combined=[].concat(Array.isArray(liveUsers)?liveUsers:[],Array.isArray(data&&data.users)?data.users:[],Array.isArray(myStudents)?myStudents:[]);
+    const bySid={};
+    combined.forEach(function(u){
+      if(!u||u.role!=="student"||u.deleted===true||String(u.status||"").toLowerCase()==="deleted")return;
+      const sid=eqDigits(u.studentId||u.id||u._id||""), n=Number(sid);
+      if(!sid||n<from||n>to)return;
+      if(!sameClassId(u.classId||u.className||u.class||"",sourceClassId))return;
+      if(!bySid[sid])bySid[sid]=u;
+    });
+    const rows=Object.keys(bySid).sort(function(a,b){return Number(a)-Number(b);}).map(function(sid){return eqSafeActiveStudentRow(bySid[sid],sid,targetClassId,bySid[sid].name||"");});
+    if(!rows.length){setImportMsg("لم يتم العثور على أي طالب في هذا النطاق ينتمي فعليًا إلى الفصل المصدر. لم يتم تغيير أي بيانات.");return;}
+    const srcName=sourceRow.name||sourceClassId, dstName=targetMoveRow.name||targetClassId;
+    if(!window.confirm("سيتم نقل "+rows.length+" طالب فقط من "+srcName+" إلى "+dstName+".\nلن تُحذف النتائج. هل تريد المتابعة؟"))return;
+    setImportMsg("Moving "+rows.length+" students from "+srcName+" to "+dstName+"…");
     try{
-      await ensureImportClassExists({id:targetClassId}, []);
-      let liveUsers=[];
-      try{ liveUsers=await Promise.race([fsAll("users"), new Promise(resolve=>setTimeout(()=>resolve([]),3500))]); }catch(_e){ liveUsers=[]; }
-      const bySid={};
-      [].concat(Array.isArray(data&&data.users)?data.users:[], Array.isArray(liveUsers)?liveUsers:[]).forEach(function(u){
-        const sid=eqDigits(u&& (u.studentId||u.id));
-        const n=Number(sid);
-        if(n>=from && n<=to && !bySid[sid]) bySid[sid]=u;
-      });
-      const rows=[];
-      for(let n=from;n<=to;n++){
-        const sid=String(n);
-        const base=bySid[sid]||{};
-        // Do not invent names for missing students; but if the Excel import already created them locally/cloud, update them.
-        if(!base.name && !base.studentId && !(sid in bySid)) continue;
-        rows.push(eqSafeActiveStudentRow(base, sid, targetClassId, base.name||""));
-      }
-      if(!rows.length){ setImportMsg("No students found in this ID range. أعد رفع ملف Excel واختر الفصل الهدف أولًا."); return; }
-      await adminBatchSetMergeQuick("users", rows, 20000);
+      await ensureImportClassExists({id:targetClassId},[]);
+      await adminBatchSetMergeQuick("users",rows,20000);
       mergeWrittenUsersIntoLocal(rows);
-      setFilterCls(targetClassId);
-      setImportTargetClass(targetClassId);
-      setMoveTargetClass(targetClassId);
-      setImportMsg("✅ Moved "+rows.length+" students to "+cls.name+". No results were deleted.");
-      // UI is updated immediately from the saved rows. A full reload is not needed here and can briefly show stale Firebase/cache data.
-    }catch(err){
-      setImportMsg("❌ Move failed: "+(err.message||err));
-    }
+      setFilterCls(targetClassId); setImportTargetClass(targetClassId);
+      setImportMsg("✅ Moved "+rows.length+" students from "+srcName+" to "+dstName+". No results were deleted.");
+    }catch(err){setImportMsg("❌ Move failed: "+(err.message||err));}
   }
 
 
@@ -11771,58 +11774,57 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,classRosterToken:(cls.rosterToken||""),password:pass||sid,createdAt:today()});
     setAddStuMsg("✅ Student added."); await reload(); setTimeout(()=>setAddStuModal(null),600);
   }
-  async function deleteClass(cls){
-    const classId=canonicalClassId(cls&& (cls.id||cls.classId||cls.grade||cls.name));
-    const classAliasSet=new Set(adminClassAliases(cls).map(canonicalClassId));
-    const visibleStuds = myStudents.filter(u=>u.role==="student" && !u.deleted && classAliasSet.has(canonicalClassId(u.classId||u.className||u.class||"")));
-    const choice=prompt("Delete class: "+cls.name+"\nVisible students: "+visibleStuds.length+"\n\nType one option number:\n1 = Delete class only and move students to No class\n2 = Delete students + their data in this class (keep class)\n3 = Delete class + students + all results\n\nFor safety, type 1, 2, or 3:","2");
-    if(!choice)return;
-    const modeMap={"1":"classOnly","2":"studentsOnly","3":"classStudentsData"}; const mode=modeMap[String(choice).trim()];
-    if(!mode){alert("Cancelled. Invalid option.");return;}
-    const phrase=mode==="classStudentsData"?"DELETE CLASS DATA":"DELETE CLASS";
-    if(!adminConfirmOk(prompt("Final confirmation required. Type: "+phrase+"\n(uppercase/lowercase accepted)"), phrase)) return;
+  function validLiveClassRow(cls){
+    if(!cls)return null;
+    const row=myClasses.find(function(c){return c===cls||sameClassId(c.id||c.classId||c.grade||c.name,cls.id||cls.classId||cls.grade||cls.name);});
+    if(!row)return null;
+    const id=canonicalClassId(row.id||row.classId||row.grade||row.name);
+    return id?{row:row,id:id}:null;
+  }
+
+  async function deleteClassStudentsSafe(cls){
+    const v=validLiveClassRow(cls);
+    if(!v){setAdminBusy("❌ تم إيقاف العملية: معرف الفصل غير صالح. لم يتم حذف أي طالب.");return;}
+    let live=[];
+    try{live=await fsAll("users");}catch(_e){live=[];}
+    const pool=[].concat(Array.isArray(live)?live:[],Array.isArray(data&&data.users)?data.users:[],Array.isArray(myStudents)?myStudents:[]);
+    const bySid={};
+    pool.forEach(function(st){
+      if(!st||st.role!=="student"||st.deleted===true||String(st.status||"").toLowerCase()==="deleted")return;
+      if(!sameClassId(st.classId||st.className||st.class||"",v.id))return;
+      const sid=eqDigits(st.studentId||st.id||st._id||""); if(!sid)return;
+      if(!bySid[sid])bySid[sid]=st;
+    });
+    const rows=Object.values(bySid);
+    if(!rows.length){setAdminBusy("ℹ️ "+(v.row.name||v.id)+" لا يحتوي على طلاب مرتبطين به حاليًا. لم يتم حذف شيء.");return;}
+    if(!window.confirm("حذف طلاب الفصل فقط: "+(v.row.name||v.id)+"\nعدد الطلاب: "+rows.length+"\n\nستبقى نتائجهم محفوظة، ولن يتأثر أي فصل آخر. متابعة؟"))return;
+    const phrase="DELETE STUDENTS";
+    if(!adminConfirmOk(prompt("للتأكيد اكتب: "+phrase),phrase))return;
     try{
-      if(mode!=="classOnly"){
-        setResettingClassId(classId);
-        setFilterCls(classId);
-        hardClearClassFromScreen(classId);
-        setAdminBusy("⏳ Finding students in "+(cls.name||classId)+"…");
-        const res=await adminDeleteClassStudentsFastByClassId(cls,true,{onProgress:function(p){
-          const total=p.total||0, done=p.done||0;
-          const pct=total?Math.min(100,Math.round(done*100/total)):0;
-          setAdminBusy("⏳ "+(p.stage||"Deleting")+" — "+done+" / "+total+(total?" ("+pct+"%)":""));
-        }});
-        if(mode==="classStudentsData"){
-          const row={...(cls||{}),id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),cleanupDeletedAt:new Date().toISOString(),updatedAt:today()};
-          adminRememberDeletedClassIds([classId, cls&&cls.id, cls&&cls._id, cls&&cls.name, cls&&cls.grade].filter(Boolean));
-          await fsSet("classes",classId,row);
-          try{ await fsSet("deletedClasses",classId,row); }catch(_e){}
-        }
-        try{
-          if(data&&Array.isArray(data.users)) data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class,classId));
-          if(data&&Array.isArray(data.classes)) data.classes=data.classes.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId));
-          if(data&&Array.isArray(data.firebaseClasses)) data.firebaseClasses=data.firebaseClasses.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId));
-          if(data&&Array.isArray(data.deletedClasses)) data.deletedClasses=[...(data.deletedClasses||[]),{id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}];
-          setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class,classId)));
-          localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);
-          localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY);
-        }catch(_e){}
-        setAdminBusy("✅ Hard delete completed. Students: "+((res&&res.students)||0)+" · data: "+JSON.stringify((res&&res.deleted)||{}));
-        setTimeout(()=>setAdminBusy(""),5000);
-        setResettingClassId("");
-        return;
-      }
-      setAdminBusy("⏳ Moving students out of class…");
-      const liveStuds=await adminFastClassStudents(cls, visibleStuds);
-      await adminBatchSetMergeQuick("users", liveStuds.map(st=>({...st,classId:"",className:"",class:"",updatedAt:today()})), 20000);
-      const row={...(cls||{}),id:classId,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:new Date().toISOString(),updatedAt:today()};
-      adminRememberDeletedClassIds([classId, cls&&cls.id, cls&&cls._id, cls&&cls.name, cls&&cls.grade].filter(Boolean));
-      await fsSet("classes",classId,row);
-      try{ await fsSet("deletedClasses",classId,row); }catch(_e){}
-      try{ if(data&&Array.isArray(data.classes)) data.classes=data.classes.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,classId)); localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY); localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY); }catch(_e){}
-      setAdminBusy("✅ Class deleted and "+liveStuds.length+" students moved to No class.");
-      setTimeout(()=>setAdminBusy(""),4000);
-    }catch(e){ setResettingClassId(""); setAdminBusy("❌ Delete failed: "+(e.message||e)); }
+      setAdminBusy("⏳ حذف "+rows.length+" طالب من "+(v.row.name||v.id)+" فقط…");
+      const n=await adminDeleteStudentRosterDocsOnlyFast(rows);
+      setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class||"",v.id)));
+      try{if(data&&Array.isArray(data.users))data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class||"",v.id));localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
+      setAdminBusy("✅ تم حذف "+n+" طالب من "+(v.row.name||v.id)+" فقط. النتائج لم تُحذف.");
+      setTimeout(()=>setAdminBusy(""),5000);
+    }catch(e){setAdminBusy("❌ Delete failed safely: "+(e.message||e)+". لم يتم تنفيذ حذف على فصل آخر.");}
+  }
+
+  async function deleteClassOnlySafe(cls){
+    const v=validLiveClassRow(cls);
+    if(!v){setAdminBusy("❌ تم إيقاف العملية: معرف الفصل غير صالح. لم يتم حذف شيء.");return;}
+    let live=[];try{live=await fsAll("users");}catch(_e){live=[];}
+    const count=[].concat(Array.isArray(live)?live:[],Array.isArray(myStudents)?myStudents:[]).filter(function(st){return st&&st.role==="student"&&!st.deleted&&sameClassId(st.classId||st.className||st.class||"",v.id);}).length;
+    if(count>0){setAdminBusy("⚠️ لم يُحذف الفصل. "+(v.row.name||v.id)+" ما زال مرتبطًا بطلاب. احذف/انقل طلابه أولًا.");return;}
+    if(!window.confirm("حذف الفصل الفارغ فقط: "+(v.row.name||v.id)+"؟\nلن يتم حذف أي طالب أو نتيجة."))return;
+    try{
+      const stamp=new Date().toISOString();
+      const row={...(v.row||{}),id:v.id,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true,adminDeletedAt:stamp,updatedAt:today()};
+      adminRememberDeletedClassIds([v.id,v.row.id,v.row._id,v.row.name,v.row.grade].filter(Boolean));
+      await fsSet("classes",v.id,row); try{await fsSet("deletedClasses",v.id,row);}catch(_e){}
+      try{if(data&&Array.isArray(data.classes))data.classes=data.classes.filter(c=>!sameClassId(c.id||c._id||c.name||c.grade,v.id));localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);localStorage.removeItem(EQ_ACTIVE_LOGIN_CLASSES_KEY);}catch(_e){}
+      setAdminBusy("✅ تم حذف الفصل الفارغ "+(v.row.name||v.id)+" فقط."); setTimeout(()=>setAdminBusy(""),4000);
+    }catch(e){setAdminBusy("❌ Delete class failed: "+(e.message||e));}
   }
 
   async function deleteStudent(st){
@@ -11867,7 +11869,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v276" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v277" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ الرئيسية</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام</button>
@@ -12261,7 +12263,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(cls)}>🗑 Delete / Students</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><div style={{marginBottom:"9px"}}><strong style={{fontSize:"14px",color:C.tx,fontFamily:F}}>{cls.name}</strong><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade} · {studs.length} students{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div>
             </Card>;
           })}
@@ -12283,14 +12285,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"9px"}}>
             <div style={{fontSize:"11px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🔁 Move existing imported students to class</div>
             <div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}>
+              <select value={moveSourceClass} onChange={e=>resetMoveRangeForSource(e.target.value)} style={{flex:1,minWidth:"150px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
+                <option value="">اختر الفصل المصدر</option>
+                {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
+              </select>
               <input value={moveFromId} onChange={e=>setMoveFromId(e.target.value)} placeholder="From ID" style={{width:"90px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F}}/>
               <input value={moveToId} onChange={e=>setMoveToId(e.target.value)} placeholder="To ID" style={{width:"90px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F}}/>
-              <select value={moveTargetClass} onChange={e=>setMoveTargetClass(e.target.value)} style={{flex:1,minWidth:"140px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
+              <select value={moveTargetClass} onChange={e=>setMoveTargetClass(e.target.value)} style={{flex:1,minWidth:"150px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
                 <option value="">اختر الفصل الهدف</option>
                 {myClasses.map(c=><option key={c.id} value={c.id}>{c.name}{c.grade?" — "+c.grade:""}</option>)}
               </select>
               <Btn color={C.p} onClick={moveImportedStudentsToClass}>Move</Btn>
             </div>
+            <div style={{fontSize:"10px",color:C.mu,marginTop:"6px",fontFamily:F}}>عند تغيير الفصل المصدر تُمسح الأرقام القديمة وتُحمّل حدود أرقام طلابه فقط. النقل يتحقق من انتماء كل طالب للفصل المصدر قبل الحفظ.</div>
           </div>
           <div style={{display:"flex",gap:"7px",marginBottom:"9px",flexWrap:"wrap"}}>
             <Btn color={C.w} onClick={exportResults}>📤 Export Results</Btn>
@@ -12614,7 +12621,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <Modal open={!!manageClass} onClose={()=>setManageClass(null)} title={"Manage Class — "+(manageClass?.name||"")}>
         {manageClass&&(()=>{const studs=myStudents.filter(s=>s.classId===manageClass.id);return <div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Stat icon="👥" label="Students" value={studs.length} color={C.p}/><Stat icon="🏫" label="Class" value={manageClass.grade||"—"} color={C.pu}/></div>
-          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClass(manageClass)}>🗑 Delete Class</Btn></div>
+          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(manageClass)}>🗑 Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(manageClass)}>🗑 Delete Class</Btn></div>
           <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",padding:"8px",borderRadius:"8px",marginBottom:"9px",fontFamily:F}}>Student ID is protected: the system will not create another student with the same ID. If the ID already exists, it offers to move the existing student to this class.</div>
           <div style={{maxHeight:"310px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px"}}>{studs.length===0?<div style={{padding:"12px",fontSize:"12px",color:C.mu,fontFamily:F}}>No students in this class.</div>:studs.map(st=><div key={st.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"9px",borderBottom:"1px solid "+C.br}}><div style={{flex:1}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {st.studentId||"—"}</div></div><Btn size="sm" color={C.pu} onClick={()=>{setEditStu(st);setEsForm({name:st.name||"",shortName:st.shortName||String(st.name||"").split(/\s+/).slice(0,2).join(" "),studentId:st.studentId||"",classId:st.classId||"",email:st.email||"",password:"",fatherName:st.fatherName||""});setEsMsg("");}}>✏️ Edit/Move</Btn><Btn size="sm" color={C.d} onClick={()=>deleteStudent(st)}>🗑 Delete</Btn></div>)}</div>
         </div>;})()}
