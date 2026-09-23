@@ -11099,6 +11099,30 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
   const [referralAlertCount,setReferralAlertCount]=useState(0);
+  const [writingPendingCount,setWritingPendingCount]=useState(0);
+  const [rpPendingCount,setRpPendingCount]=useState(0);
+
+  // v290: live pending-review counters for Sections > Writing / RP.
+  useEffect(()=>{
+    let alive=true, timer=null;
+    async function refreshPendingSectionCounts(){
+      try{
+        let wc=0, rc=0;
+        if(typeof window.eqGetWritingPendingCount==="function") wc=Number(await window.eqGetWritingPendingCount())||0;
+        else {
+          const wd=(data.appSettings||[]).find(x=>String(x&&(x.id||x._id)||"")==="writing_independent_v12");
+          wc=((wd&&wd.submissions)||[]).filter(x=>x&&!x.deleted&&String(x.status||"pending_review")==="pending_review").length;
+        }
+        if(typeof window.eqGetRPPendingCount==="function") rc=Number(await window.eqGetRPPendingCount())||0;
+        if(alive){setWritingPendingCount(wc);setRpPendingCount(rc);}
+      }catch(_e){}
+    }
+    refreshPendingSectionCounts();
+    timer=setInterval(refreshPendingSectionCounts,12000);
+    const onChanged=()=>refreshPendingSectionCounts();
+    window.addEventListener("eq-pending-counts-changed",onChanged);
+    return ()=>{alive=false;if(timer)clearInterval(timer);window.removeEventListener("eq-pending-counts-changed",onChanged);};
+  },[data]);
   // v286: Quizzes stays compact until the teacher opens it.
   const [quizTypeFilter,setQuizTypeFilter]=useState("all");
   const [quizStatusFilter,setQuizStatusFilter]=useState("all");
@@ -12070,13 +12094,22 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v289" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v290" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}><button onClick={()=>{setNavOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>🎙️ RP</button><button onClick={()=>{setNavOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>✍️ Writing</button></div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}</div></div>)}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
+            <button onClick={()=>{setNavOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+              <div>🎙️ RP {rpPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rpPendingCount}</span>}</div>
+              {rpPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{rpPendingCount} recording{rpPendingCount===1?"":"s"} awaiting approval</div>}
+            </button>
+            <button onClick={()=>{setNavOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+              <div>✍️ Writing {writingPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{writingPendingCount}</span>}</div>
+              {writingPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{writingPendingCount} writing submission{writingPendingCount===1?"":"s"} awaiting approval</div>}
+            </button>
+          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}</div></div>)}
         </div>}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
@@ -14308,6 +14341,14 @@ document.addEventListener("click", function(e){
       panel.style.display="block";
       await renderCards();
     };
+    window.eqGetRPPendingCount=async function(){
+      try{
+        rpRefreshRosters(false);
+        let rows=recordsFastWithBackgroundSync();
+        try{ if(Date.now()-__rpLastCloudSyncAt>5000) rows=await syncCloudIntoLocal(); }catch(_e){}
+        return (rows||[]).filter(r=>rpRecordVisible(r)&&isWaitingForTeacher(r)).length;
+      }catch(_e){ return 0; }
+    };
     // v283: RP is available from الأقسام only; no floating RP button.
     try{ fab.remove(); }catch(_e){}
 
@@ -15329,7 +15370,13 @@ async function load(){
   jset(LOCAL,DATA);
   return DATA
 }
-async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.deletedTaskIds=uniq(DATA.deletedTaskIds||[]);DATA.tasks=(DATA.tasks||[]).filter(t=>!DATA.deletedTaskIds.includes(String(t.id)));DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId)));DATA.retakeRequests=(DATA.retakeRequests||[]).filter(r=>!DATA.deletedTaskIds.includes(String(r.taskId))&&!r.cleared);jset(LOCAL,DATA);if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
+async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.deletedTaskIds=uniq(DATA.deletedTaskIds||[]);DATA.tasks=(DATA.tasks||[]).filter(t=>!DATA.deletedTaskIds.includes(String(t.id)));DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId)));DATA.retakeRequests=(DATA.retakeRequests||[]).filter(r=>!DATA.deletedTaskIds.includes(String(r.taskId))&&!r.cleared);jset(LOCAL,DATA);try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
+window.eqGetWritingPendingCount=async function(){
+  try{
+    await load();
+    return (DATA.submissions||[]).filter(s=>s&&!s.deleted&&!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId))&&String(s.status||"pending_review")==="pending_review").length;
+  }catch(_e){ return 0; }
+};
 function sess(){for(const k of["eq_session","currentUser","eduquizCurrentUser","session","user"]){try{const v=JSON.parse(localStorage.getItem(k)||"null");if(v&&(v.id||v.name||v.studentId||v.role||v.password))return v}catch(e){}}try{if(window.currentUser)return window.currentUser;if(window.user)return window.user}catch(e){}return{}}
 function hi(){const t=(document.body&&document.body.innerText)||"",m=t.match(/Hi,\s*([^!\n\r]+)!/i);return m?m[1].trim():""}
 function teacher(){const u=sess(),r=String(u.role||u.type||"").toLowerCase(),t=(document.body&&document.body.innerText)||"";return r.includes("teacher")||t.includes("TEACHER DASHBOARD")||t.includes("Teacher Dashboard")}
