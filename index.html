@@ -7869,6 +7869,9 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   const [period,setPeriod]=useState("p1");
   const [classId,setClassId]=useState((myClasses&&myClasses[0]&&myClasses[0].id)||"all");
   const [date,setDate]=useState(isoToday());
+  const [followupCalendarMonth,setFollowupCalendarMonth]=useState(()=>{
+    const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  });
   const [settings,setSettings]=useState({requiredParticipation:8,fullScore:10,latePenalty:0.25,absencePenalty:0.5,maxAttendancePenalty:3,itemPenalty:0.25,homeworkFullScore:10,projectFullScore:10,quizFullScore:10,oralFullScore:10,writtenFullScore:10,oralListeningWeight:8,oralRpWeight:2,oralListeningMode:"best",oralListeningSelectedId:"",oralRpMode:"best",oralRpTaskId:"",writtenCalcMode:"best",writtenSelectedId:"",oralListeningSlots:{listen_1:{label:"اختبار الاستماع 1",en:"Listening 1",icon:"🎧",quizId:"",active:true}},writtenTestSlots:{written_1:{label:"اختبار تحريري 1",en:"Written Test 1",icon:"📝",quizId:"",weight:10,active:true}},quizSlots:{vocabulary:{label:"اختبار الكلمات",en:"Vocabulary",icon:"🧩",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},listening:{label:"اختبار الاستماع",en:"Listening",icon:"🎧",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},reading:{label:"اختبار القراءة",en:"Reading",icon:"📖",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true},workbook:{label:"اختبار الكتاب / إضافي",en:"Workbook / Extra",icon:"📘",quizId:"",weight:2.5,missingPolicy:"missing",fallbackScore:0,active:true}}});
   const [records,setRecords]=useState({});
   const [periodRows,setPeriodRows]=useState([]);
@@ -8740,19 +8743,28 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     <details style={{marginBottom:"12px"}}>
       <summary style={{cursor:"pointer",fontWeight:1000,color:C.p,padding:"12px 14px",background:"#fff",border:"1px solid #bfdbfe",borderRadius:"13px",boxShadow:"0 4px 12px rgba(15,23,42,.04)"}}>☰ خيارات المتابعة والتقييم</summary>
       <div style={{marginTop:"8px"}}>
-    {classId!=="all"&&<details style={{marginBottom:"10px"}}><summary style={{cursor:"pointer",fontWeight:900,color:C.tx,padding:"10px",background:"#fff",border:"1px solid #bfdbfe",borderRadius:"12px"}}>📅 أيام المتابعة السابقة</summary><Card style={{marginTop:"6px",marginBottom:"12px",border:"1px solid #bfdbfe",background:"linear-gradient(180deg,#ffffff,#eff6ff)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"8px"}}>
-        <div><strong style={{fontSize:"14px",color:C.tx}}>📅 أيام المتابعة</strong><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>اختر اليوم لمراجعة الحفظ. الرقم يعني عدد الطلاب الذين لهم سجل في ذلك اليوم. اللون الأخضر يعني أن كشف اليوم محفوظ فقط، وليس أن على الطالب ملاحظة.</div></div>
-        <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-          <Btn size="sm" color={C.p} onClick={()=>setDate(isFollowupWeekend(isoToday())?shiftSchoolDate(isoToday(),-1):isoToday())}>اليوم</Btn>
-          <Btn size="sm" color={C.mu} onClick={()=>setDate(shiftSchoolDate(date||isoToday(),-1))}>اليوم الدراسي السابق</Btn>
-        </div>
-      </div>
-      <div style={{display:"flex",gap:"7px",overflowX:"auto",paddingBottom:"3px"}}>
-        {recentFollowupDays().map(d=>{const cnt=dayEntriesCount(d); const active=d===date; return <button key={d} onClick={()=>setDate(d)} style={{minWidth:"112px",padding:"8px 9px",borderRadius:"12px",border:"1px solid "+(active?C.p:(cnt?"#86efac":C.br)),background:active?C.p:(cnt?"#f0fdf4":"#fff"),color:active?"#fff":(cnt?"#166534":C.mu),fontWeight:900,fontSize:"11px",cursor:"pointer",textAlign:"center"}}>
-          <div>{arDayName(d)}</div><div style={{fontSize:"10px",opacity:.85}}>{d}</div><div style={{fontSize:"10px",marginTop:"2px"}}>{cnt?"● محفوظ: "+cnt:"○ لا سجلات"}</div>
-        </button>;})}
-      </div>
+    {classId!=="all"&&<details style={{marginBottom:"10px"}}><summary style={{cursor:"pointer",fontWeight:900,color:C.tx,padding:"10px",background:"#fff",border:"1px solid #bfdbfe",borderRadius:"12px"}}>📅 Previous Follow-up Days</summary><Card style={{marginTop:"6px",marginBottom:"12px",border:"1px solid #bfdbfe",background:"linear-gradient(180deg,#ffffff,#eff6ff)"}}>
+      {(()=>{const ym=followupCalendarMonth.split("-").map(Number),y=ym[0],mo=ym[1],first=new Date(y,mo-1,1),days=new Date(y,mo,0).getDate(),lead=first.getDay(),cells=[];
+        for(let i=0;i<lead;i++)cells.push(null); for(let d=1;d<=days;d++)cells.push(d);
+        const monthLabel=first.toLocaleDateString("en-US",{month:"long",year:"numeric"});
+        const moveMonth=n=>{const x=new Date(y,mo-1+n,1);setFollowupCalendarMonth(x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0"));};
+        const goToday=()=>{const t=new Date(),ds=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");setFollowupCalendarMonth(ds.slice(0,7));setDate(isFollowupWeekend(ds)?shiftSchoolDate(ds,-1):ds);};
+        return <div>
+          <div style={{display:"flex",justifyContent:"space-between",gap:"7px",alignItems:"center",flexWrap:"wrap",marginBottom:"9px"}}>
+            <Btn size="sm" color={C.mu} onClick={()=>moveMonth(-1)}>◀ Previous Month</Btn>
+            <strong style={{fontSize:"14px",color:C.tx}}>{monthLabel}</strong>
+            <Btn size="sm" color={C.mu} onClick={()=>moveMonth(1)}>Next Month ▶</Btn>
+            <Btn size="sm" color={C.p} onClick={goToday}>Today</Btn>
+          </div>
+          <input type="month" value={followupCalendarMonth} onChange={e=>setFollowupCalendarMonth(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px",background:"#fff",fontWeight:800,marginBottom:"9px"}}/>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:"4px"}}>
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(w=><div key={w} style={{textAlign:"center",fontSize:"9px",fontWeight:900,color:C.mu,padding:"4px 0"}}>{w}</div>)}
+            {cells.map((d,i)=>{if(!d)return <div key={"blank"+i}/>;const ds=y+"-"+String(mo).padStart(2,"0")+"-"+String(d).padStart(2,"0"),cnt=dayEntriesCount(ds),active=ds===date;
+              return <button key={ds} onClick={()=>setDate(ds)} style={{minHeight:"57px",padding:"4px 1px",borderRadius:"8px",border:"1px solid "+(active?C.p:(cnt?"#86efac":C.br)),background:active?C.p:(cnt?"#f0fdf4":"#fff"),color:active?"#fff":(cnt?"#166534":C.tx),cursor:"pointer",textAlign:"center"}}>
+                <div style={{fontWeight:1000,fontSize:"12px"}}>{d}</div><div style={{fontSize:"8px",marginTop:"2px",lineHeight:1.2}}>{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(y,mo-1,d).getDay()]}</div><div style={{fontSize:"8px",marginTop:"3px",fontWeight:800}}>{cnt?cnt+" Records":"—"}</div>
+              </button>;})}
+          </div>
+        </div>;})()}
     </Card></details>}
     <details style={{marginBottom:"10px"}}><summary style={{cursor:"pointer",fontWeight:900,color:C.tx,padding:"10px",background:"#fff",border:"1px solid #bae6fd",borderRadius:"12px"}}>📊 كشف الاستحقاقات قبل نور</summary><Card style={{marginTop:"6px",marginBottom:"12px",border:"1px solid #bae6fd",background:"linear-gradient(180deg,#ffffff,#f0f9ff)"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
@@ -12058,7 +12070,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v288" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v289" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
