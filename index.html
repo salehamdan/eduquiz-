@@ -8937,7 +8937,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
 
 function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
   const [open,setOpen]=useState(false);
-  const [managerOpen,setManagerOpen]=useState(true);
+  const [managerOpen,setManagerOpen]=useState(false);
   const [rawRows,setRawRows]=useState([]);
   const [fileName,setFileName]=useState("");
   const [msg,setMsg]=useState("");
@@ -8945,7 +8945,7 @@ function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
   const [dupeMode,setDupeMode]=useState("best_improvement");
   const [title,setTitle]=useState("");
   const [importing,setImporting]=useState(false);
-  const [improvedOpen,setImprovedOpen]=useState(true);
+  const [improvedOpen,setImprovedOpen]=useState(false);
   const [improvedMin,setImprovedMin]=useState(1);
   const [improvedClass,setImprovedClass]=useState("all");
   const [zipMode,setZipMode]=useState("all");
@@ -11087,12 +11087,47 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
   const [referralAlertCount,setReferralAlertCount]=useState(0);
+  // v286: Quizzes stays compact until the teacher opens it.
+  const [quizTypeFilter,setQuizTypeFilter]=useState("all");
+  const [quizStatusFilter,setQuizStatusFilter]=useState("all");
+  const [quizCreatedSort,setQuizCreatedSort]=useState("none");
+  const [quizEndSort,setQuizEndSort]=useState("none");
 
 
   function fastPatchedQuiz(q){ return quizFastPatch[q.id] ? {...q, ...quizFastPatch[q.id]} : q; }
   function patchQuizFast(id, patch){ setQuizFastPatch(prev=>({...prev, [id]: {...(prev[id]||{}), ...patch}})); }
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
+  const quizTypeOptions=Array.from(new Set(myQuizzes.map(q=>String(q.type||"Other")).filter(Boolean))).sort();
+  function quizEndValue(q){
+    const keys=["closeDate","endDate","dueDate","deadline","untilDate","endAt","closeAt","endsAt"];
+    for(const k of keys){ if(q&&q[k]){ const d=new Date(String(q[k]).length===10?String(q[k])+"T23:59:59":q[k]); if(!isNaN(d.getTime())) return d.getTime(); } }
+    return null;
+  }
+  function quizCreatedValue(q){
+    const v=q&&(q.createdAt||q.updatedAt||q.importedAt);
+    if(!v) return null;
+    const d=new Date(v); return isNaN(d.getTime())?null:d.getTime();
+  }
+  const visibleMyQuizzes=myQuizzes.filter(q=>{
+    if(quizTypeFilter!=="all" && String(q.type||"Other")!==quizTypeFilter) return false;
+    if(quizStatusFilter!=="all" && String(q.status||"open")!==quizStatusFilter) return false;
+    return true;
+  }).slice().sort((a,b)=>{
+    if(quizCreatedSort!=="none"){
+      const av=quizCreatedValue(a), bv=quizCreatedValue(b);
+      const aa=av==null?-Infinity:av, bb=bv==null?-Infinity:bv;
+      return quizCreatedSort==="newest"?bb-aa:aa-bb;
+    }
+    if(quizEndSort!=="none"){
+      const av=quizEndValue(a), bv=quizEndValue(b);
+      if(av==null && bv==null) return 0;
+      if(av==null) return 1;
+      if(bv==null) return -1;
+      return quizEndSort==="nearest"?av-bv:bv-av;
+    }
+    return 0;
+  });
   const realClasses=eqRealActiveClassesFromData(data);
   const myClasses=realClasses.filter(c=>c && c.deleted!==true && c.status!=="deleted" && (!c.teacherIds || c.teacherIds.includes(user.id) || c.teacherIds.includes("GLOBAL") || !c.teacherIds.length || c.source==="from-students"));
   useEffect(()=>{ try{ eqStoreVisibleLoginClasses(myClasses); }catch(e){} }, [JSON.stringify(myClasses.map(c=>({id:c.id,name:c.name,grade:c.grade,deleted:c.deleted,status:c.status})))]);
@@ -12023,7 +12058,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v285" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v286" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ الرئيسية</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ الأقسام{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12388,16 +12423,45 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 <summary style={{cursor:"pointer",fontWeight:900,color:C.p,fontSize:"13px",fontFamily:F}}>▶ 📥 سحب وإدارة النتائج / Import Results</summary>
                 <div style={{marginTop:"10px"}}><ImportResultsTool data={data} user={user} reload={reload} myClasses={myClasses} myStudents={myStudents} myQuizzes={myQuizzes}/></div>
               </details>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"11px",gap:"6px",flexWrap:"wrap"}}>
-                <strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Quizzes ({myQuizzes.length})</strong>
-                <div style={{display:"flex",gap:"6px"}}>
-                  <Btn size="sm" color={C.p} onClick={function(){setQDash(true);setQrdQuiz("all");setQrdClass("all");setQrdSearch("");}}>📊 Results Dashboard</Btn>
-                  <Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn>
-                </div>
-              </div>
+
+              <details style={{marginBottom:"11px",background:"#fff",border:"1px solid "+C.br,borderRadius:"12px",padding:"10px"}}>
+                <summary style={{cursor:"pointer",fontWeight:900,color:C.p,fontSize:"13px",fontFamily:F}}>▶ 📋 الاختبارات / My Quizzes ({visibleMyQuizzes.length}{visibleMyQuizzes.length!==myQuizzes.length?" / "+myQuizzes.length:""})</summary>
+                <div style={{marginTop:"11px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px",gap:"6px",flexWrap:"wrap"}}>
+                    <details style={{flex:"1 1 220px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"10px",padding:"8px"}}>
+                      <summary style={{cursor:"pointer",fontWeight:800,color:C.tx,fontSize:"12px",fontFamily:F}}>⚙️ التصنيف والفرز</summary>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:"7px",marginTop:"9px"}}>
+                        <label style={{fontSize:"10px",fontWeight:800,color:C.mu,fontFamily:F}}>النوع
+                          <select value={quizTypeFilter} onChange={e=>setQuizTypeFilter(e.target.value)} style={{display:"block",width:"100%",marginTop:"4px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff"}}>
+                            <option value="all">كل الأنواع</option>{quizTypeOptions.map(t=><option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </label>
+                        <label style={{fontSize:"10px",fontWeight:800,color:C.mu,fontFamily:F}}>الحالة
+                          <select value={quizStatusFilter} onChange={e=>setQuizStatusFilter(e.target.value)} style={{display:"block",width:"100%",marginTop:"4px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff"}}>
+                            <option value="all">كل الحالات</option><option value="open">مفتوح</option><option value="draft">غير منشور</option><option value="closed">مغلق</option>
+                          </select>
+                        </label>
+                        <label style={{fontSize:"10px",fontWeight:800,color:C.mu,fontFamily:F}}>تاريخ الإنشاء
+                          <select value={quizCreatedSort} onChange={e=>{setQuizCreatedSort(e.target.value);if(e.target.value!=="none")setQuizEndSort("none");}} style={{display:"block",width:"100%",marginTop:"4px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff"}}>
+                            <option value="none">بدون فرز</option><option value="newest">الأحدث أولاً</option><option value="oldest">الأقدم أولاً</option>
+                          </select>
+                        </label>
+                        <label style={{fontSize:"10px",fontWeight:800,color:C.mu,fontFamily:F}}>تاريخ الانتهاء
+                          <select value={quizEndSort} onChange={e=>{setQuizEndSort(e.target.value);if(e.target.value!=="none")setQuizCreatedSort("none");}} style={{display:"block",width:"100%",marginTop:"4px",padding:"7px",border:"1px solid "+C.br,borderRadius:"8px",background:"#fff"}}>
+                            <option value="none">بدون فرز</option><option value="nearest">الأقرب انتهاءً</option><option value="farthest">الأبعد انتهاءً</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div style={{marginTop:"8px"}}><Btn size="sm" color={C.mu} onClick={()=>{setQuizTypeFilter("all");setQuizStatusFilter("all");setQuizCreatedSort("none");setQuizEndSort("none");}}>إلغاء التصنيف</Btn></div>
+                    </details>
+                    <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+                      <Btn size="sm" color={C.p} onClick={function(){setQDash(true);setQrdQuiz("all");setQrdClass("all");setQrdSearch("");}}>📊 Results Dashboard</Btn>
+                      <Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn>
+                    </div>
+                  </div>
               {quizPerfMsg&&<div style={{margin:"0 0 8px",padding:"8px 10px",borderRadius:"9px",background:"#eff6ff",border:"1px solid #bfdbfe",color:C.p,fontSize:"12px",fontWeight:"800",fontFamily:F}}>{quizPerfMsg}</div>}
-              {myQuizzes.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No quizzes yet.</p></Card>
-              :myQuizzes.map((quiz,i)=>{
+              {visibleMyQuizzes.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>{myQuizzes.length?"لا توجد اختبارات مطابقة للتصنيف الحالي.":"No quizzes yet."}</p></Card>
+              :visibleMyQuizzes.map((quiz,i)=>{
                 const rs=data.responses.filter(r=>r.quizId===quiz.id);const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;const col=COLORS[i%COLORS.length];const open=selQuiz===quiz.id;const icon=quiz.imported?"📥":quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
@@ -12421,6 +12485,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   </div>}
                 </Card>;
               })}
+                </div>
+              </details>
             </div>
           )}
         </div>}
