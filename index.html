@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v281</title>
+<title>EduQuiz — Smart Assessment v292</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -11064,6 +11064,119 @@ function ReadingPerformanceSafeFallback({data,myStudents}){
   </div>;
 }
 
+
+function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}){
+  const [bank,setBank]=useState([]),[msg,setMsg]=useState(""),[title,setTitle]=useState("Grammar & Vocabulary Test");
+  const [modelCount,setModelCount]=useState(4),[questionCount,setQuestionCount]=useState(20),[selectedUnits,setSelectedUnits]=useState([]);
+  const [selectedClasses,setSelectedClasses]=useState([]),[retake,setRetake]=useState(false),[maxRetakes,setMaxRetakes]=useState(0);
+  const fileRef=useRef();
+  useEffect(()=>{if(!open){setMsg("");}},[open]);
+  const units=Array.from(new Set(bank.map(x=>x.unit).filter(Boolean))).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
+  const grammar=bank.filter(x=>x.type==="Grammar").length, vocab=bank.filter(x=>x.type==="Vocabulary").length;
+  function downloadTemplate(){
+    const rows=[
+      {Unit:"Unit 1",Type:"Grammar",Question:"I ___ to school yesterday.",A:"go",B:"went",C:"gone",D:"going",Correct:"B"},
+      {Unit:"Unit 1",Type:"Vocabulary",Question:"Huge means ___.",A:"small",B:"enormous",C:"quiet",D:"weak",Correct:"B"}
+    ];
+    const ws=XLSX.utils.json_to_sheet(rows,{header:["Unit","Type","Question","A","B","C","D","Correct"]});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Question Bank");XLSX.writeFile(wb,"EduQuiz-Question-Bank-Template.xlsx");
+  }
+  async function importBank(e){
+    const f=e.target.files&&e.target.files[0]; if(!f)return;
+    try{
+      const ab=await f.arrayBuffer(),wb=XLSX.read(new Uint8Array(ab),{type:"array",cellText:true});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:"",raw:false});
+      const good=[],errors=[];
+      rows.forEach((r,i)=>{
+        const get=(...ks)=>{for(const k of ks){if(r[k]!==undefined)return String(r[k]).trim()}return""};
+        const unit=get("Unit","unit","UNIT"),rawType=get("Type","type","TYPE"),q=get("Question","question","QUESTION");
+        const type=/^g/i.test(rawType)?"Grammar":(/^v/i.test(rawType)?"Vocabulary":"");
+        const opts=[get("A","a"),get("B","b"),get("C","c"),get("D","d")],cor=get("Correct","correct","CORRECT").toUpperCase();
+        if(!unit||!type||!q||opts.some(x=>!x)||!["A","B","C","D"].includes(cor)){errors.push(i+2);return}
+        good.push({bankId:"bank_"+(i+2)+"_"+Date.now(),unit,type,text:q,options:opts,correct:["A","B","C","D"].indexOf(cor)});
+      });
+      setBank(good);setSelectedUnits(Array.from(new Set(good.map(x=>x.unit))));
+      setMsg("✅ Loaded "+good.length+" questions: "+good.filter(x=>x.type==="Grammar").length+" Grammar + "+good.filter(x=>x.type==="Vocabulary").length+" Vocabulary."+(errors.length?" ⚠️ Invalid rows: "+errors.join(", "):""));
+    }catch(err){setMsg("⚠️ Could not read this Excel file.");}
+    e.target.value="";
+  }
+  function buildOne(pool,count,modelIndex,usage){
+    const us=selectedUnits.length?selectedUnits:Array.from(new Set(pool.map(x=>x.unit)));
+    const buckets=[];
+    us.forEach(u=>["Grammar","Vocabulary"].forEach(t=>buckets.push({u,t,arr:pool.filter(x=>x.unit===u&&x.type===t)})));
+    const chosen=[],used=new Set(); let cursor=modelIndex%buckets.length, guard=0;
+    while(chosen.length<count && guard<10000){
+      guard++;
+      const b=buckets[cursor%buckets.length];cursor++;
+      const candidates=b.arr.filter(x=>!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)||Math.random()-.5);
+      if(candidates.length){const x=candidates[0];chosen.push(x);used.add(x.bankId);usage[x.bankId]=(usage[x.bankId]||0)+1;}
+      if(buckets.every(z=>z.arr.every(x=>used.has(x.bankId)))) break;
+    }
+    if(chosen.length<count){
+      pool.filter(x=>!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)).slice(0,count-chosen.length).forEach(x=>{chosen.push(x);usage[x.bankId]=(usage[x.bankId]||0)+1;});
+    }
+    return chosen;
+  }
+  async function createModels(){
+    if(!bank.length){setMsg("⚠️ Import the Excel question bank first.");return}
+    if(!title.trim()){setMsg("⚠️ Add the main test name.");return}
+    if(!selectedUnits.length){setMsg("⚠️ Select at least one Unit.");return}
+    if(!selectedClasses.length){setMsg("⚠️ Select at least one class.");return}
+    const pool=bank.filter(x=>selectedUnits.includes(x.unit));
+    const n=Math.max(1,Math.min(26,Number(modelCount)||1)), qn=Math.max(2,Math.min(pool.length,Number(questionCount)||20));
+    if(qn%2!==0){setMsg("⚠️ For equal Grammar/Vocabulary, use an even number of questions.");return}
+    if(pool.filter(x=>x.type==="Grammar").length<qn/2||pool.filter(x=>x.type==="Vocabulary").length<qn/2){setMsg("⚠️ The selected Units do not contain enough Grammar and Vocabulary questions for one balanced model.");return}
+    setMsg("Creating models...");
+    const groupId="modelgrp_"+uid(),usage={},models=[];
+    const targetStudents=students.filter(st=>selectedClasses.some(cid=>sameClassId(cid,st.classId||st.className||st.class)));
+    for(let mi=0;mi<n;mi++){
+      let chosen=buildOne(pool,qn,mi,usage);
+      // Enforce 50/50 type, while keeping unit distribution as even as possible.
+      const need=qn/2;
+      const takeType=(typ)=>{
+        const primary=chosen.filter(x=>x.type===typ), picked=primary.slice(0,need), ids=new Set(picked.map(x=>x.bankId));
+        if(picked.length<need) pool.filter(x=>x.type===typ&&!ids.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)).slice(0,need-picked.length).forEach(x=>picked.push(x));
+        return picked;
+      };
+      chosen=[...takeType("Grammar"),...takeType("Vocabulary")];
+      const label=String.fromCharCode(65+mi);
+      const assigned=targetStudents.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
+      const questions=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,unit:x.unit,bankId:x.bankId}));
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim()+" — Model "+label,type:"Grammar & Vocabulary",difficulty:"Mixed",subject:"English",classIds:[],timer:0,masteryThreshold:MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle:true,mode:"standard",instantFeedback:false,reviewAnswers:false,assignedStudents:assigned,openDate:"",startDate:"",closeDate:"",questions,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:selectedUnits.slice(),modelCount:n};
+      await fsSet("quizzes",quiz.id,quiz);models.push(quiz);
+    }
+    setMsg("✅ Created "+n+" balanced models. Students were distributed automatically across the selected classes.");
+    if(onCreated)await onCreated(models,groupId);setTimeout(()=>onClose(),900);
+  }
+  return <Modal open={open} onClose={onClose} title="🧠 Multiple Models — Excel Question Bank">
+    <div style={{fontFamily:F}}>
+      <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"10px",padding:"10px",fontSize:"11px",color:"#1e3a8a",marginBottom:"9px"}}>
+        <b>Excel requirements</b><br/>One question per row. Required columns: <b>Unit | Type | Question | A | B | C | D | Correct</b>.<br/>
+        Type = Grammar or Vocabulary. Correct = A, B, C or D. No Difficulty column is required.
+      </div>
+      <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"9px"}}>
+        <Btn size="sm" color={C.pu} onClick={downloadTemplate}>⬇️ Download Excel Template</Btn>
+        <Btn size="sm" color={C.s} onClick={()=>fileRef.current&&fileRef.current.click()}>📥 Import Question Bank</Btn>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importBank} style={{display:"none"}}/>
+      </div>
+      {msg&&<div style={{padding:"8px",borderRadius:"8px",background:"#f8fafc",border:"1px solid "+C.br,fontSize:"11px",marginBottom:"9px"}}>{msg}</div>}
+      {bank.length>0&&<div>
+        <div style={{fontSize:"11px",fontWeight:800,marginBottom:"7px"}}>{bank.length} questions · {grammar} Grammar · {vocab} Vocabulary</div>
+        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Main test name" style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",boxSizing:"border-box",marginBottom:"7px"}}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}>
+          <label style={{fontSize:"11px"}}>Number of models<input type="number" min="1" max="26" value={modelCount} onChange={e=>setModelCount(e.target.value)} style={{width:"100%",padding:"8px",boxSizing:"border-box"}}/></label>
+          <label style={{fontSize:"11px"}}>Questions per model<input type="number" min="2" value={questionCount} onChange={e=>setQuestionCount(e.target.value)} style={{width:"100%",padding:"8px",boxSizing:"border-box"}}/></label>
+        </div>
+        <b style={{fontSize:"11px"}}>Units</b><div style={{display:"flex",gap:"5px",flexWrap:"wrap",margin:"6px 0 9px"}}>{units.map(u=><label key={u} style={{padding:"5px 8px",border:"1px solid "+C.br,borderRadius:"8px",fontSize:"11px",background:selectedUnits.includes(u)?"#eff6ff":"#fff"}}><input type="checkbox" checked={selectedUnits.includes(u)} onChange={e=>setSelectedUnits(e.target.checked?[...selectedUnits,u]:selectedUnits.filter(x=>x!==u))}/> {u}</label>)}</div>
+        <b style={{fontSize:"11px"}}>Classes — models are distributed A/B/C… automatically among their students</b><div style={{display:"grid",gap:"5px",margin:"6px 0 9px"}}>{classes.map(c=><label key={c.id} style={{fontSize:"11px"}}><input type="checkbox" checked={selectedClasses.includes(c.id)} onChange={e=>setSelectedClasses(e.target.checked?[...selectedClasses,c.id]:selectedClasses.filter(x=>x!==c.id))}/> {c.name}</label>)}</div>
+        <label style={{fontSize:"11px"}}><input type="checkbox" checked={retake} onChange={e=>setRetake(e.target.checked)}/> Allow retake</label>
+        {retake&&<input type="number" min="0" value={maxRetakes} onChange={e=>setMaxRetakes(e.target.value)} style={{marginLeft:"8px",width:"70px"}}/>}
+        <div style={{marginTop:"10px"}}><Btn color={C.p} onClick={createModels}>✨ Create Balanced Models</Btn></div>
+      </div>}
+    </div>
+  </Modal>
+}
+
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
@@ -11101,6 +11214,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [referralAlertCount,setReferralAlertCount]=useState(0);
   const [writingPendingCount,setWritingPendingCount]=useState(0);
   const [rpPendingCount,setRpPendingCount]=useState(0);
+  const [modelsBuilderOpen,setModelsBuilderOpen]=useState(false);
 
   // v290: live pending-review counters for Sections > Writing / RP.
   useEffect(()=>{
@@ -11474,6 +11588,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }
       setView(null); setEditingQuiz(null); setResumeAfterEdit(false);
     })();
+  }
+  async function duplicateQuiz(quiz){
+    const newTitle=window.prompt("Name of the new quiz copy:",String(quiz.title||"")+" — Copy");
+    if(!newTitle||!newTitle.trim())return;
+    const id=uid();
+    const copy={...quiz,id,code:shortCode(),title:newTitle.trim(),status:"draft",classIds:[],assignedStudents:[],createdAt:today(),duplicatedFromQuizId:quiz.id};
+    delete copy.modelGroupId;delete copy.modelGroupTitle;delete copy.modelLabel;delete copy.modelCount;
+    await fsSet("quizzes",id,copy);await reload();
+    setQuizPerfMsg("✅ Quiz duplicated. The new copy is private until you assign students/classes.");
+    setTimeout(()=>setQuizPerfMsg(""),2600);
   }
   async function delQuiz(id){if(!confirm("Delete this quiz?"))return;await fsDel("quizzes",id);await reload();}
   async function delResponse(rid, studentName){if(!confirm("Delete this attempt by "+studentName+"? This will update their progress and mastery."))return;await fsDel("responses",rid);await reload();}
@@ -12094,7 +12218,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v291" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v292" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12199,7 +12323,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               <div style={{display:"flex",gap:"6px",marginBottom:"10px",flexWrap:"wrap"}}>
                 <select value={qrdQuiz} onChange={function(e){setQrdQuiz(e.target.value);}} style={{flex:2,minWidth:"130px",padding:"8px 10px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
                   <option value="all">All Quizzes</option>
-                  {myQuizzes.map(function(q){return <option key={q.id} value={q.id}>{q.title}</option>;})}
+                  {Array.from(new Map(myQuizzes.filter(function(q){return q.modelGroupId;}).map(function(q){return [q.modelGroupId,q.modelGroupTitle||q.title];}))).map(function(x){return <option key={"group:"+x[0]} value={"group:"+x[0]}>🧩 {x[1]} — All Models</option>;})}
+                  {myQuizzes.map(function(q){return <option key={q.id} value={q.id}>{q.title}{q.modelLabel?" — Model "+q.modelLabel:""}</option>;})}
                 </select>
                 <select value={qrdClass} onChange={function(e){setQrdClass(e.target.value);}} style={{flex:1,minWidth:"110px",padding:"8px 10px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"12px",fontFamily:F,background:C.wh}}>
                   <option value="all">All Classes</option>
@@ -12216,8 +12341,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               </div>
               {/* Data computation */}
               {(function(){
-                var fQuizzes = qrdQuiz==="all" ? myQuizzes : myQuizzes.filter(function(q){return q.id===qrdQuiz;});
-                var selectedQuizForScope = qrdQuiz==="all" ? null : (myQuizzes.find(function(q){return q.id===qrdQuiz;})||null);
+                var isModelGroup=String(qrdQuiz||"").indexOf("group:")===0;
+                var selectedGroupId=isModelGroup?String(qrdQuiz).slice(6):"";
+                var fQuizzes = qrdQuiz==="all" ? myQuizzes : (isModelGroup?myQuizzes.filter(function(q){return String(q.modelGroupId||"")===selectedGroupId;}):myQuizzes.filter(function(q){return q.id===qrdQuiz;}));
+                var selectedQuizForScope = (qrdQuiz==="all"||isModelGroup) ? null : (myQuizzes.find(function(q){return q.id===qrdQuiz;})||null);
                 function quizAllowsStudent(q,s){
                   if(!q||!s) return true;
                   var assigned=Array.isArray(q.assignedStudents)?q.assignedStudents.map(function(x){return String(x||"");}):[];
@@ -12231,7 +12358,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                   return true;
                 }
                 var fStudents = myStudents.filter(function(s){
-                  var assignmentOk = selectedQuizForScope ? quizAllowsStudent(selectedQuizForScope,s) : true;
+                  var assignmentOk = selectedQuizForScope ? quizAllowsStudent(selectedQuizForScope,s) : (isModelGroup ? fQuizzes.some(function(q){return quizAllowsStudent(q,s);}) : true);
                   var clsOk = qrdClass==="all" || sameClassId(s.classId||s.className, qrdClass);
                   var srch = qrdSearch.trim();
                   var srchOk = studentMatchesSearch(s, srch);
@@ -12501,6 +12628,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     </details>
                     <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.p} onClick={function(){setQDash(true);setQrdQuiz("all");setQrdClass("all");setQrdSearch("");}}>📊 Results Dashboard</Btn>
+                      <Btn size="sm" color={C.pu} onClick={()=>setModelsBuilderOpen(true)}>🧠 Multiple Models</Btn>
                       <Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn>
                     </div>
                   </div>
@@ -12511,11 +12639,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
                     <div style={{width:"36px",height:"36px",borderRadius:"8px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
+                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}{quiz.modelLabel?" · Model "+quiz.modelLabel:""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
                       <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
+                      <Btn size="sm" color="#475569" onClick={()=>duplicateQuiz(quiz)}>📄 Duplicate</Btn>
                       {quiz.status==="draft"?<Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>:<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}
                       <Btn size="sm" color={C.d} onClick={()=>delQuiz(quiz.id)}>🗑</Btn>
                     </div>
@@ -12525,7 +12654,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       <div><p style={{margin:"0 0 5px",fontSize:"10px",color:C.mu,fontFamily:F}}>CORRECT RATE / QUESTION</p>
                         <ResponsiveContainer width="100%" height={100}><BarChart data={quiz.questions.map(q=>({n:"Q"+q.id,p:rs.length?Math.round(rs.filter(r=>r.answers&&r.answers[q.id]===q.correct).length/rs.length*100):0}))} barSize={10}><XAxis dataKey="n" tick={{fontSize:8,fill:C.mu}} axisLine={false} tickLine={false}/><YAxis domain={[0,100]} tick={{fontSize:8,fill:C.mu}}/><Tooltip/><Bar dataKey="p" radius={[3,3,0,0]}>{quiz.questions.map((q,j)=><Cell key={j} fill={rs.length&&Math.round(rs.filter(r=>r.answers&&r.answers[q.id]===q.correct).length/rs.length*100)>=70?C.s:C.w}/>)}</Bar></BarChart></ResponsiveContainer>
                       </div>
-                      <div><p style={{margin:"0 0 5px",fontSize:"10px",color:C.mu,fontFamily:F}}>RESULTS (tap 🗑 to delete an attempt)</p><div style={{maxHeight:"140px",overflowY:"auto"}}>{rs.map(r=>{const st=data.users.find(u=>u.id===r.studentId);const p=pct(r.score,r.totalQ);return(<div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:"11px",fontFamily:F,borderBottom:"1px solid "+C.br}}><span style={{color:C.tx,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st?.name||"?"} <span style={{color:C.mu,fontSize:"9px"}}>#{r.attempt} · {r.completedAt}</span></span><span style={{color:gc(p),fontWeight:"700",marginRight:"8px"}}>{p}%</span><button onClick={()=>delResponse(r.id, st?.name||"student")} style={{background:"none",border:"none",cursor:"pointer",fontSize:"13px",padding:"2px 4px"}}>🗑</button></div>);})}</div></div>
+                      <div><p style={{margin:"0 0 5px",fontSize:"10px",color:C.mu,fontFamily:F}}>RESULTS (tap 🗑 to delete an attempt)</p><div style={{maxHeight:"140px",overflowY:"auto"}}>{rs.map(r=>{const st=data.users.find(u=>u.id===r.studentId);const p=pct(r.score,r.totalQ);return(<div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",fontSize:"11px",fontFamily:F,borderBottom:"1px solid "+C.br}}><span style={{color:C.tx,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st?.name||"?"} {quiz.modelLabel&&<span style={{fontSize:"9px",fontWeight:"900",color:C.p}}>Model {quiz.modelLabel} · </span>}<span style={{color:C.mu,fontSize:"9px"}}>#{r.attempt} · {r.completedAt}</span></span><span style={{color:gc(p),fontWeight:"700",marginRight:"8px"}}>{p}%</span><button onClick={()=>delResponse(r.id, st?.name||"student")} style={{background:"none",border:"none",cursor:"pointer",fontSize:"13px",padding:"2px 4px"}}>🗑</button></div>);})}</div></div>
                     </div>
                   </div>}
                 </Card>;
@@ -12769,7 +12898,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>
         </div>}
       </Modal>
-      <Modal open={!!editStu} onClose={()=>setEditStu(null)} title={"✏️ Edit Student"}>
+<MultipleModelsBuilder open={modelsBuilderOpen} onClose={()=>setModelsBuilderOpen(false)} teacher={user} classes={myClasses} students={myStudents} onCreated={async()=>{await reload();setModelsBuilderOpen(false);}}/>
+            <Modal open={!!editStu} onClose={()=>setEditStu(null)} title={"✏️ Edit Student"}>
         {editStu && <div>
           {esMsg && <div style={{background:esMsg.startsWith("✅")?"#f0fdf4":"#fef2f2",border:"1px solid "+(esMsg.startsWith("✅")?"#86efac":"#fca5a5"),borderRadius:"8px",padding:"9px 11px",color:esMsg.startsWith("✅")?"#166534":"#991b1b",fontSize:"12px",marginBottom:"11px",fontFamily:F}}>{esMsg}</div>}
           <Label text="الاسم Name *"/>
