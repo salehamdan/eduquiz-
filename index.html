@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v292</title>
+<title>EduQuiz — Smart Assessment v293</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -5586,6 +5586,9 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   function applyEasyMode(){ setAudioControls({seek:true,speed:true,pause:true,restart:true,skip10:true}); }
   function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false,skip10:false}); }
   const [err,setErr]=useState(""),[preview,setPreview]=useState(null),[showImport,setShowImport]=useState(false),[showPaste,setShowPaste]=useState(false),[csvPaste,setCsvPaste]=useState("");
+  const [showModels,setShowModels]=useState(false),[modelBank,setModelBank]=useState([]),[modelMsg,setModelMsg]=useState("");
+  const [modelCountCQ,setModelCountCQ]=useState(4),[modelQuestionCount,setModelQuestionCount]=useState(20),[modelUnits,setModelUnits]=useState([]);
+  const modelFileRef=useRef();
   const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
   const [aiLength,setAiLength]=useState("medium");
   const [aiListenType,setAiListenType]=useState("auto");
@@ -5860,6 +5863,66 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(!result.length){setErr("Could not read questions. Make sure your file has columns: Question, Option A, B, C, D, and Correct answer.");return;}
     if(skipped.length)setErr("Imported "+result.length+". Skipped rows "+skipped.join(", ")+" (missing data).");
     setPreview(result);setShowImport(true);
+  }
+  function downloadModelTemplate(){
+    const rows=[
+      {Unit:"Unit 1",Type:"Grammar",Question:"I ___ to school yesterday.",A:"go",B:"went",C:"gone",D:"going",Correct:"B"},
+      {Unit:"Unit 1",Type:"Vocabulary",Question:"Huge means ___.",A:"small",B:"enormous",C:"quiet",D:"weak",Correct:"B"}
+    ];
+    const ws=XLSX.utils.json_to_sheet(rows,{header:["Unit","Type","Question","A","B","C","D","Correct"]});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Question Bank");XLSX.writeFile(wb,"EduQuiz-Question-Bank-Template.xlsx");
+  }
+  async function handleModelBankFile(e){
+    const file=e.target.files&&e.target.files[0];if(!file)return;
+    try{
+      const ab=await file.arrayBuffer(),wb=XLSX.read(new Uint8Array(ab),{type:"array",cellText:true});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:"",raw:false}),good=[],bad=[];
+      rows.forEach((r,i)=>{
+        const g=(...ks)=>{for(const k of ks)if(r[k]!==undefined)return String(r[k]).trim();return""};
+        const unit=g("Unit","unit","UNIT"),rt=g("Type","type","TYPE"),typ=/^g/i.test(rt)?"Grammar":(/^v/i.test(rt)?"Vocabulary":"");
+        const text=g("Question","question","QUESTION"),opts=[g("A","a"),g("B","b"),g("C","c"),g("D","d")],cor=g("Correct","correct","CORRECT").toUpperCase();
+        if(!unit||!typ||!text||opts.some(x=>!x)||!["A","B","C","D"].includes(cor)){bad.push(i+2);return}
+        good.push({bankId:"cqbank_"+(i+2)+"_"+Date.now(),unit,type:typ,text,options:opts,correct:["A","B","C","D"].indexOf(cor)});
+      });
+      setModelBank(good);setModelUnits(Array.from(new Set(good.map(x=>x.unit))));
+      setModelMsg("✅ "+good.length+" questions loaded · "+good.filter(x=>x.type==="Grammar").length+" Grammar · "+good.filter(x=>x.type==="Vocabulary").length+" Vocabulary"+(bad.length?" · ⚠️ Invalid rows: "+bad.join(", "):""));
+    }catch(ex){setModelMsg("⚠️ Could not read this Excel file.");}
+    e.target.value="";
+  }
+  function balancedModelQuestions(pool,count,modelIndex,usage){
+    const half=count/2,units=modelUnits.slice(),result=[];
+    ["Grammar","Vocabulary"].forEach(typ=>{
+      const picked=[],used=new Set(),buckets=units.map(u=>pool.filter(x=>x.unit===u&&x.type===typ));
+      let cursor=modelIndex%Math.max(1,buckets.length),guard=0;
+      while(picked.length<half&&guard<10000){guard++;const b=buckets[cursor%buckets.length]||[];cursor++;const cand=b.filter(x=>!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)||Math.random()-.5);if(cand.length){const x=cand[0];picked.push(x);used.add(x.bankId);usage[x.bankId]=(usage[x.bankId]||0)+1;}if(buckets.every(z=>z.every(x=>used.has(x.bankId))))break;}
+      if(picked.length<half)pool.filter(x=>x.type===typ&&!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)).slice(0,half-picked.length).forEach(x=>{picked.push(x);usage[x.bankId]=(usage[x.bankId]||0)+1;});
+      result.push(...picked);
+    });
+    return result;
+  }
+  async function createModelsFromCreateQuiz(){
+    if(!title.trim()){setModelMsg("⚠️ Add the Quiz Title above first.");return}
+    if(!modelBank.length){setModelMsg("⚠️ Import the Excel question bank first.");return}
+    if(!modelUnits.length){setModelMsg("⚠️ Select at least one Unit.");return}
+    if(visibility==="classes"&&!classIds.length){setModelMsg("⚠️ Select at least one class above.");return}
+    if(visibility==="private"&&!assignedStudents.length){setModelMsg("⚠️ Pick students above first.");return}
+    const n=Math.max(1,Math.min(26,Number(modelCountCQ)||1)),qn=Math.max(2,Number(modelQuestionCount)||20);
+    if(qn%2){setModelMsg("⚠️ Use an even question count so Grammar and Vocabulary are equal.");return}
+    const pool=modelBank.filter(x=>modelUnits.includes(x.unit));
+    if(pool.filter(x=>x.type==="Grammar").length<qn/2||pool.filter(x=>x.type==="Vocabulary").length<qn/2){setModelMsg("⚠️ Not enough Grammar/Vocabulary questions in the selected Units.");return}
+    const target=visibility==="private"?students.filter(st=>assignedStudents.includes(st.id)):students.filter(st=>classIds.some(cid=>sameClassId(cid,st.classId||st.className||st.class)));
+    if(!target.length){setModelMsg("⚠️ No students found in the selected assignment.");return}
+    const groupId="modelgrp_"+uid(),usage={};
+    setModelMsg("Creating balanced models...");
+    for(let mi=0;mi<n;mi++){
+      const label=String.fromCharCode(65+mi),chosen=balancedModelQuestions(pool,qn,mi,usage);
+      const assigned=target.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
+      const qq=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,difficulty:"Easy",unit:x.unit,bankId:x.bankId}));
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim()+" — Model "+label,type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
+      await fsSet("quizzes",quiz.id,quiz);
+    }
+    setModelMsg("✅ Created "+n+" models and distributed them across "+target.length+" students. Each model has "+qn/2+" Grammar + "+qn/2+" Vocabulary.");
+    setTimeout(()=>onSave&&onSave(),900);
   }
   function handleFile(e){
     const file=e.target.files[0];if(!file)return;setErr("");setPreview(null);
@@ -6283,6 +6346,33 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
             {aiSource!=="file" && <Btn color={C.pu} onClick={runAI} disabled={aiLoading} style={{width:"100%"}}>{aiLoading?((aiSource==="extract"||aiSource==="photo")?"📋 Reading… please wait":"🤖 Generating… please wait"):(aiSource==="extract"?"📋 Extract Questions":aiSource==="photo"?"📷 Read Photo & Build Quiz":aiSource==="rule"?"✍️ Suggest Questions":type==="Reading"&&aiSource==="topic"?"✨ Generate Passage + Questions":"✨ Generate Quiz")}</Btn>}
             {type==="Reading" && passage.trim() && aiSource!=="file" && <button onClick={runAIQuestionsOnly} disabled={aiLoading} style={{width:"100%",marginTop:"8px",padding:"10px",borderRadius:"9px",border:"2px solid "+C.pu,background:"#fff",color:C.pu,fontWeight:"800",fontSize:"12px",cursor:aiLoading?"not-allowed":"pointer",fontFamily:F}}>🔁 Regenerate Questions Only</button>}
             {aiSource==="file" && aiLoading && <div style={{textAlign:"center",color:C.pu,fontSize:"12px",fontFamily:F}}>🤖 Generating… please wait</div>}
+          </div>}
+        </Card>
+
+        <Card style={{marginBottom:"11px",border:"2px solid #0f766e",background:"#f0fdfa"}}>
+          <div onClick={()=>setShowModels(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <strong style={{fontSize:"13px",color:"#0f766e",fontFamily:F}}>🧩 Multiple Models</strong><span style={{color:"#0f766e"}}>{showModels?"▲":"▼"}</span>
+          </div>
+          {showModels&&<div style={{marginTop:"10px"}}>
+            <div style={{background:"#ecfeff",border:"1px solid #99f6e4",borderRadius:"8px",padding:"9px 11px",fontSize:"11px",color:"#115e59",fontFamily:F,marginBottom:"9px"}}>
+              <b>Excel requirements</b><br/>Unit | Type | Question | A | B | C | D | Correct<br/>Type: Grammar or Vocabulary · Correct: A/B/C/D · One question per row.
+            </div>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"8px"}}>
+              <Btn size="sm" color="#0f766e" onClick={downloadModelTemplate}>⬇️ Download Excel Template</Btn>
+              <Btn size="sm" color={C.p} onClick={()=>modelFileRef.current&&modelFileRef.current.click()}>📥 Upload Question Bank</Btn>
+              <input ref={modelFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleModelBankFile} style={{display:"none"}}/>
+            </div>
+            {modelMsg&&<div style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",fontSize:"11px",marginBottom:"8px",fontFamily:F}}>{modelMsg}</div>}
+            {modelBank.length>0&&<div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px",marginBottom:"8px"}}>
+                <label style={{fontSize:"11px",fontFamily:F}}>Number of models<input type="number" min="1" max="26" value={modelCountCQ} onChange={e=>setModelCountCQ(e.target.value)} style={{...inp,width:"100%"}}/></label>
+                <label style={{fontSize:"11px",fontFamily:F}}>Questions / model<input type="number" min="2" value={modelQuestionCount} onChange={e=>setModelQuestionCount(e.target.value)} style={{...inp,width:"100%"}}/></label>
+              </div>
+              <b style={{fontSize:"11px",fontFamily:F}}>Units</b>
+              <div style={{display:"flex",gap:"5px",flexWrap:"wrap",margin:"6px 0 9px"}}>{Array.from(new Set(modelBank.map(x=>x.unit))).map(u=><label key={u} style={{fontSize:"11px",padding:"5px 7px",border:"1px solid "+C.br,borderRadius:"7px",background:modelUnits.includes(u)?"#ccfbf1":"#fff"}}><input type="checkbox" checked={modelUnits.includes(u)} onChange={e=>setModelUnits(e.target.checked?[...modelUnits,u]:modelUnits.filter(x=>x!==u))}/> {u}</label>)}</div>
+              <div style={{fontSize:"10px",color:C.mu,fontFamily:F,marginBottom:"8px"}}>Uses the class/student selection above. Models A/B/C… are distributed automatically. Grammar and Vocabulary are kept equal, and Units are balanced as closely as possible. Existing Shuffle for students remains active.</div>
+              <Btn color="#0f766e" onClick={createModelsFromCreateQuiz}>✨ Create & Assign Models</Btn>
+            </div>}
           </div>}
         </Card>
 
@@ -12218,7 +12308,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v292" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v293" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
