@@ -549,8 +549,9 @@ function eqResolveClassForStudent(student, classes){
   if(!student) return null;
   const vals=[student.classId,student.className,student.class,student.grade,student.section,student.sectionName].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="");
   const sid=eqDigits(student.studentId||student.studentNumber||student.id||"");
-  // Some imported rows lost classId but keep a 4-digit school ID: 12xx => 1-2, 31xx => 3-1, etc.
-  if(!vals.length && sid && sid.length>=4){
+  // Imported/legacy rows can contain a stale classId. The 4-digit school ID still carries
+  // the class prefix in this roster (3101 => 3-1, 1201 => 1-2), so always add it as a fallback.
+  if(sid && sid.length>=4){
     const a=sid.charAt(0),b=sid.charAt(1);
     if(a&&b) vals.push("class_"+a+"_"+b,a+"-"+b);
   }
@@ -4938,7 +4939,7 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
   const inp={width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box",marginBottom:"9px"};
 
   return (
-    <Modal open={open} onClose={onClose} title="⚙️ My Profile">
+    <Modal open={open} onClose={onClose} title="⚙️ Profile & Login Settings">
       {msg && <div style={{background:msg.startsWith("✅")?"#f0fdf4":"#fef2f2",border:"1px solid "+(msg.startsWith("✅")?"#86efac":"#fca5a5"),borderRadius:"7px",padding:"8px 11px",color:msg.startsWith("✅")?"#166534":"#991b1b",fontSize:"12px",marginBottom:"10px",fontFamily:F}}>{msg}</div>}
       <Label text="Full Name *"/>
       <input value={name} onChange={e=>setName(e.target.value)} style={inp}/>
@@ -12210,28 +12211,67 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     let live=[];
     try{live=await fsAll("users");}catch(_e){live=[];}
     const pool=[].concat(Array.isArray(live)?live:[],Array.isArray(data&&data.users)?data.users:[],Array.isArray(myStudents)?myStudents:[]);
-    const bySid={};
+    const byDoc={};
     pool.forEach(function(st){
-      if(!st||st.role!=="student"||st.deleted===true||String(st.status||"").toLowerCase()==="deleted")return;
-      if(!sameClassId(st.classId||st.className||st.class||"",v.id))return;
-      const sid=eqDigits(st.studentId||st.id||st._id||""); if(!sid)return;
-      if(!bySid[sid])bySid[sid]=st;
+      if(!st||String(st.role||"").toLowerCase()!=="student"||st.deleted===true||String(st.status||"").toLowerCase()==="deleted")return;
+      const resolved=eqResolveClassForStudent(st,[v.row]);
+      if(!resolved && !sameClassId(st.classId||st.className||st.class||"",v.id))return;
+      const sid=eqDigits(st.studentId||st.studentNumber||st.id||st._id||"");
+      const key=String(st.id||st._id||(sid?"student_"+sid:""));
+      if(key&&!byDoc[key])byDoc[key]=st;
     });
-    const rows=Object.values(bySid);
-    if(!rows.length){setAdminBusy("ℹ️ "+(v.row.name||v.id)+" لا يحتوي على طلاب مرتبطين به حاليًا. لم يتم حذف شيء.");return;}
-    if(!window.confirm("حذف طلاب الفصل فقط: "+(v.row.name||v.id)+"\nعدد الطلاب: "+rows.length+"\n\nستبقى نتائجهم محفوظة، ولن يتأثر أي فصل آخر. متابعة؟"))return;
-    const phrase="DELETE STUDENTS";
-    if(!adminConfirmOk(prompt("للتأكيد اكتب: "+phrase),phrase))return;
+    const rows=Object.values(byDoc);
+    if(!rows.length){setAdminBusy("ℹ️ "+(v.row.name||v.id)+" لا يحتوي على طلاب حاليًا. الفصل سيبقى كما هو.");return;}
+    const label=v.row.name||v.id;
+    const warning="حذف نهائي لطلاب الفصل: "+label+"\nعدد الطلاب: "+rows.length+
+      "\n\nسيتم حذف الطلاب وبياناتهم نهائيًا:\n• حسابات الطلاب وربط Google/Gmail\n• نتائج ومحاولات الاختبارات\n• Reading Progress / Reading Theory\n• Gradebook والمشاريع والملاحظات\n• Writing submissions\n• تعيين الطلاب من الاختبارات\n\nالاختبارات نفسها وأسئلتها ستبقى، والفصل "+label+" سيبقى موجودًا وفارغًا لاستيراد الطلاب الجدد.\n\nمتابعة؟";
+    if(!window.confirm(warning))return;
+    const phrase="DELETE STUDENT DATA";
+    if(!adminConfirmOk(prompt("تأكيد نهائي. اكتب: "+phrase),phrase))return;
     try{
-      setAdminBusy("⏳ حذف "+rows.length+" طالب من "+(v.row.name||v.id)+" فقط…");
-      const n=await adminDeleteStudentRosterDocsOnlyFast(rows);
-      setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(st=>!sameClassId(st.classId||st.className||st.class||"",v.id)));
-      try{if(data&&Array.isArray(data.users))data.users=data.users.filter(st=>!sameClassId(st.classId||st.className||st.class||"",v.id));localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
-      setAdminBusy("✅ تم حذف "+n+" طالب من "+(v.row.name||v.id)+" فقط. النتائج لم تُحذف.");
-      setTimeout(()=>setAdminBusy(""),5000);
-    }catch(e){setAdminBusy("❌ Delete failed safely: "+(e.message||e)+". لم يتم تنفيذ حذف على فصل آخر.");}
-  }
+      setAdminBusy("⏳ "+label+" — حذف الطلاب وبياناتهم نهائيًا…");
+      const deleted=await adminPurgeStudentsAndAllDataFast(rows,{
+        // Intentionally do NOT pass classId: purge must target these students only,
+        // while preserving the class and all quiz definitions/questions.
+        onProgress:function(p){setAdminBusy("⏳ "+label+" — "+(p.stage||"Deleting")+(p.total?(" "+p.done+" / "+p.total):""));}
+      });
+      const sidSet=new Set(rows.map(function(st){return adminSidFromAny(st.studentId||st.studentNumber||st.id||st._id||"");}).filter(Boolean));
+      const uidSet=new Set(rows.map(function(st){return String(st.id||st._id||"");}).filter(Boolean));
 
+      // Remove deleted students from quiz assignments only. Keep quiz documents/questions/results of other students.
+      let quizAssignUpdated=0;
+      try{
+        const qs=await fsAll("quizzes");
+        for(const q of (qs||[])){
+          const old=Array.isArray(q.assignedStudents)?q.assignedStudents:[];
+          const next=old.filter(function(x){
+            const raw=String(x||""); const dig=adminSidFromAny(raw);
+            return !uidSet.has(raw) && !(dig&&sidSet.has(dig));
+          });
+          if(next.length!==old.length){await fsSet("quizzes",q.id||q._id,{...q,assignedStudents:next,updatedAt:today()});quizAssignUpdated++;}
+        }
+      }catch(_e){}
+
+      // Clear local/login caches that could resurrect an old roster.
+      try{
+        if(typeof adminForgetDeletedStudent==="function") rows.forEach(function(st){adminForgetDeletedStudent(st);});
+      }catch(_e){}
+      try{
+        localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);
+        localStorage.removeItem("eq_last_student");
+        localStorage.removeItem("eduquiz_student");
+      }catch(_e){}
+
+      setLocalStudentPatch(prev=>(Array.isArray(prev)?prev:[]).filter(function(st){
+        const raw=String(st.id||st._id||"");const sid=adminSidFromAny(st.studentId||st.studentNumber||raw);
+        return !uidSet.has(raw)&&!(sid&&sidSet.has(sid));
+      }));
+      try{if(data&&Array.isArray(data.users))data.users=data.users.filter(function(st){const raw=String(st.id||st._id||"");const sid=adminSidFromAny(st.studentId||st.studentNumber||raw);return !uidSet.has(raw)&&!(sid&&sidSet.has(sid));});}catch(_e){}
+      setAdminBusy("✅ تم الحذف النهائي لـ "+rows.length+" طالب من "+label+". الفصل والاختبارات بقيا كما هما. تم تنظيف تعيينات "+quizAssignUpdated+" اختبار. يمكنك الآن استيراد الطلاب الجدد إلى نفس الفصل.");
+      setTimeout(()=>setAdminBusy(""),8000);
+      try{await reload();}catch(_e){}
+    }catch(e){setAdminBusy("❌ Permanent delete failed: "+(e.message||e));}
+  }
   async function deleteClassOnlySafe(cls){
     const v=validLiveClassRow(cls);
     if(!v){setAdminBusy("❌ تم إيقاف العملية: معرف الفصل غير صالح. لم يتم حذف شيء.");return;}
@@ -12359,7 +12399,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v294" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v296" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12374,7 +12414,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               <div>✍️ Writing {writingPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{writingPendingCount}</span>}</div>
               {writingPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{writingPendingCount} writing submission{writingPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}</div></div>)}
+          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
         </div>}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
@@ -12578,7 +12618,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                         rows.push([s.name,s.studentId,cls?cls.name:"",sRs.length,best!==null?best+"%":"",av!==null?av+"%":"",sRs.length===0?"Yes":"No"]);
                       });
                       var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,"'")+'"';}).join(",");}).join("\n");
-                      var a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download="quiz_results.csv";a.click();
+                      var blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"});var url=URL.createObjectURL(blob);var a=document.createElement("a");var stamp=new Date().toISOString().replace(/[:T]/g,"-").slice(0,16);a.href=url;a.download="quiz_results_"+stamp+".csv";document.body.appendChild(a);a.click();setTimeout(function(){try{document.body.removeChild(a);URL.revokeObjectURL(url);}catch(e){}},1200);
                     }}>📤 Export Report</Btn>
                   </div>;
                 }
@@ -12810,7 +12850,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div></details>
             </Card>;
           })}
@@ -13169,7 +13209,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <Modal open={!!manageClass} onClose={()=>setManageClass(null)} title={"Manage Class — "+(manageClass?.name||"")}>
         {manageClass&&(()=>{const studs=myStudents.filter(s=>s.classId===manageClass.id);return <div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Stat icon="👥" label="Students" value={studs.length} color={C.p}/><Stat icon="🏫" label="Class" value={manageClass.grade||"—"} color={C.pu}/></div>
-          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(manageClass)}>🗑 Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(manageClass)}>🗑 Delete Class</Btn></div>
+          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(manageClass)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(manageClass)}>🗑 Delete Class</Btn></div>
           <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",padding:"8px",borderRadius:"8px",marginBottom:"9px",fontFamily:F}}>Student ID is protected: the system will not create another student with the same ID. If the ID already exists, it offers to move the existing student to this class.</div>
           <div style={{maxHeight:"310px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px"}}>{studs.length===0?<div style={{padding:"12px",fontSize:"12px",color:C.mu,fontFamily:F}}>No students in this class.</div>:studs.map(st=><div key={st.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"9px",borderBottom:"1px solid "+C.br}}><div style={{flex:1}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {st.studentId||"—"}</div></div><Btn size="sm" color={C.pu} onClick={()=>{setEditStu(st);setEsForm({name:st.name||"",shortName:st.shortName||String(st.name||"").split(/\s+/).slice(0,2).join(" "),studentId:st.studentId||"",classId:st.classId||"",email:st.email||"",password:"",fatherName:st.fatherName||""});setEsMsg("");}}>✏️ Edit/Move</Btn><Btn size="sm" color={C.d} onClick={()=>deleteStudent(st)}>🗑 Delete</Btn></div>)}</div>
         </div>;})()}
