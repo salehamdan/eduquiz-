@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v293</title>
+<title>EduQuiz — Smart Assessment v294</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -545,6 +545,27 @@ function adminClassAliases(c){
 }
 
 function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
+function eqResolveClassForStudent(student, classes){
+  if(!student) return null;
+  const vals=[student.classId,student.className,student.class,student.grade,student.section,student.sectionName].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="");
+  const sid=eqDigits(student.studentId||student.studentNumber||student.id||"");
+  // Some imported rows lost classId but keep a 4-digit school ID: 12xx => 1-2, 31xx => 3-1, etc.
+  if(!vals.length && sid && sid.length>=4){
+    const a=sid.charAt(0),b=sid.charAt(1);
+    if(a&&b) vals.push("class_"+a+"_"+b,a+"-"+b);
+  }
+  for(const c of (classes||[])){
+    const aliases=adminClassAliases(c);
+    for(const v of vals){
+      if(aliases.some(a=>sameClassId(a,v)||String(a)===String(v))) return c;
+    }
+  }
+  return null;
+}
+function eqClassNameForStudent(student, classes){
+  const c=eqResolveClassForStudent(student,classes);
+  return c?String(c.name||c.grade||c.className||c.id||""):"";
+}
 
 // OPEN_ADD_ANY_CLASS_ONLY_20260917
 // Teacher can add any class name/code. This helper is used only by Add Class,
@@ -3580,6 +3601,7 @@ function Landing({onLogin, prefillQuiz}) {
   const [fgId,setFgId] = useState(""),[fgFather,setFgFather] = useState(""),[fgNew,setFgNew] = useState(""),[fgMsg,setFgMsg] = useState("");
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
+  const [studentGooglePolicy,setStudentGooglePolicy] = useState("optional");
   function activeLoginClassesFromData(d){
     // Login must match the visible Classes tab, not the hard-coded official class list.
     const live = eqRealActiveClassesFromData(d||{});
@@ -3598,6 +3620,8 @@ function Landing({onLogin, prefillQuiz}) {
     loadAllData().then(function(d){
       const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
       setClasses(active);
+      const gp=(d.appSettings||[]).find(x=>x&&x.id==="student_google_registration_policy");
+      setStudentGooglePolicy(gp&&gp.mode==="required"?"required":"optional");
       if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){ 
         const fallback=(active[0]&&active[0].id)||"";
         sf(x=>({...x,classId:fallback}));
@@ -3675,6 +3699,7 @@ function Landing({onLogin, prefillQuiz}) {
     saveSession(u); onLogin(u); setLoading(false);
   }
   async function doStudentReg() {
+    if(studentGooglePolicy==="required"){setErr("تسجيل الطلاب عبر Google إجباري حالياً. استخدم Continue with Google ثم اربط رقم الطالب الموجود.\nGoogle registration is required. Use Continue with Google.");return;}
     if(!f.name||!f.studentId||!f.password||!f.classId){setErr("Fill all required fields.");return;}
     if(!f.fatherName||!f.fatherName.trim()){setErr("Please enter your father's name (for password recovery).");return;}
     setLoading(true); setErr("");
@@ -3786,6 +3811,11 @@ function Landing({onLogin, prefillQuiz}) {
       }
       const d=await loadAllData();
       const students=d.users.filter(function(u){return u.role==="student" && !u.deleted;});
+      const emailKey=String(pendingAuth.email||"").trim().toLowerCase();
+      const emailOwner=students.find(function(u){return emailKey && [u.email,u.linkedEmail].some(v=>String(v||"").trim().toLowerCase()===emailKey);});
+      if(emailOwner && String(emailOwner.studentId||"").trim()!==String(preloaded.studentId)){setErr("هذا البريد مرتبط بطالب آخر. لا يمكن إنشاء أو ربط حساب مكرر.\nThis Google email is already linked to another student.");setLoading(false);return;}
+      const authOwner=students.find(function(u){return String(u.authUid||u.linkedAuthUid||"")===String(pendingAuth.uid||"");});
+      if(authOwner && String(authOwner.studentId||"").trim()!==String(preloaded.studentId)){setErr("حساب Google هذا مرتبط بطالب آخر.\nThis Google account is already linked to another student.");setLoading(false);return;}
       // Find existing registered account by official ID
       let st=students.find(function(u){return String(u.studentId||"").trim()===String(preloaded.studentId);});
       if(st){
@@ -3922,6 +3952,7 @@ function Landing({onLogin, prefillQuiz}) {
           </>}
 
           {mode==="student" && <>
+            {studentGooglePolicy==="required" && <div style={{background:"rgba(59,130,246,.16)",border:"1px solid rgba(96,165,250,.4)",borderRadius:"10px",padding:"10px",color:"#fff",fontSize:"11px",fontWeight:800,marginBottom:"10px",fontFamily:F}}>🔐 Google registration is required by the teacher. Tap <b>Continue with Google</b> below, choose your Google account, then enter your existing Student ID and class. No new duplicate student will be created.</div>}
             <p style={{color:C.mu,fontSize:"11px",margin:"0 0 12px",fontFamily:F}}>{T.regOnce}</p>
             <input value={f.name} onChange={e=>upd("name",e.target.value)} placeholder={T.fullName} style={iS}/>
             <input value={f.studentId} onChange={e=>upd("studentId",e.target.value)} placeholder={T.studentId} style={iS}/>
@@ -3933,7 +3964,7 @@ function Landing({onLogin, prefillQuiz}) {
               {classes.map(c=><option key={c.id} value={c.id} style={{color:C.tx,background:"#fff"}}>{c.name}{c.grade?" ("+c.grade+")":""}</option>)}
             </select>
             {classes.length===0 && <p style={{color:"#fbbf24",fontSize:"11px",margin:"-4px 0 8px",fontFamily:F}}>{T.noClasses}</p>}
-            <button onClick={doStudentReg} disabled={loading} style={{width:"100%",padding:"12px",background:C.s,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.registering:T.register}</button>
+            {studentGooglePolicy!=="required" && <button onClick={doStudentReg} disabled={loading} style={{width:"100%",padding:"12px",background:C.s,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.registering:T.register}</button>}{studentGooglePolicy==="required" && FIREBASE_OK && oauthBtns}
           </>}
 
           {mode==="teacher" && <>
@@ -4861,8 +4892,10 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
   const [saving,setSaving]=useState(false);
   const [aiKeyInput,setAiKeyInput]=useState(()=>getAIKey());
   const [aiKeyMsg,setAiKeyMsg]=useState("");
+  const [studentGooglePolicy,setStudentGooglePolicy]=useState("optional");
+  const [googlePolicyMsg,setGooglePolicyMsg]=useState("");
 
-  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg("");setAiKeyInput(getAIKey());setAiKeyMsg(""); } },[open]);
+  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg("");setAiKeyInput(getAIKey());setAiKeyMsg("");setGooglePolicyMsg(""); if(user.role==="teacher"){fsAll("appSettings").then(rows=>{const r=(rows||[]).find(x=>x&&x.id==="student_google_registration_policy");setStudentGooglePolicy(r&&r.mode==="required"?"required":"optional");}).catch(()=>setStudentGooglePolicy("optional"));} } },[open]);
 
   async function save(){
     setMsg("");
@@ -4893,6 +4926,15 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
     setTimeout(()=>setAiKeyMsg(""),3000);
   }
 
+  async function saveStudentGooglePolicy(mode){
+    const next=mode==="required"?"required":"optional";
+    setStudentGooglePolicy(next);setGooglePolicyMsg("Saving...");
+    try{
+      await fsSet("appSettings","student_google_registration_policy",{id:"student_google_registration_policy",mode:next,updatedAt:new Date().toISOString(),updatedBy:user.id||""});
+      setGooglePolicyMsg("✅ Student Google Registration is now "+(next==="required"?"Required":"Optional")+".");
+    }catch(e){setGooglePolicyMsg("⚠️ Could not save this setting.");}
+  }
+
   const inp={width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box",marginBottom:"9px"};
 
   return (
@@ -4914,6 +4956,15 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
       <Label text="New Password (leave blank to keep current)"/>
       <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" style={inp}/>
       <Btn onClick={save} disabled={saving} style={{width:"100%",marginTop:"4px"}}>{saving?"Saving…":"💾 Save Changes"}</Btn>
+      {user.role==="teacher" && <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid "+C.br}}>
+        <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🔐 Student Google Registration</div>
+        <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"8px",background:"#eff6ff",padding:"8px",borderRadius:"7px"}}><b>Optional:</b> normal student registration remains available and Continue with Google is optional.<br/><b>Required:</b> new student registration must use Continue with Google. The Google account is linked to the existing Student ID — no duplicate student is created.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px"}}>
+          <button onClick={()=>saveStudentGooglePolicy("optional")} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(studentGooglePolicy==="optional"?C.p:C.br),background:studentGooglePolicy==="optional"?"#eff6ff":"#fff",fontWeight:800,color:C.tx}}>Optional</button>
+          <button onClick={()=>saveStudentGooglePolicy("required")} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(studentGooglePolicy==="required"?C.d:C.br),background:studentGooglePolicy==="required"?"#fef2f2":"#fff",fontWeight:800,color:C.tx}}>Required</button>
+        </div>
+        {googlePolicyMsg&&<div style={{fontSize:"11px",fontWeight:800,color:googlePolicyMsg.startsWith("✅")?C.s:C.mu,marginTop:"7px"}}>{googlePolicyMsg}</div>}
+      </div>}
       {user.role==="teacher" && <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid "+C.br}}>
         <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🤖 Claude AI Key</div>
         <div style={{fontSize:"11px",color:C.mu,fontFamily:F,marginBottom:"8px",background:"#eff6ff",padding:"8px",borderRadius:"7px"}}>هذا المفتاح يُشارك تلقائياً مع الطلاب عبر Firebase لتمكين Reading Theory. الطلاب لا يرون المفتاح.</div>
@@ -5254,7 +5305,7 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
     <Card style={{marginBottom:"10px"}}>
       <Label text="Assign To"/><select value={assignMode} onChange={e=>setAssignMode(e.target.value)} style={input}><option value="all">All Classes</option><option value="class">One Class / Selected Classes</option><option value="student">One Student / Selected Students</option></select>
       {assignMode==="class"&&<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"8px"}}>{myClasses.map(c=><button key={c.id} onClick={()=>toggle(classIds,c.id,setClassIds)} style={{padding:"7px 11px",borderRadius:"999px",border:"2px solid "+(classIds.includes(c.id)?C.p:C.br),background:classIds.includes(c.id)?C.p:"#fff",color:classIds.includes(c.id)?"#fff":C.tx,fontSize:"11px",fontWeight:"800",fontFamily:F}}>{classIds.includes(c.id)?"✓ ":""}{c.name}</button>)}</div>}
-      {assignMode==="student"&&<div style={{marginTop:"8px"}}><input value={studentFilter} onChange={e=>setStudentFilter(e.target.value)} placeholder="Search student" style={{...input,marginBottom:"8px"}}/><div style={{maxHeight:"210px",overflowY:"auto",display:"grid",gap:"5px"}}>{filteredStudents.map(s=>{const cls=data.classes.find(c=>c.id===s.classId);const on=studentIds.includes(s.id);return <button key={s.id} onClick={()=>toggle(studentIds,s.id,setStudentIds)} style={{textAlign:"left",padding:"8px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",fontFamily:F}}><b style={{fontSize:"12px",color:on?C.p:C.tx}}>{on?"✓ ":""}{s.name}</b><span style={{fontSize:"10px",color:C.mu}}> #{s.studentId} · {cls?cls.name:""}</span></button>})}</div></div>}
+      {assignMode==="student"&&<div style={{marginTop:"8px"}}><input value={studentFilter} onChange={e=>setStudentFilter(e.target.value)} placeholder="Search student" style={{...input,marginBottom:"8px"}}/><div style={{maxHeight:"210px",overflowY:"auto",display:"grid",gap:"5px"}}>{filteredStudents.map(s=>{const cls=eqResolveClassForStudent(s,data.classes);const on=studentIds.includes(s.id);return <button key={s.id} onClick={()=>toggle(studentIds,s.id,setStudentIds)} style={{textAlign:"left",padding:"8px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",fontFamily:F}}><b style={{fontSize:"12px",color:on?C.p:C.tx}}>{on?"✓ ":""}{s.name}</b><span style={{fontSize:"10px",color:C.mu}}> #{s.studentId} · {cls?cls.name:""}</span></button>})}</div></div>}
     </Card>
     <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
   </div>;
@@ -5527,7 +5578,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
             <p style={{margin:0,color:C.mu,fontSize:"11px",fontFamily:F}}>Ranked by average score</p>
           </Card>
           {board.map((s,i)=>{
-            const isMe=s.id===user.id;const cls=data.classes.find(c=>c.id===s.classId);const medal=["🥇","🥈","🥉"][i]||"";
+            const isMe=s.id===user.id;const cls=eqResolveClassForStudent(s,data.classes);const medal=["🥇","🥈","🥉"][i]||"";
             return <Card key={s.id} style={{marginBottom:"6px",border:isMe?"2px solid "+C.p:"2px solid transparent",background:isMe?"#eff6ff":C.wh}}>
               <div style={{display:"flex",alignItems:"center",gap:"9px"}}>
                 <div style={{minWidth:"30px",textAlign:"center",fontWeight:"900",fontSize:i<3?"17px":"13px",fontFamily:F,color:i<3?["#f59e0b","#94a3b8","#b45309"][i]:C.mu}}>{medal||"#"+(i+1)}</div>
@@ -9715,7 +9766,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         <div style={{maxHeight:"200px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"4px"}}>
           {filteredStudents.map(s=>{
             const on=activeSelStudents.map(String).includes(String(s.id));
-            const cls=data.classes.find(c=>c.id===s.classId);
+            const cls=eqResolveClassForStudent(s,data.classes);
             return <button key={s.id} onClick={()=>toggleStudent(s.id)}
               style={{display:"flex",alignItems:"center",gap:"8px",padding:"7px 10px",borderRadius:"8px",border:"1px solid "+(on?C.p:C.br),background:on?"#eff6ff":"#fff",cursor:"pointer",textAlign:"left",fontFamily:F}}>
               <span style={{width:"18px",height:"18px",borderRadius:"4px",border:"2px solid "+(on?C.p:C.br),background:on?C.p:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -12044,7 +12095,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const header=["Student Name","Student ID","Class",...qs.map(q=>q.title),"Average %"];
     const rows=[header];
     studs.forEach(s=>{
-      const cls=data.classes.find(c=>c.id===s.classId);
+      const cls=eqResolveClassForStudent(s,data.classes);
       const row=[s.name,s.studentId||"",cls?.name||""];
       let sum=0,cnt=0;
       qs.forEach(q=>{
@@ -12308,7 +12359,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v293" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v294" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12485,7 +12536,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       var participantRows=fStudents.map(function(s){
                         var rs=qrdIdx.byStudentId[s.id]||[];
                         if(!rs.length) return null;
-                        var cls=data.classes.find(function(c){return c.id===s.classId;});
+                        var cls=eqResolveClassForStudent(s,data.classes);
                         var av=Math.round(rs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/rs.length);
                         var best=Math.max.apply(null,rs.map(function(r){return pct(r.score,r.totalQ);}));
                         return {s:s,cls:cls,rs:rs,av:av,best:best};
@@ -12520,7 +12571,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <Btn color={C.s} onClick={function(){
                       var rows=[["Student","ID","Class","Attempts","Best %","Avg %","Missing"]];
                       fStudents.forEach(function(s){
-                        var cls=data.classes.find(function(c){return c.id===s.classId;});
+                        var cls=eqResolveClassForStudent(s,data.classes);
                         var sRs=qrdIdx.byStudentId[s.id]||[];
                         var best=sRs.length?Math.max.apply(null,sRs.map(function(r){return pct(r.score,r.totalQ);})):null;
                         var av=sRs.length?Math.round(sRs.reduce(function(a,r){return a+pct(r.score,r.totalQ);},0)/sRs.length):null;
@@ -12588,7 +12639,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 if(qDashTab==="students") {
                   var stuRows = fStudents.map(function(s){
                     var sRs=qrdIdx.byStudentId[s.id]||[];
-                    var cls=data.classes.find(function(c){return c.id===s.classId;});
+                    var cls=eqResolveClassForStudent(s,data.classes);
                     if(!sRs.length) return null;
                     var sorted=sRs.slice().sort(function(a,b){return (a.completedAt||"").localeCompare(b.completedAt||"");});
                     var best=Math.max.apply(null,sRs.map(function(r){return pct(r.score,r.totalQ);}));
@@ -12667,7 +12718,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                           <div style={{fontSize:"10px",color:C.d,fontWeight:"700",fontFamily:F,marginBottom:"4px"}}>❌ Answered wrong ({wrongStudents.length}):</div>
                           <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
                             {wrongStudents.map(function(s){
-                              var cls=data.classes.find(function(c){return c.id===s.classId;});
+                              var cls=eqResolveClassForStudent(s,data.classes);
                               return <span key={s.id} style={{fontSize:"10px",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:"6px",padding:"2px 7px",fontFamily:F,color:C.tx}}>{s.name} <span style={{color:C.mu,fontSize:"9px"}}>{cls?cls.name:""}</span></span>;
                             })}
                           </div>
@@ -12809,7 +12860,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>
           <div style={{fontSize:"11px",color:C.mu,marginBottom:"9px",fontFamily:F}}>Showing {sorted.length} students</div>
           {filterCls==="all"?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,fontWeight:900}}>اختر الفصل أولًا لعرض طلابه.</p></Card>:sorted.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F}}>لا يوجد طلاب في هذا الفصل.</p></Card>
-          :sorted.map(s=>{const sRs=responsesForStudent(data.responses,s);const avg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const sk=calcSkills(sRs,data.quizzes);const flagged=flags.find(f=>f.id===s.id);const note=data.notes.find(n=>n.teacherId===user.id&&n.studentId===s.id);const cls=data.classes.find(c=>c.id===s.classId);
+          :sorted.map(s=>{const sRs=responsesForStudent(data.responses,s);const avg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const sk=calcSkills(sRs,data.quizzes);const flagged=flags.find(f=>f.id===s.id);const note=data.notes.find(n=>n.teacherId===user.id&&n.studentId===s.id);const cls=eqResolveClassForStudent(s,data.classes);
             return <Card key={s.id} style={{marginBottom:"8px",border:flagged?"2px solid "+C.d:"2px solid transparent"}}><div style={{display:"flex",gap:"9px",flexWrap:"wrap"}}>
               <div style={{flex:1,minWidth:"160px"}}><div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"2px",flexWrap:"wrap"}}><span style={{fontWeight:"700",fontSize:"13px",color:C.tx,fontFamily:F}}>{s.name}</span>{flagged&&<span style={{fontSize:"9px",background:"#fef2f2",color:C.d,padding:"1px 6px",borderRadius:"999px",fontWeight:"700",fontFamily:F}}>🚨 Help</span>}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {s.studentId} · {cls?.name||"—"} · {sRs.length} quizzes</div>{avg!==null&&<div style={{fontSize:"12px",fontWeight:"700",color:gc(avg),fontFamily:F}}>{avg}% avg</div>}{note&&<div style={{fontSize:"10px",color:C.mu,fontStyle:"italic",marginTop:"2px",fontFamily:F}}>📝 {note.note}</div>}</div>
               {sk.length>0&&<div style={{flex:1,minWidth:"160px"}}>{sk.slice(0,3).map(x=>(<div key={x.skill} style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"3px"}}><div style={{width:"75px",fontSize:"9px",color:C.mu,fontFamily:F,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.skill}</div><div style={{flex:1,height:"5px",background:"#f1f5f9",borderRadius:"999px"}}><div style={{height:"100%",width:x.score+"%",background:gc(x.score),borderRadius:"999px"}}/></div><div style={{fontSize:"9px",fontWeight:"700",color:gc(x.score),width:"28px",fontFamily:F}}>{x.score}%</div></div>))}</div>}
@@ -12929,7 +12980,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       const map={}; skills.forEach(x=>{map[x.skill]=x;});
                       const vals=allSkills.map(sk=>map[sk]?map[sk].score:null).filter(v=>v!==null);
                       const avg=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
-                      const cls=data.classes.find(c=>c.id===s.classId);
+                      const cls=eqResolveClassForStudent(s,data.classes);
                       return <tr key={s.id} style={{background:si%2===0?"#f8fafc":C.wh}}>
                         <td style={{position:"sticky",left:0,zIndex:1,background:si%2===0?"#f8fafc":C.wh,padding:"7px 11px",fontWeight:"700",color:C.tx,borderBottom:"1px solid "+C.br,whiteSpace:"nowrap"}}>
                           {s.name}
@@ -13129,7 +13180,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         <p style={{fontSize:"11px",color:C.mu,fontFamily:F,margin:"0 0 10px",background:"#eff6ff",padding:"8px",borderRadius:"7px"}}>💡 Tip: you can also open the app in a second browser tab to be teacher and student at the same time.</p>
         {myStudents.length===0 ? <p style={{fontSize:"13px",color:C.mu,fontFamily:F}}>No students yet.</p> :
           <div style={{maxHeight:"300px",overflowY:"auto"}}>
-            {myStudents.map(s=>{const cls=data.classes.find(c=>c.id===s.classId);return(
+            {myStudents.map(s=>{const cls=eqResolveClassForStudent(s,data.classes);return(
               <div key={s.id} onClick={()=>{setViewAsOpen(false);viewAsStudent&&viewAsStudent(s);}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 6px",borderBottom:"1px solid "+C.br,cursor:"pointer"}}>
                 <div style={{width:"30px",height:"30px",borderRadius:"50%",background:C.p+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",flexShrink:0}}>👤</div>
                 <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"13px",color:C.tx,fontFamily:F}}>{s.name}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {s.studentId} · {cls?.name||"—"}</div></div>
