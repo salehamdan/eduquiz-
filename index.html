@@ -12138,17 +12138,105 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     XLSX.writeFile(wb,"EduQuiz_Results_"+new Date().toISOString().slice(0,10)+".xlsx");
   }
 
+  function eqClassNumberPrefix(classId){
+    const canon=canonicalClassId(classId||"");
+    const m=String(canon||"").match(/^class_(\d+)_(\d+)$/);
+    return m ? (m[1]+m[2]) : "";
+  }
+  function eqArabicNameSort(a,b){
+    return String(a&&a.name||"").trim().localeCompare(String(b&&b.name||"").trim(),"ar",{sensitivity:"base",ignorePunctuation:true});
+  }
+  async function eqUpdateStudentNumberReferences(oldSid,newSid,studentDocId){
+    oldSid=eqDigits(oldSid||""); newSid=eqDigits(newSid||"");
+    if(!oldSid||!newSid||oldSid===newSid)return 0;
+    const cols=["responses","readingSubmissions","readingAttemptResets","readingTheoryResponses","projectSubmissions","gradebook","notes"];
+    const fields=["studentNumber","student_id","schoolStudentId","studentSchoolId"];
+    let changed=0;
+    for(const col of cols){
+      let rows=[]; try{rows=await fsAll(col);}catch(_e){rows=[];}
+      for(const r of (rows||[])){
+        let hit=false, next={...r};
+        fields.forEach(function(f){if(eqDigits(r&&r[f]||"")===oldSid){next[f]=newSid;hit=true;}});
+        // Some legacy rows stored the school number in studentId. Do not alter stable user document references.
+        if(eqDigits(r&&r.studentId||"")===oldSid && String(r&&r.studentId||"")!==String(studentDocId||"")){next.studentId=newSid;hit=true;}
+        if(hit){try{await fsSet(col,r.id||r._id,next);changed++;}catch(_e){}}
+      }
+    }
+    try{
+      const settings=await fsAll("appSettings"); const wdoc=cleanupWriteDocFromSettings(settings||[]);
+      if(wdoc&&Array.isArray(wdoc.submissions)){
+        let dirty=false; const clone=JSON.parse(JSON.stringify(wdoc));
+        clone.submissions.forEach(function(r){fields.concat(["studentId"]).forEach(function(f){if(eqDigits(r&&r[f]||"")===oldSid){r[f]=newSid;dirty=true;}});});
+        if(dirty){clone.updatedAt=new Date().toISOString();await fsSet("appSettings",clone.id||clone._id,clone);changed++;}
+      }
+    }catch(_e){}
+    return changed;
+  }
+  async function eqReorderAndRenumberClass(classId, extraStudent){
+    const cls=(myClasses||[]).find(function(c){return sameClassId(c.id||c.classId||c.grade||c.name,classId);});
+    if(!cls)throw new Error("Class not found");
+    const prefix=eqClassNumberPrefix(cls.id||classId);
+    if(!prefix)throw new Error("This class does not have a numeric class code such as 3-2.");
+    let live=[]; try{live=await fsAll("users");}catch(_e){live=[];}
+    const pool=[].concat(live||[],data&&data.users||[],myStudents||[],extraStudent?[extraStudent]:[]);
+    const map=new Map();
+    pool.forEach(function(st){
+      if(!st||String(st.role||"").toLowerCase()!=="student"||st.deleted===true||String(st.status||"").toLowerCase()==="deleted")return;
+      if(!sameClassId(st.classId||st.className||st.class||"",cls.id))return;
+      const key=String(st.id||st._id||("student_"+eqDigits(st.studentId||""))); if(key&&!map.has(key))map.set(key,st);
+    });
+    const rows=Array.from(map.values()).sort(eqArabicNameSort);
+    if(rows.length>99)throw new Error("More than 99 students in this class; automatic two-digit numbering was stopped.");
+    const allActive=(live||[]).filter(function(u){return u&&String(u.role||"").toLowerCase()==="student"&&u.deleted!==true&&String(u.status||"").toLowerCase()!=="deleted";});
+    const classDocIds=new Set(rows.map(function(x){return String(x.id||x._id||"");}));
+    const planned=rows.map(function(st,i){return {st:st,oldSid:eqDigits(st.studentId||""),newSid:prefix+String(i+1).padStart(2,"0")};});
+    for(const x of planned){
+      const conflict=allActive.find(function(u){return !classDocIds.has(String(u.id||u._id||""))&&eqDigits(u.studentId||"")===x.newSid;});
+      if(conflict)throw new Error("Student ID "+x.newSid+" is already used by "+(conflict.name||"another student")+".");
+    }
+    for(const x of planned){
+      const docId=String(x.st.id||x.st._id||("student_"+x.oldSid));
+      const updated={...x.st,id:docId,studentId:x.newSid,classId:cls.id,className:cls.name||"",updatedAt:today()}; delete updated._id;
+      await fsSet("users",docId,updated);
+      if(x.oldSid&&x.oldSid!==x.newSid)await eqUpdateStudentNumberReferences(x.oldSid,x.newSid,docId);
+    }
+    try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
+    return planned;
+  }
+  async function reorderAndRenumberClass(cls){
+    if(!cls)return;
+    if(!window.confirm("سيتم ترتيب طلاب "+(cls.name||cls.id)+" أبجديًا وإعادة ترقيمهم تلقائيًا من 01.\nلن يتم حذف الطالب أو نتائجه. متابعة؟"))return;
+    try{
+      setAdminBusy("⏳ ترتيب الأسماء وإعادة ترقيم "+(cls.name||cls.id)+"…");
+      const planned=await eqReorderAndRenumberClass(cls.id);
+      await reload();
+      setAdminBusy("✅ تم ترتيب "+planned.length+" طالب أبجديًا وإعادة ترقيم الفصل بدون تكرار.");
+      setTimeout(()=>setAdminBusy(""),5000);
+    }catch(e){setAdminBusy("❌ لم يتم تغيير الترتيب: "+(e.message||e));}
+  }
+
   async function saveEditStudent(){
     setEsMsg("");
     if(!esForm.name.trim()||!esForm.studentId.trim()){setEsMsg("Name and ID are required.");return;}
     const all=(await loadAllData()).users;
     if(all.find(u=>u.id!==editStu.id && !u.deleted && (u.studentId||"")===esForm.studentId.trim())){setEsMsg("That Student ID is used by another student.");return;}
-    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:esForm.studentId.trim(),classId:esForm.classId,email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
+    const typedSid=eqDigits(esForm.studentId.trim());
+    let targetClass=esForm.classId;
+    if(typedSid.length>=4){
+      const inferred=canonicalClassId("class_"+typedSid.charAt(0)+"_"+typedSid.charAt(1));
+      const hit=(myClasses||[]).find(function(c){return sameClassId(c.id||c.classId||c.grade||c.name,inferred);});
+      if(hit)targetClass=hit.id;
+    }
+    const oldSid=eqDigits(editStu.studentId||"");
+    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
     if(esForm.password.trim()) updated.password=esForm.password.trim();
     await fsSet("users",editStu.id,updated);
+    if(oldSid&&oldSid!==typedSid)await eqUpdateStudentNumberReferences(oldSid,typedSid,editStu.id);
+    const planned=await eqReorderAndRenumberClass(targetClass,updated);
     await reload();
-    setEsMsg("✅ Saved!");
-    setTimeout(()=>setEditStu(null),700);
+    const finalRow=planned.find(function(x){return String(x.st.id||x.st._id||"")===String(editStu.id);});
+    setEsMsg("✅ تم النقل والترتيب الأبجدي وإعادة الترقيم"+(finalRow?(" — الرقم الجديد: "+finalRow.newSid):""));
+    setTimeout(()=>setEditStu(null),1200);
   }
   async function createCls(){
     const rawName=(newCls.name||"").trim(), rawGrade=(newCls.grade||"").trim();
@@ -12405,7 +12493,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v297" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v298" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12856,7 +12944,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.i} onClick={()=>reorderAndRenumberClass(cls)}>🔤 Reorder & Renumber</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div></details>
             </Card>;
           })}
@@ -13095,7 +13183,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <input value={esForm.shortName} onChange={e=>setEsForm(f=>({...f,shortName:e.target.value}))} placeholder="First two names accepted at login" style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
           <Label text="الإيميل Email (optional)"/>
           <input value={esForm.email} onChange={e=>setEsForm(f=>({...f,email:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
-          <Label text="الرقم Student ID *"/>
+          <div style={{fontSize:"11px",color:C.p,background:"#eff6ff",padding:"8px",borderRadius:"8px",marginBottom:"8px",fontFamily:F}}>🔄 عند تغيير أول رقمين من Student ID، ينتقل الطالب تلقائيًا إلى الفصل المطابق، ثم يرتب الفصل أبجديًا ويعاد ترقيم جميع طلابه تلقائيًا.</div><Label text="الرقم Student ID *"/>
           <input value={esForm.studentId} onChange={e=>setEsForm(f=>({...f,studentId:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
           <Label text="الفصل Class"/>
           <select value={esForm.classId} onChange={e=>setEsForm(f=>({...f,classId:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"9px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}>
@@ -13215,7 +13303,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <Modal open={!!manageClass} onClose={()=>setManageClass(null)} title={"Manage Class — "+(manageClass?.name||"")}>
         {manageClass&&(()=>{const studs=myStudents.filter(s=>s.classId===manageClass.id);return <div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"10px"}}><Stat icon="👥" label="Students" value={studs.length} color={C.p}/><Stat icon="🏫" label="Class" value={manageClass.grade||"—"} color={C.pu}/></div>
-          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(manageClass)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(manageClass)}>🗑 Delete Class</Btn></div>
+          <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginBottom:"10px"}}><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(manageClass)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(manageClass)}>✏️ Edit Name</Btn><Btn size="sm" color={C.i} onClick={()=>reorderAndRenumberClass(manageClass)}>🔤 Reorder & Renumber</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(manageClass)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(manageClass)}>🗑 Delete Class</Btn></div>
           <div style={{fontSize:"11px",color:C.mu,background:"#eff6ff",padding:"8px",borderRadius:"8px",marginBottom:"9px",fontFamily:F}}>Student ID is protected: the system will not create another student with the same ID. If the ID already exists, it offers to move the existing student to this class.</div>
           <div style={{maxHeight:"310px",overflowY:"auto",border:"1px solid "+C.br,borderRadius:"10px"}}>{studs.length===0?<div style={{padding:"12px",fontSize:"12px",color:C.mu,fontFamily:F}}>No students in this class.</div>:studs.map(st=><div key={st.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"9px",borderBottom:"1px solid "+C.br}}><div style={{flex:1}}><b style={{fontSize:"12px",color:C.tx,fontFamily:F}}>{st.name}</b><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {st.studentId||"—"}</div></div><Btn size="sm" color={C.pu} onClick={()=>{setEditStu(st);setEsForm({name:st.name||"",shortName:st.shortName||String(st.name||"").split(/\s+/).slice(0,2).join(" "),studentId:st.studentId||"",classId:st.classId||"",email:st.email||"",password:"",fatherName:st.fatherName||""});setEsMsg("");}}>✏️ Edit/Move</Btn><Btn size="sm" color={C.d} onClick={()=>deleteStudent(st)}>🗑 Delete</Btn></div>)}</div>
         </div>;})()}
