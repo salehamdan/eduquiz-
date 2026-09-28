@@ -4402,7 +4402,10 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
   const total = quiz.questions.length;
   const prev = allResponses.filter(r=>responseBelongsToStudent(r,student)&&r.quizId===quiz.id).length;
   const maxQuizRetakes = quiz.allowRetake ? Math.max(0, Number(quiz.maxRetakes ?? 2)||0) : 0;
-  const totalAllowedQuizAttempts = 1+maxQuizRetakes;
+  const retakeKey=String(student.id||student._id||student.studentId||student.studentNumber||"");
+  const retakeSid=String(student.studentId||student.studentNumber||"");
+  const extraRetakes=Math.max(0,Number((quiz.studentRetakeExtra||{})[retakeKey] ?? (quiz.studentRetakeExtra||{})[retakeSid] ?? 0)||0);
+  const totalAllowedQuizAttempts = 1+maxQuizRetakes+extraRetakes;
   const attemptBlocked = prev >= totalAllowedQuizAttempts;
   const fmt = s=>Math.floor(s/60)+":"+String(Math.max(0,Math.floor(s))%60).padStart(2,"0");
   function mergeRanges(ranges){
@@ -5449,7 +5452,12 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     const rs=responsesForStudent(data.responses,s);
     return {...s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):0,total:rs.length};
   }).filter(s=>s.total>0).sort((a,b)=>b.avg-a.avg||(b.total-a.total));
-  const allowedAttemptsForQuiz = q => 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0);
+  const allowedAttemptsForQuiz = q => {
+    const key=String(user.id||user._id||user.studentId||user.studentNumber||"");
+    const sid=String(user.studentId||user.studentNumber||"");
+    const extra=Math.max(0,Number((q.studentRetakeExtra||{})[key] ?? (q.studentRetakeExtra||{})[sid] ?? 0)||0);
+    return 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0) + extra;
+  };
   const canReviewQuizResponse = (q) => myResps.filter(r=>r.quizId===q.id).length >= allowedAttemptsForQuiz(q);
 
   if(taking){
@@ -11329,6 +11337,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
   const [attemptsModal,setAttemptsModal]=useState(null);
+  const [quizAttemptsAdmin,setQuizAttemptsAdmin]=useState(null);
+  const [qaClass,setQaClass]=useState("all");
+  const [qaSelected,setQaSelected]=useState({});
+  const [qaMsg,setQaMsg]=useState("");
   const [mergeModal,setMergeModal]=useState(false);
   const [mergeMsg,setMergeMsg]=useState("");
   const [viewAsOpen,setViewAsOpen]=useState(false);
@@ -11746,6 +11758,40 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     await fsSet("quizzes",id,copy);await reload();
     setQuizPerfMsg("✅ Quiz duplicated. The new copy is private until you assign students/classes.");
     setTimeout(()=>setQuizPerfMsg(""),2600);
+  }
+  function qaStudentKeys(st){
+    return Array.from(new Set([st&&st.id,st&&st._id,st&&st.studentId,st&&st.studentNumber].map(x=>String(x||"").trim()).filter(Boolean)));
+  }
+  function qaResponsesFor(quiz,st){
+    return (data.responses||[]).filter(function(r){return r&&String(r.quizId)===String(quiz.id)&&responseBelongsToStudent(r,st);});
+  }
+  async function qaAllowRetake(quiz,students){
+    if(!quiz||!students.length)return;
+    const map={...(quiz.studentRetakeExtra||{})};
+    students.forEach(function(st){
+      const keys=qaStudentKeys(st); if(!keys.length)return;
+      const current=Math.max.apply(null,keys.map(k=>Math.max(0,Number(map[k]||0))));
+      keys.forEach(k=>map[k]=current+1);
+    });
+    await fsSet("quizzes",quiz.id,{...quiz,studentRetakeExtra:map,updatedAt:today()});
+    setQaMsg("✅ تم السماح بمحاولة إضافية لـ "+students.length+" طالب. المحاولات السابقة محفوظة.");
+    await reload();
+  }
+  async function qaDeleteAllSelectedAttempts(quiz,students){
+    if(!quiz||!students.length)return;
+    const rows=[];
+    students.forEach(st=>qaResponsesFor(quiz,st).forEach(r=>{if(!rows.some(x=>String(x.id)===String(r.id)))rows.push(r);}));
+    if(!rows.length){setQaMsg("ℹ️ لا توجد محاولات للطلاب المحددين في هذا الاختبار.");return;}
+    if(!window.confirm("حذف "+rows.length+" محاولة من هذا الاختبار فقط لـ "+students.length+" طالب؟\n\nلن يُحذف الاختبار أو الأسئلة أو نتائج الاختبارات الأخرى."))return;
+    for(const r of rows) await fsDel("responses",r.id);
+    setQaMsg("✅ تم حذف "+rows.length+" محاولة من هذا الاختبار فقط.");
+    await reload();
+  }
+  async function qaDeleteOneAttempt(r,studentName){
+    if(!window.confirm("حذف هذه المحاولة فقط للطالب "+studentName+"؟"))return;
+    await fsDel("responses",r.id);
+    setQaMsg("✅ تم حذف المحاولة المحددة فقط.");
+    await reload();
   }
   async function delQuiz(id){if(!confirm("Delete this quiz?"))return;await fsDel("quizzes",id);await reload();}
   async function delResponse(rid, studentName){if(!confirm("Delete this attempt by "+studentName+"? This will update their progress and mastery."))return;await fsDel("responses",rid);await reload();}
@@ -12493,7 +12539,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v298" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v299" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12918,6 +12964,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
+                      <Btn size="sm" color={C.w} onClick={()=>{setQuizAttemptsAdmin(quiz);setQaClass("all");setQaSelected({});setQaMsg("");}}>🔄 Attempts</Btn>
                       <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
                       <Btn size="sm" color="#475569" onClick={()=>duplicateQuiz(quiz)}>📄 Duplicate</Btn>
                       {quiz.status==="draft"?<Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>:<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}
@@ -13196,6 +13243,45 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <input type="password" value={esForm.password} onChange={e=>setEsForm(f=>({...f,password:e.target.value}))} placeholder="••••••••" style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid "+C.br,fontSize:"13px",marginBottom:"12px",boxSizing:"border-box",fontFamily:F,background:"#f8fafc",color:C.tx}}/>
           <Btn onClick={saveEditStudent} style={{width:"100%"}}>💾 Save Changes</Btn>
         </div>}
+      </Modal>
+      <Modal open={!!quizAttemptsAdmin} onClose={()=>{setQuizAttemptsAdmin(null);setQaSelected({});setQaMsg("");}} title={"🔄 Attempts Management — "+(quizAttemptsAdmin?.title||"")}>
+        {quizAttemptsAdmin && (()=>{
+          const quiz=(myQuizzes.find(q=>String(q.id)===String(quizAttemptsAdmin.id))||quizAttemptsAdmin);
+          const classStudents=qaClass==="all"?myStudents:myStudents.filter(st=>{const c=eqResolveClassForStudent(st,myClasses);return c&&sameClassId(c.id,qaClass);});
+          const selected=classStudents.filter(st=>qaSelected[String(st.id||st._id||st.studentId||"")]);
+          const toggle=function(st){const k=String(st.id||st._id||st.studentId||"");setQaSelected(p=>({...p,[k]:!p[k]}));};
+          const selectClass=function(){const n={...qaSelected};classStudents.forEach(st=>n[String(st.id||st._id||st.studentId||"")]=true);setQaSelected(n);};
+          return <div>
+            <div style={{fontSize:"11px",color:C.mu,marginBottom:"9px",fontFamily:F}}>اختر طالبًا أو مجموعة أو فصلًا. Allow Retake يحفظ المحاولات السابقة، والحذف يخص هذا الاختبار فقط.</div>
+            <select value={qaClass} onChange={e=>{setQaClass(e.target.value);setQaSelected({});}} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"8px",marginBottom:"8px",background:"#fff"}}>
+              <option value="all">كل الطلاب / All Students</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"9px"}}>
+              <Btn size="sm" color={C.p} onClick={selectClass}>☑ Select All {qaClass==="all"?"Shown":"in Class"}</Btn>
+              <Btn size="sm" color={C.mu} onClick={()=>setQaSelected({})}>Clear</Btn>
+              <Btn size="sm" color={C.s} disabled={!selected.length} onClick={()=>qaAllowRetake(quiz,selected)}>🔄 Allow Retake ({selected.length})</Btn>
+              <Btn size="sm" color={C.d} disabled={!selected.length} onClick={()=>qaDeleteAllSelectedAttempts(quiz,selected)}>🗑 Delete All Attempts ({selected.length})</Btn>
+            </div>
+            {qaMsg&&<div style={{padding:"8px",borderRadius:"8px",background:"#eff6ff",color:C.p,fontSize:"11px",fontWeight:"800",marginBottom:"8px"}}>{qaMsg}</div>}
+            <div style={{maxHeight:"430px",overflowY:"auto"}}>
+              {classStudents.map(st=>{
+                const k=String(st.id||st._id||st.studentId||"");
+                const rs=qaResponsesFor(quiz,st).slice().sort((a,b)=>String(b.completedAt||b.ts||"").localeCompare(String(a.completedAt||a.ts||"")));
+                const cls=eqResolveClassForStudent(st,myClasses);
+                return <div key={k} style={{border:"1px solid "+C.br,borderRadius:"9px",padding:"8px",marginBottom:"7px",background:qaSelected[k]?"#eff6ff":"#fff"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"7px"}}>
+                    <input type="checkbox" checked={!!qaSelected[k]} onChange={()=>toggle(st)}/>
+                    <div style={{flex:1,minWidth:0}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"9px",color:C.mu}}>ID: {st.studentId||"—"} · {cls?.name||"—"} · Attempts: {rs.length}</div></div>
+                    <Btn size="sm" color={C.s} onClick={()=>qaAllowRetake(quiz,[st])}>🔄 +1</Btn>
+                  </div>
+                  {rs.length>0&&<details style={{marginTop:"6px"}}><summary style={{cursor:"pointer",fontSize:"10px",fontWeight:"800",color:C.p}}>View attempts ({rs.length})</summary>
+                    <div style={{marginTop:"5px"}}>{rs.map((r,idx)=>{const p=pct(r.score,r.totalQ);return <div key={r.id} style={{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderTop:"1px solid "+C.br,fontSize:"10px"}}><span style={{flex:1}}>Attempt #{r.attempt||idx+1} · {r.completedAt||""} · <b style={{color:gc(p)}}>{p}%</b></span><button onClick={()=>qaDeleteOneAttempt(r,st.name)} style={{border:"none",background:"none",cursor:"pointer",fontSize:"14px"}}>🗑</button></div>;})}</div>
+                  </details>}
+                </div>;
+              })}
+            </div>
+          </div>;
+        })()}
       </Modal>
       <Modal open={!!attemptsModal} onClose={()=>setAttemptsModal(null)} title={"Attempts — "+(attemptsModal?.name||"")}>
         {attemptsModal && (()=>{
