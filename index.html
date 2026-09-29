@@ -3702,7 +3702,13 @@ function Landing({onLogin, prefillQuiz}) {
     }
     if(!sameClassId(u.classId, f.classId)){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
     if(!studentNameMatches(u, f.name)){setErr("Name does not match this Student ID. You may enter your full name or first two names.");setLoading(false);return;}
-    if(String(u.password||"") !== String(f.password)){setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
+    if(String(u.password||"") !== String(f.password)){
+      const enteredCurrentDefault=String(f.password||"")===String(u.studentId||"");
+      const storedLooksLikeOldDefault=/^\d{4}$/.test(String(u.password||""));
+      if(enteredCurrentDefault && storedLooksLikeOldDefault){
+        try{u.password=String(u.studentId||"");u.updatedAt=today();await fsSet("users",String(u.id||("student_"+u.studentId)),u);}catch(_repairPassErr){}
+      }else{setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
+    }
     saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
     saveSession(u); onLogin(u); setLoading(false);
   }
@@ -5653,7 +5659,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   function applyEasyMode(){ setAudioControls({seek:true,speed:true,pause:true,restart:true,skip10:true}); }
   function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false,skip10:false}); }
   const [err,setErr]=useState(""),[preview,setPreview]=useState(null),[showImport,setShowImport]=useState(false),[showPaste,setShowPaste]=useState(false),[csvPaste,setCsvPaste]=useState("");
-  const [showModels,setShowModels]=useState(false),[modelBank,setModelBank]=useState([]),[modelMsg,setModelMsg]=useState("");
+  const [showModels,setShowModels]=useState(()=>{try{const x=sessionStorage.getItem("eq_open_multiple_models")==="1";sessionStorage.removeItem("eq_open_multiple_models");return x;}catch(_e){return false;}}),[modelBank,setModelBank]=useState([]),[modelMsg,setModelMsg]=useState("");
   const [modelCountCQ,setModelCountCQ]=useState(4),[modelQuestionCount,setModelQuestionCount]=useState(20),[modelUnits,setModelUnits]=useState([]);
   const modelFileRef=useRef();
   const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
@@ -5985,7 +5991,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const label=String.fromCharCode(65+mi),chosen=balancedModelQuestions(pool,qn,mi,usage);
       const assigned=target.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
       const qq=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,difficulty:"Easy",unit:x.unit,bankId:x.bankId}));
-      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim()+" — Model "+label,type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim(),type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
       await fsSet("quizzes",quiz.id,quiz);
     }
     setModelMsg("✅ Created "+n+" models and distributed them across "+target.length+" students. Each model has "+qn/2+" Grammar + "+qn/2+" Vocabulary.");
@@ -6418,7 +6424,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
 
         <Card style={{marginBottom:"11px",border:"2px solid #0f766e",background:"#f0fdfa"}}>
           <div onClick={()=>setShowModels(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <strong style={{fontSize:"13px",color:"#0f766e",fontFamily:F}}>🧩 Multiple Models</strong><span style={{color:"#0f766e"}}>{showModels?"▲":"▼"}</span>
+            <strong style={{fontSize:"13px",color:"#0f766e",fontFamily:F}}>🧩 Multiple Models — uses all Quiz Settings above</strong><span style={{color:"#0f766e"}}>{showModels?"▲":"▼"}</span>
           </div>
           {showModels&&<div style={{marginTop:"10px"}}>
             <div style={{background:"#ecfeff",border:"1px solid #99f6e4",borderRadius:"8px",padding:"9px 11px",fontSize:"11px",color:"#115e59",fontFamily:F,marginBottom:"9px"}}>
@@ -11426,6 +11432,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const visibleMyQuizzes=myQuizzes.filter(q=>{
     if(quizTypeFilter!=="all" && String(q.type||"Other")!==quizTypeFilter) return false;
     if(quizStatusFilter!=="all" && String(q.status||"open")!==quizStatusFilter) return false;
+    if(q.modelGroupId){
+      const first=myQuizzes.find(x=>String(x.modelGroupId||"")===String(q.modelGroupId));
+      if(first && String(first.id)!==String(q.id)) return false;
+    }
     return true;
   }).slice().sort((a,b)=>{
     if(quizCreatedSort!=="none"){
@@ -11492,7 +11502,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return (rb.length?Math.round(rb.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/rb.length):0)-(ra.length?Math.round(ra.reduce((s,r)=>s+pct(r.score,r.totalQ),0)/ra.length):0);
   });
 
-  async function saveQuiz(q){await fsSet("quizzes",q.id,q);await reload();setView(null);}
+  async function saveQuiz(q){
+    if(q&&q.modelGroupId){
+      const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(q.modelGroupId));
+      const shared=["title","type","difficulty","subject","timer","masteryThreshold","allowRetake","maxRetakes","shuffle","mode","instantFeedback","reviewAnswers","openDate","startDate","closeDate","status"];
+      for(const x of siblings){const next={...x};shared.forEach(k=>{if(q[k]!==undefined)next[k]=q[k];});next.modelGroupTitle=q.title||x.modelGroupTitle;next.updatedAt=today();await fsSet("quizzes",x.id,next);}
+    }else await fsSet("quizzes",q.id,q);
+    await reload();setView(null);
+  }
 
 
   // SAFE_MISSING_GRADE_RESTORE_V3: diagnostic + restore quiz grades only. Does not touch RP/readings.
@@ -12279,7 +12296,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     }
     for(const x of planned){
       const docId=String(x.st.id||x.st._id||("student_"+x.oldSid));
-      const updated={...x.st,id:docId,studentId:x.newSid,classId:cls.id,className:cls.name||"",updatedAt:today()}; delete updated._id;
+      const oldPassword=String(x.st.password||"");
+      const updated={...x.st,id:docId,studentId:x.newSid,classId:cls.id,className:cls.name||"",classRosterToken:(cls.rosterToken||""),updatedAt:today()};
+      if(!oldPassword || oldPassword===String(x.oldSid||"")) updated.password=x.newSid;
+      delete updated._id;
       await fsSet("users",docId,updated);
       if(x.oldSid&&x.oldSid!==x.newSid)await eqUpdateStudentNumberReferences(x.oldSid,x.newSid,docId);
     }
@@ -12311,7 +12331,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       if(hit)targetClass=hit.id;
     }
     const oldSid=eqDigits(editStu.studentId||"");
-    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
+    const targetCls=(myClasses||[]).find(c=>sameClassId(c.id||c.classId||c.grade||c.name,targetClass));
+    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,classRosterToken:(targetCls&&targetCls.rosterToken)||"",email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
+    if((!editStu.password || String(editStu.password)===String(oldSid)) && !esForm.password.trim()) updated.password=typedSid;
     if(esForm.password.trim()) updated.password=esForm.password.trim();
     await fsSet("users",editStu.id,updated);
     if(oldSid&&oldSid!==typedSid)await eqUpdateStudentNumberReferences(oldSid,typedSid,editStu.id);
@@ -12576,7 +12598,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v300" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v301" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -12986,18 +13008,18 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                     </details>
                     <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.p} onClick={function(){setQDash(true);setQrdQuiz("all");setQrdClass("all");setQrdSearch("");}}>📊 Results Dashboard</Btn>
-                      <Btn size="sm" color={C.pu} onClick={()=>setModelsBuilderOpen(true)}>🧠 Multiple Models</Btn>
+                      <Btn size="sm" color={C.pu} onClick={()=>{try{sessionStorage.setItem("eq_open_multiple_models","1");}catch(_e){}setView("create");}}>🧠 Multiple Models</Btn>
                       <Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ New</Btn>
                     </div>
                   </div>
               {quizPerfMsg&&<div style={{margin:"0 0 8px",padding:"8px 10px",borderRadius:"9px",background:"#eff6ff",border:"1px solid #bfdbfe",color:C.p,fontSize:"12px",fontWeight:"800",fontFamily:F}}>{quizPerfMsg}</div>}
               {visibleMyQuizzes.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>{myQuizzes.length?"لا توجد اختبارات مطابقة للتصنيف الحالي.":"No quizzes yet."}</p></Card>
               :visibleMyQuizzes.map((quiz,i)=>{
-                const rs=data.responses.filter(r=>r.quizId===quiz.id);const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;const col=COLORS[i%COLORS.length];const open=selQuiz===quiz.id;const icon=quiz.imported?"📥":quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
+                const groupQuizIds=quiz.modelGroupId?new Set(myQuizzes.filter(q=>q.modelGroupId===quiz.modelGroupId).map(q=>String(q.id))):null;const rs=data.responses.filter(r=>groupQuizIds?groupQuizIds.has(String(r.quizId)):r.quizId===quiz.id);const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;const col=COLORS[i%COLORS.length];const open=selQuiz===quiz.id;const icon=quiz.imported?"📥":quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
                     <div style={{width:"36px",height:"36px",borderRadius:"8px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}{quiz.modelLabel?" · Model "+quiz.modelLabel:""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
+                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q{quiz.modelGroupId?" · "+(quiz.modelCount||myQuizzes.filter(q=>q.modelGroupId===quiz.modelGroupId).length)+" Forms":""} · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}{quiz.modelLabel?" · Model "+quiz.modelLabel:""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
