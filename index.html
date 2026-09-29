@@ -4245,7 +4245,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     // Don't save an empty attempt (student left without answering anything)
     if(answeredCount===0){ return; }
     setSaving(true);
-    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...finalAnswers},attempt:prev+1,points,mode:"game",completedAt:today(),ts:Date.now()};
+    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...finalAnswers},attempt:prev+1,points,mode:"game",modelGroupId:quiz.modelGroupId||"",modelLabel:quiz.modelLabel||"",completedAt:today(),ts:Date.now()};
     try { await fsSet("responses",entry.id,entry); if(onSaved) await onSaved(); } catch(e){}
     setSaving(false);
   }
@@ -4664,7 +4664,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       if(orig){const oi=orig.options.indexOf(selText);origAnswers[q.id]=oi>=0?oi:sel;}
       else origAnswers[q.id]=sel;
     });
-    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:origAnswers,attempt:prev+1,selfRating:rating,completedAt:today(),ts:Date.now()};
+    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:origAnswers,attempt:prev+1,selfRating:rating,modelGroupId:quiz.modelGroupId||"",modelLabel:quiz.modelLabel||"",completedAt:today(),ts:Date.now()};
     await fsSet("responses",entry.id,entry);
     if(onSaved) await onSaved();
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
@@ -6456,7 +6456,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           <div onClick={()=>setShowModels(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <strong style={{fontSize:"13px",color:"#0f766e",fontFamily:F}}>🧩 Multiple Models — uses all Quiz Settings above</strong><span style={{color:"#0f766e"}}>{showModels?"▲":"▼"}</span>
           </div>
-          {showModels&&<div style={{marginTop:"10px"}}>
+          {showModels&&!editQuiz&&<div style={{marginTop:"10px"}}>
             <div style={{background:"#ecfeff",border:"1px solid #99f6e4",borderRadius:"8px",padding:"9px 11px",fontSize:"11px",color:"#115e59",fontFamily:F,marginBottom:"9px"}}>
               <b>Excel requirements</b><br/>Unit | Type | Question | A | B | C | D | Correct<br/>Type: Grammar or Vocabulary · Correct: A/B/C/D · One question per row.
             </div>
@@ -11375,6 +11375,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [examExport,setExamExport]=useState(null);
   const [examExportForm,setExamExportForm]=useState({school:"ثانوية الشعبة",quiz:"Quiz 1",semester:"First Semester",year:"1448",includeKey:false});
   const [examExportBusy,setExamExportBusy]=useState("");
+  const [formsViewer,setFormsViewer]=useState(null);
+  const [formsViewerIndex,setFormsViewerIndex]=useState(0);
   const [mergeModal,setMergeModal]=useState(false);
   const [mergeMsg,setMergeMsg]=useState("");
   const [viewAsOpen,setViewAsOpen]=useState(false);
@@ -11840,8 +11842,31 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   }
   function examModelsFor(quiz){
     if(!quiz)return [];
-    const rows=quiz.modelGroupId?myQuizzes.filter(q=>q.modelGroupId===quiz.modelGroupId):[quiz];
-    return rows.slice().sort((a,b)=>String(a.modelLabel||"").localeCompare(String(b.modelLabel||"")));
+    let rows=quiz.modelGroupId?myQuizzes.filter(q=>String(q.modelGroupId||"")===String(quiz.modelGroupId)):[quiz];
+    const seen=new Set();
+    rows=rows.filter(q=>{const k=String(q.id||"");if(!k||seen.has(k))return false;seen.add(k);return true;}).slice().sort((a,b)=>String(a.modelLabel||"").localeCompare(String(b.modelLabel||"")));
+    const declared=Math.max(0,Number(quiz.modelCount)||0);
+    return declared?rows.slice(0,declared):rows;
+  }
+  function formAssignedStudents(form){
+    const ids=new Set((form&&Array.isArray(form.assignedStudents)?form.assignedStudents:[]).map(x=>String(x)));
+    return myStudents.filter(st=>[st.id,st._id,st.studentId,st.studentNumber].filter(Boolean).some(x=>ids.has(String(x))));
+  }
+  async function moveStudentToForm(groupQuiz,student,targetFormId){
+    const forms=examModelsFor(groupQuiz), keys=new Set(qaStudentKeys(student));
+    for(const f of forms){
+      let arr=(Array.isArray(f.assignedStudents)?f.assignedStudents:[]).map(String).filter(x=>!keys.has(x));
+      if(String(f.id)===String(targetFormId))arr.push(String(student.id||student._id||student.studentId));
+      await fsSet("quizzes",f.id,{...f,assignedStudents:Array.from(new Set(arr)),updatedAt:today()});
+    }
+    await reload();
+    setQaMsg("✅ Student moved to the selected form. Previous attempts were kept.");
+  }
+  async function qaRetakeWithForm(groupQuiz,student,targetFormId){
+    const forms=examModelsFor(groupQuiz),target=forms.find(f=>String(f.id)===String(targetFormId));if(!target)return;
+    await moveStudentToForm(groupQuiz,student,target.id);
+    await qaAllowRetake(target,[student]);
+    setQaMsg("✅ Retake allowed on Form "+(target.modelLabel||"")+"; previous attempt remains saved.");
   }
   function examEsc(v){return String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;");}
   function examHtml(quiz,form){
@@ -12643,7 +12668,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v306" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v308" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -13064,11 +13089,11 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
                     <div style={{width:"36px",height:"36px",borderRadius:"8px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q{quiz.modelGroupId?" · "+(quiz.modelCount||myQuizzes.filter(q=>q.modelGroupId===quiz.modelGroupId).length)+" Forms":""} · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}{quiz.modelLabel?" · Model "+quiz.modelLabel:""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
+                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length} Questions{quiz.modelGroupId?" · "+examModelsFor(quiz).length+" Forms":""} · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
-                      <Btn size="sm" color={C.w} onClick={()=>{setQuizAttemptsAdmin(quiz);setQaClass("all");setQaSelected({});setQaMsg("");}}>🔄 Attempts</Btn>
+                      <Btn size="sm" color={C.w} onClick={()=>{setQuizAttemptsAdmin(quiz);setQaClass("all");setQaSelected({});setQaMsg("");}}>🔄 Attempts</Btn>{quiz.modelGroupId&&<Btn size="sm" color="#0369a1" onClick={()=>{setFormsViewer(quiz);setFormsViewerIndex(0);}}>📚 View Forms ({examModelsFor(quiz).length})</Btn>}
                       <Btn size="sm" color="#0f766e" onClick={()=>{const base=quiz.modelGroupTitle||quiz.title||"Quiz";const m=String(base).match(/quiz\s*\d+/i);setExamExportForm({school:"ثانوية الشعبة",quiz:m?m[0]:base.replace(/\s*[—-]\s*Model\s*[A-Z0-9]+.*$/i,"")||"Quiz 1",semester:"First Semester",year:"1448",includeKey:false});setExamExport(quiz);}}>📄 Export Exam</Btn>
                       <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
                       <Btn size="sm" color="#475569" onClick={()=>duplicateQuiz(quiz)}>📄 Duplicate</Btn>
@@ -13349,6 +13374,18 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <Btn onClick={saveEditStudent} style={{width:"100%"}}>💾 Save Changes</Btn>
         </div>}
       </Modal>
+      <Modal open={!!formsViewer} onClose={()=>{setFormsViewer(null);setFormsViewerIndex(0);}} title={"📚 "+(formsViewer?(formsViewer.modelGroupTitle||formsViewer.title||"Quiz"):"Quiz")+" — Forms"}>
+        {formsViewer&&(()=>{const forms=examModelsFor(formsViewer),idx=Math.min(formsViewerIndex,Math.max(0,forms.length-1)),m=forms[idx];return <div style={{fontFamily:F}}>
+          <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"10px",padding:"10px",marginBottom:"10px"}}><b>{formsViewer.modelGroupTitle||formsViewer.title}</b><div style={{fontSize:"11px",color:C.mu,marginTop:"3px"}}>{forms.length} Forms · {m?(m.questions||[]).length:0} Questions per form</div></div>
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"10px"}}>{forms.map((f,i)=><Btn key={f.id||i} size="sm" color={i===idx?C.p:"#64748b"} onClick={()=>setFormsViewerIndex(i)}>Form {f.modelLabel||String.fromCharCode(65+i)} ({formAssignedStudents(f).length})</Btn>)}</div>
+          {m&&<div><div style={{fontWeight:"900",fontSize:"14px",marginBottom:"8px"}}>Form {m.modelLabel||String.fromCharCode(65+idx)} — {(m.questions||[]).length} Questions · {formAssignedStudents(m).length} Students</div>
+            <details style={{marginBottom:"9px"}}><summary style={{cursor:"pointer",fontSize:"11px",fontWeight:"900",color:C.p}}>👥 Students ({formAssignedStudents(m).length})</summary>
+              <div style={{marginTop:"6px"}}>{formAssignedStudents(m).map(st=><div key={st.id||st.studentId} style={{display:"flex",gap:"7px",alignItems:"center",padding:"6px 0",borderTop:"1px solid "+C.br}}><span style={{flex:1,fontSize:"11px"}}><b>{st.name}</b> · {st.studentId}</span><select value={m.id} onChange={async e=>{await moveStudentToForm(formsViewer,st,e.target.value);setFormsViewer(myQuizzes.find(q=>String(q.id)===String(formsViewer.id))||formsViewer);}} style={{padding:"5px",border:"1px solid "+C.br,borderRadius:"6px"}}>{forms.map((f,fi)=><option key={f.id} value={f.id}>Form {f.modelLabel||String.fromCharCode(65+fi)}</option>)}</select></div>)}</div>
+            </details>
+            {(m.questions||[]).map((q,qi)=><div key={q.id||qi} style={{border:"1px solid "+C.br,borderRadius:"9px",padding:"9px",marginBottom:"7px"}}><div style={{fontWeight:"800",fontSize:"12px",marginBottom:"5px"}}>{qi+1}. {q.text}</div>{(q.options||[]).map((o,oi)=><div key={oi} style={{fontSize:"11px",padding:"2px 0"}}><b>{String.fromCharCode(65+oi)}.</b> {o}</div>)}</div>)}</div>}
+          <div style={{marginTop:"10px",padding:"8px",borderRadius:"8px",background:"#f8fafc",fontSize:"10px",color:C.mu}}>Read-only preview — viewing a form never creates, duplicates, regenerates, or saves a quiz.</div>
+        </div>})()}
+      </Modal>
       <Modal open={!!examExport} onClose={()=>!examExportBusy&&setExamExport(null)} title="📄 Export Exam — PDF / Word">
         {examExport&&<div style={{fontFamily:F}}>
           <div style={{fontSize:"11px",color:C.mu,marginBottom:"9px"}}>All fields below are editable. Student copies do not show Form A/B/C. If an answer key is included, form labels appear only in the teacher key.</div>
@@ -13385,16 +13422,17 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
             <div style={{maxHeight:"430px",overflowY:"auto"}}>
               {classStudents.map(st=>{
                 const k=String(st.id||st._id||st.studentId||"");
-                const rs=qaResponsesFor(quiz,st).slice().sort((a,b)=>String(b.completedAt||b.ts||"").localeCompare(String(a.completedAt||a.ts||"")));
+                const groupForms=examModelsFor(quiz), groupIds=new Set(groupForms.map(f=>String(f.id)));
+                const rs=(data.responses||[]).filter(r=>groupIds.has(String(r.quizId))&&responseBelongsToStudent(r,st)).slice().sort((a,b)=>String(b.completedAt||b.ts||"").localeCompare(String(a.completedAt||a.ts||"")));
                 const cls=eqResolveClassForStudent(st,myClasses);
                 return <div key={k} style={{border:"1px solid "+C.br,borderRadius:"9px",padding:"8px",marginBottom:"7px",background:qaSelected[k]?"#eff6ff":"#fff"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"7px"}}>
                     <input type="checkbox" checked={!!qaSelected[k]} onChange={()=>toggle(st)}/>
                     <div style={{flex:1,minWidth:0}}><b style={{fontSize:"12px",color:C.tx}}>{st.name}</b><div style={{fontSize:"9px",color:C.mu}}>ID: {st.studentId||"—"} · {cls?.name||"—"} · Attempts: {rs.length}</div></div>
-                    <Btn size="sm" color={C.s} onClick={()=>qaAllowRetake(quiz,[st])}>🔄 +1</Btn>
+                    {quiz.modelGroupId?<select defaultValue="" onChange={async e=>{if(e.target.value){await qaRetakeWithForm(quiz,st,e.target.value);e.target.value="";}} style={{padding:"6px",border:"1px solid "+C.br,borderRadius:"7px",fontSize:"10px"}}><option value="">🔄 Retake Form…</option>{groupForms.map((f,fi)=><option key={f.id} value={f.id}>Form {f.modelLabel||String.fromCharCode(65+fi)}</option>)}</select>:<Btn size="sm" color={C.s} onClick={()=>qaAllowRetake(quiz,[st])}>🔄 +1</Btn>}
                   </div>
                   {rs.length>0&&<details style={{marginTop:"6px"}}><summary style={{cursor:"pointer",fontSize:"10px",fontWeight:"800",color:C.p}}>View attempts ({rs.length})</summary>
-                    <div style={{marginTop:"5px"}}>{rs.map((r,idx)=>{const p=pct(r.score,r.totalQ);return <div key={r.id} style={{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderTop:"1px solid "+C.br,fontSize:"10px"}}><span style={{flex:1}}>Attempt #{r.attempt||idx+1} · {r.completedAt||""} · <b style={{color:gc(p)}}>{p}%</b></span><button onClick={()=>qaDeleteOneAttempt(r,st.name)} style={{border:"none",background:"none",cursor:"pointer",fontSize:"14px"}}>🗑</button></div>;})}</div>
+                    <div style={{marginTop:"5px"}}>{rs.map((r,idx)=>{const p=pct(r.score,r.totalQ);return <div key={r.id} style={{display:"flex",alignItems:"center",gap:"6px",padding:"5px 0",borderTop:"1px solid "+C.br,fontSize:"10px"}}><span style={{flex:1}}>Attempt #{r.attempt||idx+1}{(r.modelLabel||(groupForms.find(f=>String(f.id)===String(r.quizId))||{}).modelLabel)?" · Form "+(r.modelLabel||(groupForms.find(f=>String(f.id)===String(r.quizId))||{}).modelLabel):""} · {r.completedAt||""} · <b style={{color:gc(p)}}>{p}%</b></span><button onClick={()=>qaDeleteOneAttempt(r,st.name)} style={{border:"none",background:"none",cursor:"pointer",fontSize:"14px"}}>🗑</button></div>;})}</div>
                   </details>}
                 </div>;
               })}
