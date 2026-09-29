@@ -3690,8 +3690,19 @@ function Landing({onLogin, prefillQuiz}) {
       setErr("تم حذف حساب الطالب من المنصة. تواصل مع المعلم.\nYour student account has been removed. Please contact your teacher.");setLoading(false);return;
     }
     // Student login is allowed only for active Firebase students, not PRELOADED_USERS.
-    const u = activeReimportedStudent || firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && (u.studentId||"").toLowerCase()===id);
+    let u = activeReimportedStudent || firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && eqDigits(u.studentId||u.studentNumber||u.id||"")===idDigits);
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
+    // v302: after Move/Reorder, the CURRENT 4-digit school number is authoritative for the class.
+    // Example 32xx => class_3_2. Repair a stale old classId instead of rejecting the student.
+    if(idDigits && idDigits.length>=4){
+      const inferredClass=canonicalClassId("class_"+idDigits.charAt(0)+"_"+idDigits.charAt(1));
+      if(inferredClass && sameClassId(inferredClass,f.classId) && !sameClassId(u.classId||u.className||u.class||"",f.classId)){
+        try{
+          u={...u,classId:inferredClass,className:(activeLoginClassesFromData(d).find(c=>sameClassId(c.id||c.classId,inferredClass))||{}).name||u.className||"",updatedAt:today()};
+          await fsSet("users",String(u.id||("student_"+idDigits)),u);
+        }catch(_classRepairErr){}
+      }
+    }
     const cid=canonicalClassId(u.classId||u.className||u.class||"");
     // LOGIN_ROSTER_FALLBACK_267: an ACTIVE current student row wins over stale class tombstones.
     // The live login-class list below is the final authority.
@@ -3700,8 +3711,12 @@ function Landing({onLogin, prefillQuiz}) {
       setErr("هذا الفصل غير موجود في Classes حاليًا. تواصل مع المعلم.\nThis class is not currently active in Classes.");
       setLoading(false);return;
     }
-    if(!sameClassId(u.classId, f.classId)){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
-    if(!studentNameMatches(u, f.name)){setErr("Name does not match this Student ID. You may enter your full name or first two names.");setLoading(false);return;}
+    if(!sameClassId(u.classId||u.className||u.class, f.classId)){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
+    // v302: do not block an active student with an exact current ID because of spelling/spacing
+    // differences in the typed name. ID + current class + password remain the login checks.
+    if(!studentNameMatches(u, f.name)){
+      try{ console.warn("EduQuiz v302: login name differs from roster", f.name, u.name, u.studentId); }catch(_e){}
+    }
     if(String(u.password||"") !== String(f.password)){
       const enteredCurrentDefault=String(f.password||"")===String(u.studentId||"");
       const storedLooksLikeOldDefault=/^\d{4}$/.test(String(u.password||""));
@@ -5660,6 +5675,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false,skip10:false}); }
   const [err,setErr]=useState(""),[preview,setPreview]=useState(null),[showImport,setShowImport]=useState(false),[showPaste,setShowPaste]=useState(false),[csvPaste,setCsvPaste]=useState("");
   const [showModels,setShowModels]=useState(()=>{try{const x=sessionStorage.getItem("eq_open_multiple_models")==="1";sessionStorage.removeItem("eq_open_multiple_models");return x;}catch(_e){return false;}}),[modelBank,setModelBank]=useState([]),[modelMsg,setModelMsg]=useState("");
+  const [modelBusy,setModelBusy]=useState(false);
   const [modelCountCQ,setModelCountCQ]=useState(4),[modelQuestionCount,setModelQuestionCount]=useState(20),[modelUnits,setModelUnits]=useState([]);
   const modelFileRef=useRef();
   const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
@@ -5974,6 +5990,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     return result;
   }
   async function createModelsFromCreateQuiz(){
+    if(modelBusy)return;
     if(!title.trim()){setModelMsg("⚠️ Add the Quiz Title above first.");return}
     if(!modelBank.length){setModelMsg("⚠️ Import the Excel question bank first.");return}
     if(!modelUnits.length){setModelMsg("⚠️ Select at least one Unit.");return}
@@ -5986,7 +6003,9 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     const target=visibility==="private"?students.filter(st=>assignedStudents.includes(st.id)):students.filter(st=>classIds.some(cid=>sameClassId(cid,st.classId||st.className||st.class)));
     if(!target.length){setModelMsg("⚠️ No students found in the selected assignment.");return}
     const groupId="modelgrp_"+uid(),usage={};
+    setModelBusy(true);
     setModelMsg("Creating balanced models...");
+    try{
     for(let mi=0;mi<n;mi++){
       const label=String.fromCharCode(65+mi),chosen=balancedModelQuestions(pool,qn,mi,usage);
       const assigned=target.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
@@ -5994,8 +6013,11 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
       const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim(),type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
       await fsSet("quizzes",quiz.id,quiz);
     }
-    setModelMsg("✅ Created "+n+" models and distributed them across "+target.length+" students. Each model has "+qn/2+" Grammar + "+qn/2+" Vocabulary.");
-    setTimeout(()=>onSave&&onSave(),900);
+    setModelMsg("✅ Saved one Multiple Forms quiz with "+n+" forms and distributed them across "+target.length+" students. Each form has "+qn/2+" Grammar + "+qn/2+" Vocabulary.");
+    setTimeout(()=>{ if(onBack) onBack(); },700);
+    }catch(ex){
+      setModelMsg("⚠️ Save failed: "+(ex&&ex.message?ex.message:ex));
+    }finally{ setModelBusy(false); }
   }
   function handleFile(e){
     const file=e.target.files[0];if(!file)return;setErr("");setPreview(null);
@@ -6020,6 +6042,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   }
   function applyPreview(){setQuestions(preview);setPreview(null);setShowImport(false);setShowPaste(false);setCsvPaste("");}
   function save(){
+    if(showModels && modelBank.length){ createModelsFromCreateQuiz(); return; }
     if(!title.trim()){setErr("⚠️ Add a quiz title.");window.scrollTo(0,0);return;}
     let valid;
     if(type==="Image Labeling"){
@@ -6444,7 +6467,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <b style={{fontSize:"11px",fontFamily:F}}>Units</b>
               <div style={{display:"flex",gap:"5px",flexWrap:"wrap",margin:"6px 0 9px"}}>{Array.from(new Set(modelBank.map(x=>x.unit))).map(u=><label key={u} style={{fontSize:"11px",padding:"5px 7px",border:"1px solid "+C.br,borderRadius:"7px",background:modelUnits.includes(u)?"#ccfbf1":"#fff"}}><input type="checkbox" checked={modelUnits.includes(u)} onChange={e=>setModelUnits(e.target.checked?[...modelUnits,u]:modelUnits.filter(x=>x!==u))}/> {u}</label>)}</div>
               <div style={{fontSize:"10px",color:C.mu,fontFamily:F,marginBottom:"8px"}}>Uses the class/student selection above. Models A/B/C… are distributed automatically. Grammar and Vocabulary are kept equal, and Units are balanced as closely as possible. Existing Shuffle for students remains active.</div>
-              <Btn color="#0f766e" onClick={createModelsFromCreateQuiz}>✨ Create & Assign Models</Btn>
+              <Btn color="#0f766e" disabled={modelBusy} onClick={createModelsFromCreateQuiz}>{modelBusy?"⏳ Saving Forms...":"✨ Save Multiple Forms Quiz"}</Btn>
             </div>}
           </div>}
         </Card>
@@ -8288,20 +8311,14 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
       try{
         const rawDraft=localStorage.getItem(draftKey());
         if(rawDraft){
-          const draft=JSON.parse(rawDraft);
-          if(draft&&draft.records){
-            const savedJson=JSON.stringify(init);
-            const draftJson=JSON.stringify(draft.records);
-            if(draftJson!==savedJson){
-              const ok=window.confirm("يوجد عمل غير محفوظ لهذا اليوم. هل تريد استرجاعه؟");
-              if(ok){ nextRecords={...init,...draft.records}; setAutosaveMsg("🟡 تم استرجاع مسودة — سيتم حفظها تلقائيًا"); }
-              else { localStorage.removeItem(draftKey()); }
-            }
-          }
+          // v302: class/date navigation must not repeatedly show an "unsaved work" dialog.
+          // Autosave is authoritative; stale local drafts are removed after the saved Firebase row is loaded.
+          localStorage.removeItem(draftKey());
         }
       }catch(e){}
+      lastDailySavedRef.current=JSON.stringify(nextRecords);
       setRecords(nextRecords);
-      lastDailySavedRef.current=JSON.stringify(init);
+      setAutosaveMsg("✅ محفوظ");
       setTimeout(function(){ autosaveSuppressRef.current=false; },350);
     }catch(e){setMsg("⚠️ لم أستطع تحميل سجلات المتابعة.");}
     setLoading(false);
@@ -12598,7 +12615,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v301" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v302" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
