@@ -3715,13 +3715,20 @@ function Landing({onLogin, prefillQuiz}) {
     // v302: do not block an active student with an exact current ID because of spelling/spacing
     // differences in the typed name. ID + current class + password remain the login checks.
     if(!studentNameMatches(u, f.name)){
-      try{ console.warn("EduQuiz v302: login name differs from roster", f.name, u.name, u.studentId); }catch(_e){}
+      try{ console.warn("EduQuiz v303: login name differs from roster", f.name, u.name, u.studentId); }catch(_e){}
     }
     if(String(u.password||"") !== String(f.password)){
-      const enteredCurrentDefault=String(f.password||"")===String(u.studentId||"");
-      const storedLooksLikeOldDefault=/^\d{4}$/.test(String(u.password||""));
-      if(enteredCurrentDefault && storedLooksLikeOldDefault){
-        try{u.password=String(u.studentId||"");u.updatedAt=today();await fsSet("users",String(u.id||("student_"+u.studentId)),u);}catch(_repairPassErr){}
+      const enteredCurrentDefault=eqDigits(f.password||"")===eqDigits(u.studentId||"") && !!eqDigits(u.studentId||"");
+      // v303 GLOBAL rule: a student's CURRENT active school number remains a valid default password
+      // after any move/add/reorder in any class. Repair the stored default instead of breaking login.
+      if(enteredCurrentDefault){
+        try{
+          const oldPass=String(u.password||"");
+          u={...u,password:String(u.studentId||""),passwordTracksStudentId:true,
+             previousLoginIds:Array.from(new Set([...(Array.isArray(u.previousLoginIds)?u.previousLoginIds:[]),oldPass].filter(x=>/^\d{4,}$/.test(String(x))))),
+             updatedAt:today()};
+          await fsSet("users",String(u.id||("student_"+u.studentId)),u);
+        }catch(_repairPassErr){}
       }else{setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
     }
     saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
@@ -12311,14 +12318,35 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       const conflict=allActive.find(function(u){return !classDocIds.has(String(u.id||u._id||""))&&eqDigits(u.studentId||"")===x.newSid;});
       if(conflict)throw new Error("Student ID "+x.newSid+" is already used by "+(conflict.name||"another student")+".");
     }
+
+    // v303: stable document id is the student's identity. School number is mutable metadata.
+    // First update ALL user rows. Do not rewrite related records one-by-one yet, because
+    // 3225->3226 and 3226->3227 would otherwise collide and cascade.
     for(const x of planned){
       const docId=String(x.st.id||x.st._id||("student_"+x.oldSid));
       const oldPassword=String(x.st.password||"");
-      const updated={...x.st,id:docId,studentId:x.newSid,classId:cls.id,className:cls.name||"",classRosterToken:(cls.rosterToken||""),updatedAt:today()};
-      if(!oldPassword || oldPassword===String(x.oldSid||"")) updated.password=x.newSid;
+      const aliases=Array.from(new Set([...(Array.isArray(x.st.previousStudentIds)?x.st.previousStudentIds:[]),x.oldSid].filter(Boolean)));
+      const updated={...x.st,id:docId,studentId:x.newSid,classId:cls.id,className:cls.name||"",
+        classRosterToken:(cls.rosterToken||""),previousStudentIds:aliases,updatedAt:today()};
+      const tracks=(x.st.passwordTracksStudentId===true)||!oldPassword||oldPassword===String(x.oldSid||"")||/^\d{4}$/.test(oldPassword);
+      if(tracks){updated.password=x.newSid;updated.passwordTracksStudentId=true;}
       delete updated._id;
       await fsSet("users",docId,updated);
-      if(x.oldSid&&x.oldSid!==x.newSid)await eqUpdateStudentNumberReferences(x.oldSid,x.newSid,docId);
+    }
+
+    // Update legacy school-number references from an immutable old->new map in one pass.
+    const remap={}; planned.forEach(x=>{if(x.oldSid&&x.oldSid!==x.newSid)remap[x.oldSid]=x.newSid;});
+    const cols=["responses","readingSubmissions","readingAttemptResets","readingTheoryResponses","projectSubmissions","gradebook","notes"];
+    const fields=["studentNumber","student_id","schoolStudentId","studentSchoolId"];
+    for(const col of cols){
+      let rr=[];try{rr=await fsAll(col);}catch(_e){rr=[];}
+      for(const r of (rr||[])){
+        let hit=false,next={...r};
+        fields.forEach(function(f){const old=eqDigits(r&&r[f]||"");if(remap[old]){next[f]=remap[old];hit=true;}});
+        const legacy=eqDigits(r&&r.studentId||"");
+        if(remap[legacy] && !classDocIds.has(String(r&&r.studentId||""))){next.studentId=remap[legacy];hit=true;}
+        if(hit){try{await fsSet(col,r.id||r._id,next);}catch(_e){}}
+      }
     }
     try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
     return planned;
@@ -12349,9 +12377,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     }
     const oldSid=eqDigits(editStu.studentId||"");
     const targetCls=(myClasses||[]).find(c=>sameClassId(c.id||c.classId||c.grade||c.name,targetClass));
-    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,classRosterToken:(targetCls&&targetCls.rosterToken)||"",email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),updatedAt:today()};
-    if((!editStu.password || String(editStu.password)===String(oldSid)) && !esForm.password.trim()) updated.password=typedSid;
-    if(esForm.password.trim()) updated.password=esForm.password.trim();
+    const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,classRosterToken:(targetCls&&targetCls.rosterToken)||"",email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),previousStudentIds:Array.from(new Set([...(Array.isArray(editStu.previousStudentIds)?editStu.previousStudentIds:[]),oldSid].filter(Boolean))),updatedAt:today()};
+    if((editStu.passwordTracksStudentId===true || !editStu.password || String(editStu.password)===String(oldSid) || /^\d{4}$/.test(String(editStu.password||""))) && !esForm.password.trim()){ updated.password=typedSid; updated.passwordTracksStudentId=true; }
+    if(esForm.password.trim()){ updated.password=esForm.password.trim(); updated.passwordTracksStudentId=(String(esForm.password.trim())===String(typedSid)); }
     await fsSet("users",editStu.id,updated);
     if(oldSid&&oldSid!==typedSid)await eqUpdateStudentNumberReferences(oldSid,typedSid,editStu.id);
     const planned=await eqReorderAndRenumberClass(targetClass,updated);
@@ -12410,7 +12438,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     }
     const id="student_"+sid;
     setAddStuMsg("⏳ Adding student... please wait.");
-    await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,classRosterToken:(cls.rosterToken||""),password:pass||sid,createdAt:today()});
+    await fsSet("users",id,{id,role:"student",name,shortName:name.split(/\s+/).slice(0,2).join(" "),studentId:sid,classId:cls.id,classRosterToken:(cls.rosterToken||""),password:pass||sid,passwordTracksStudentId:(!addStuForm.password||String(pass)===String(sid)),previousStudentIds:[],createdAt:today()});
     setAddStuMsg("✅ Student added."); await reload(); setTimeout(()=>setAddStuModal(null),600);
   }
   function validLiveClassRow(cls){
@@ -12615,7 +12643,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v302" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v303" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
