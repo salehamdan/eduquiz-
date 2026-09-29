@@ -3692,18 +3692,7 @@ function Landing({onLogin, prefillQuiz}) {
     // Student login is allowed only for active Firebase students, not PRELOADED_USERS.
     let u = activeReimportedStudent || firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && eqDigits(u.studentId||u.studentNumber||u.id||"")===idDigits);
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
-    // v302: after Move/Reorder, the CURRENT 4-digit school number is authoritative for the class.
-    // Example 32xx => class_3_2. Repair a stale old classId instead of rejecting the student.
-    if(idDigits && idDigits.length>=4){
-      const inferredClass=canonicalClassId("class_"+idDigits.charAt(0)+"_"+idDigits.charAt(1));
-      if(inferredClass && sameClassId(inferredClass,f.classId) && !sameClassId(u.classId||u.className||u.class||"",f.classId)){
-        try{
-          u={...u,classId:inferredClass,className:(activeLoginClassesFromData(d).find(c=>sameClassId(c.id||c.classId,inferredClass))||{}).name||u.className||"",updatedAt:today()};
-          await fsSet("users",String(u.id||("student_"+idDigits)),u);
-        }catch(_classRepairErr){}
-      }
-    }
-    const cid=canonicalClassId(u.classId||u.className||u.class||"");
+    // v304 SECURITY: login never mutates identity/class mappings.\n    const cid=canonicalClassId(u.classId||u.className||u.class||"");
     // LOGIN_ROSTER_FALLBACK_267: an ACTIVE current student row wins over stale class tombstones.
     // The live login-class list below is the final authority.
     const liveLoginClasses=activeLoginClassesFromData(d);
@@ -3712,26 +3701,7 @@ function Landing({onLogin, prefillQuiz}) {
       setLoading(false);return;
     }
     if(!sameClassId(u.classId||u.className||u.class, f.classId)){setErr("The selected class does not match this Student ID.");setLoading(false);return;}
-    // v302: do not block an active student with an exact current ID because of spelling/spacing
-    // differences in the typed name. ID + current class + password remain the login checks.
-    if(!studentNameMatches(u, f.name)){
-      try{ console.warn("EduQuiz v303: login name differs from roster", f.name, u.name, u.studentId); }catch(_e){}
-    }
-    if(String(u.password||"") !== String(f.password)){
-      const enteredCurrentDefault=eqDigits(f.password||"")===eqDigits(u.studentId||"") && !!eqDigits(u.studentId||"");
-      // v303 GLOBAL rule: a student's CURRENT active school number remains a valid default password
-      // after any move/add/reorder in any class. Repair the stored default instead of breaking login.
-      if(enteredCurrentDefault){
-        try{
-          const oldPass=String(u.password||"");
-          u={...u,password:String(u.studentId||""),passwordTracksStudentId:true,
-             previousLoginIds:Array.from(new Set([...(Array.isArray(u.previousLoginIds)?u.previousLoginIds:[]),oldPass].filter(x=>/^\d{4,}$/.test(String(x))))),
-             updatedAt:today()};
-          await fsSet("users",String(u.id||("student_"+u.studentId)),u);
-        }catch(_repairPassErr){}
-      }else{setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
-    }
-    saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
+    // v304 SECURITY: strict current name + ID match.\n    if(!studentNameMatches(u,f.name)){setErr("Student ID does not match the student name. Ask your teacher to repair this account.");setLoading(false);return;}\n    if(String(u.password||"") !== String(f.password)){setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}\n    saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
     saveSession(u); onLogin(u); setLoading(false);
   }
   async function doStudentReg() {
@@ -12351,6 +12321,15 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
     return planned;
   }
+  async function repairClass32LoginAccounts(){
+    const cls=(myClasses||[]).find(c=>sameClassId(c.id||c.classId||c.name,"class_3_2"));if(!cls)throw new Error("Class 3-2 was not found.");
+    const roster=(myStudents||[]).filter(st=>sameClassId(st.classId||st.className||st.class||"",cls.id)&&st.deleted!==true&&String(st.status||"").toLowerCase()!=="deleted");if(!roster.length)throw new Error("Class 3-2 has no current roster students.");
+    let live=[];try{live=await fsAll("users");}catch(_e){}
+    const currentIds=new Set(roster.map(st=>eqDigits(st.studentId||st.studentNumber||"")).filter(Boolean)),bySid={};(live||[]).forEach(u=>{const sid=eqDigits(u&&u.studentId||u&&u.studentNumber||"");if(sid)(bySid[sid]||(bySid[sid]=[])).push(u);});
+    for(const st of roster){const sid=eqDigits(st.studentId||st.studentNumber||"");if(!sid)continue;const candidates=(bySid[sid]||[]).filter(u=>String(u.role||"").toLowerCase()==="student");let u=candidates.find(u=>String(u.id||u._id||"")===String(st.id||st._id||""))||candidates.find(u=>studentNameMatches(u,st.name||st.shortName||""))||st;const docId=String(st.id||st._id||u.id||u._id||("student_"+sid));const clean={...u,...st,id:docId,role:"student",studentId:sid,classId:cls.id,className:cls.name||st.className||"",classRosterToken:cls.rosterToken||st.classRosterToken||"",password:sid,passwordTracksStudentId:true,previousStudentIds:[],previousLoginIds:[],deleted:false,status:"active",updatedAt:today()};delete clean._id;await fsSet("users",docId,clean);for(const dupe of candidates){const did=String(dupe.id||dupe._id||"");if(did&&did!==docId)await fsSet("users",did,{...dupe,deleted:true,status:"superseded",studentId:"legacy_"+sid+"_"+did,classId:"",updatedAt:today()});}}
+    for(const u of (live||[])){const sid=eqDigits(u&&u.studentId||u&&u.studentNumber||"");if(String(u&&u.role||"").toLowerCase()==="student"&&/^32\d{2}$/.test(sid)&&!currentIds.has(sid)&&sameClassId(u.classId||u.className||u.class||"","class_3_2")){const did=String(u.id||u._id||"");if(did)await fsSet("users",did,{...u,deleted:true,status:"superseded",studentId:"legacy_"+sid+"_"+did,classId:"",updatedAt:today()});}}
+    try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}return roster.length;
+  }
   async function reorderAndRenumberClass(cls){
     if(!cls)return;
     if(!window.confirm("سيتم ترتيب طلاب "+(cls.name||cls.id)+" أبجديًا وإعادة ترقيمهم تلقائيًا من 01.\nلن يتم حذف الطالب أو نتائجه. متابعة؟"))return;
@@ -12643,7 +12622,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v303" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v304" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -13096,7 +13075,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:"11px"}}><strong style={{fontSize:"13px",color:C.tx,fontFamily:F}}>My Classes ({myClasses.length})</strong><Btn size="sm" color={C.s} onClick={()=>setClsModal(true)}>+ Add Class</Btn></div>
           {myClasses.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No classes yet.</p></Card>
           :myClasses.map(cls=>{const studs=myStudents.filter(s=>s.classId===cls.id);const rs=data.responses.filter(r=>studs.some(s=>responseBelongsToStudent(r,s)));const avg=rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):null;
-            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.i} onClick={()=>reorderAndRenumberClass(cls)}>🔤 Reorder & Renumber</Btn><Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
+            return <Card key={cls.id} style={{marginBottom:"9px"}}><details><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:C.tx,fontFamily:F,padding:"4px 0"}}>{cls.name} <span style={{fontSize:"11px",color:C.mu}}>— {studs.length} طالب</span></summary><div style={{marginTop:"10px",marginBottom:"9px"}}><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>{cls.grade}{avg!==null?" · Avg: "+avg+"%":""}</div><div style={{display:"flex",gap:"6px",marginTop:"7px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={()=>setManageClass(cls)}>⚙️ Manage</Btn><Btn size="sm" color={C.s} onClick={()=>addStudentToClass(cls)}>➕ Add Student</Btn><Btn size="sm" color={C.pu} onClick={()=>editClass(cls)}>✏️ Edit Class</Btn><Btn size="sm" color={C.i} onClick={()=>reorderAndRenumberClass(cls)}>🔤 Reorder & Renumber</Btn>{sameClassId(cls.id||cls.classId||cls.name,"class_3_2")&&<Btn size="sm" color="#b45309" onClick={async()=>{if(!confirm("Repair login accounts for Third Second only? Passwords reset to CURRENT Student ID. Results/submissions are not deleted."))return;try{const n=await repairClass32LoginAccounts();alert("✅ Repaired "+n+" Third Second login accounts.");}catch(e){alert("⚠️ "+(e.message||e));}}}>🛡️ Repair 3-2 Logins</Btn>}<Btn size="sm" color={C.d} onClick={()=>deleteClassStudentsSafe(cls)}>🗑 Permanent Delete Students</Btn><Btn size="sm" color="#7f1d1d" onClick={()=>deleteClassOnlySafe(cls)}>🗑 Delete Class</Btn></div></div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"6px"}}>{studs.map(s=>{const sRs=responsesForStudent(data.responses,s).filter(r=>myQuizzes.some(q=>q.id===r.quizId));const sAvg=sRs.length?Math.round(sRs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/sRs.length):null;const flagged=flags.find(f=>f.id===s.id);return <div key={s.id} style={{background:"#f8fafc",borderRadius:"7px",padding:"7px 9px",border:flagged?"2px solid "+C.d:"1px solid "+C.br}}><div style={{fontWeight:"700",fontSize:"12px",color:C.tx,fontFamily:F}}>{s.name}{flagged&&" 🚨"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{s.studentId}</div><div style={{fontSize:"11px",fontWeight:"700",color:sAvg!==null?gc(sAvg):C.mu,fontFamily:F}}>{sAvg!==null?sAvg+"%":"No data"}</div></div>;})}</div></details>
             </Card>;
           })}
