@@ -5652,7 +5652,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   const [reviewAnswers,setReviewAnswers]=useState(E.reviewAnswers!==false);
   const [gameTimerType,setGameTimerType]=useState(E.gameTimerType||"none");
   const [gameTimerSec,setGameTimerSec]=useState(E.gameTimerSec||20);
-  const [visibility,setVisibility]=useState(E.assignedStudents&&E.assignedStudents.length?"private":"classes");
+  const [visibility,setVisibility]=useState(E.assignmentMode==="classes"||((E.classIds||[]).length&&!E.assignmentMode)?"classes":"private");
   const [assignedStudents,setAssignedStudents]=useState(E.assignedStudents||[]);
   const [stuSearch,setStuSearch]=useState("");
   const [labelImage,setLabelImage]=useState(E.labelImage||"");
@@ -6090,7 +6090,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     const saveAssignedStudents=visibility==="private"?assignedStudents:[];
     const hasAudience=saveAssignedStudents.length>0 || (visibility==="classes" && saveClassIds.length>0);
     const saveStatus=hasAudience?((E.status==="closed")?"closed":"open"):"draft";
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today(),modelGroupId:E.modelGroupId||"",modelGroupTitle:E.modelGroupTitle||"",modelLabel:E.modelLabel||"",modelUnits:Array.isArray(E.modelUnits)?E.modelUnits:[],modelCount:Number(E.modelCount)||0});
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today(),modelGroupId:E.modelGroupId||"",modelGroupTitle:E.modelGroupTitle||"",modelLabel:E.modelLabel||"",modelUnits:Array.isArray(E.modelUnits)?E.modelUnits:[],modelCount:Number(E.modelCount)||0,assignmentMode:visibility});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -11782,8 +11782,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const current = fastPatchedQuiz(quiz);
     const siblings=current.modelGroupId?myQuizzes.filter(x=>String(x.modelGroupId||"")===String(current.modelGroupId)):[current];
     const wasOpen = siblings.some(x=>x.status==="open");
-    const audience=Array.from(new Set(siblings.flatMap(x=>Array.isArray(x.assignedStudents)?x.assignedStudents:[]).map(String)));
-    const editing = {...current, assignedStudents:audience, classIds:[], status: wasOpen ? "closed" : current.status};
+    const distributedAudience=Array.from(new Set(siblings.flatMap(x=>Array.isArray(x.assignedStudents)?x.assignedStudents:[]).map(String)));
+    const savedMode=siblings.map(x=>x.groupAssignmentMode||x.assignmentMode||"").find(Boolean)||((siblings.some(x=>(x.groupClassIds||x.classIds||[]).length))?"classes":"private");
+    const savedClasses=Array.from(new Set(siblings.flatMap(x=>Array.isArray(x.groupClassIds)?x.groupClassIds:(savedMode==="classes"&&Array.isArray(x.classIds)?x.classIds:[])).map(canonicalClassId).filter(Boolean)));
+    const savedStudents=Array.from(new Set(siblings.flatMap(x=>Array.isArray(x.groupStudentIds)?x.groupStudentIds:[]).map(String)));
+    const audience=savedMode==="private"?(savedStudents.length?savedStudents:distributedAudience):[];
+    const editing = {...current, assignmentMode:savedMode, assignedStudents:audience, classIds:savedMode==="classes"?savedClasses:[], status: wasOpen ? "closed" : current.status};
     setResumeAfterEdit(wasOpen);
     setEditingQuiz(editing);
     setView("edit");
@@ -11803,15 +11807,20 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     if(q.modelGroupId){
       const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(q.modelGroupId)).slice().sort((a,b)=>String(a.modelLabel||"").localeCompare(String(b.modelLabel||"")));
       if(!siblings.length){setQuizPerfMsg("⚠️ Existing forms were not found. Nothing was created.");setView(null);setEditingQuiz(null);setResumeAfterEdit(false);return;}
+      // v313: assignment is persistent group metadata; distribution to forms is separate.
       // Save updates existing form IDs only. It never creates a new form.
-      const audience=Array.from(new Set((q.assignedStudents||[]).map(String)));
+      const assignmentMode=q.assignmentMode==="classes"?"classes":"private";
+      const groupClassIds=assignmentMode==="classes"?Array.from(new Set((q.classIds||[]).map(canonicalClassId).filter(Boolean))):[];
+      const explicitStudents=assignmentMode==="private"?Array.from(new Set((q.assignedStudents||[]).map(String))):[];
+      const classStudents=assignmentMode==="classes"?myStudents.filter(st=>groupClassIds.some(cid=>sameClassId(cid,st.classId||st.className||st.class))).map(st=>String(st.id)):[];
+      const audience=assignmentMode==="classes"?Array.from(new Set(classStudents)):explicitStudents;
       const publish=audience.length>0;
       setQuizBusy(prev=>({...prev,[q.id]:true}));
-      setQuizPerfMsg(publish?"Publishing Multiple Forms quiz...":"Saving Multiple Forms quiz as private...");
+      setQuizPerfMsg(publish?"Saving assignment and publishing Multiple Forms quiz...":"Saving Multiple Forms quiz as private...");
       try{
         for(let i=0;i<siblings.length;i++){
           const x=siblings[i], assigned=publish?audience.filter((sid,idx)=>idx%siblings.length===i):[];
-          const next={...x,title:q.title||x.title,modelGroupTitle:q.title||x.modelGroupTitle,type:q.type,difficulty:q.difficulty,subject:q.subject,timer:q.timer,masteryThreshold:q.masteryThreshold,allowRetake:q.allowRetake,maxRetakes:q.maxRetakes,shuffle:q.shuffle,mode:q.mode,instantFeedback:q.instantFeedback,reviewAnswers:q.reviewAnswers,openDate:q.openDate,startDate:q.startDate,closeDate:q.closeDate,classIds:[],assignedStudents:assigned,status:publish?"open":"draft",updatedAt:today()};
+          const next={...x,title:q.title||x.title,modelGroupTitle:q.title||x.modelGroupTitle,type:q.type,difficulty:q.difficulty,subject:q.subject,timer:q.timer,masteryThreshold:q.masteryThreshold,allowRetake:q.allowRetake,maxRetakes:q.maxRetakes,shuffle:q.shuffle,mode:q.mode,instantFeedback:q.instantFeedback,reviewAnswers:q.reviewAnswers,openDate:q.openDate,startDate:q.startDate,closeDate:q.closeDate,classIds:[],assignedStudents:assigned,groupAssignmentMode:assignmentMode,groupClassIds,groupStudentIds:explicitStudents,status:publish?"open":"draft",updatedAt:today()};
           await fsSet("quizzes",x.id,next);
         }
         setQuizPerfMsg(publish?"✅ Published. Each selected student can see only one assigned form.":"🔒 Saved privately. No student can see this quiz.");
@@ -12716,7 +12725,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v312" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v313" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
@@ -13137,7 +13146,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                 return <Card key={quiz.id} style={{marginBottom:"8px",border:open?"2px solid "+C.p:"2px solid transparent"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"9px",flexWrap:"wrap"}}>
                     <div style={{width:"36px",height:"36px",borderRadius:"8px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",flexShrink:0}}>{icon}</div>
-                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length} Questions{quiz.modelGroupId?" · "+examModelsFor(quiz).length+" Forms":""} · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
+                    <div style={{flex:1,minWidth:"150px"}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{quiz.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.type} · {quiz.difficulty} · {quiz.questions.length} Questions{quiz.modelGroupId?" · "+examModelsFor(quiz).length+" Forms · 👥 "+Array.from(new Set(myQuizzes.filter(x=>String(x.modelGroupId||"")===String(quiz.modelGroupId)).flatMap(x=>Array.isArray(x.assignedStudents)?x.assignedStudents:[]).map(String))).length+" Assigned":""} · {rs.length} done{avg!==null?" · Avg:"+avg+"%":""}</div><span style={{fontSize:"10px",fontWeight:"700",color:quiz.status==="draft"?"#92400e":(quiz.status==="closed"?C.d:C.s),fontFamily:F}}>{quiz.status==="draft"?"🔒 عندي فقط — لم يُنشر":(quiz.status==="closed"?"🔒 Closed":"🟢 Open")} · Code: {quiz.code}</span></div>
                     <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
                       <Btn size="sm" color={C.s} disabled={quiz.status==="draft"} onClick={()=>setShareModal(quiz)}>{quiz.status==="draft"?"🔒 غير منشور":"🔗 Share"}</Btn>
                       <Btn size="sm" color={col} onClick={()=>setSelQuiz(open?null:quiz.id)}>📊</Btn>
@@ -13145,7 +13154,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
                       <Btn size="sm" color="#0f766e" onClick={()=>{const base=quiz.modelGroupTitle||quiz.title||"Quiz";const m=String(base).match(/quiz\s*\d+/i);setExamExportForm({school:"ثانوية الشعبة",quiz:m?m[0]:base.replace(/\s*[—-]\s*Model\s*[A-Z0-9]+.*$/i,"")||"Quiz 1",semester:"First Semester",year:"1448",includeKey:false});setExamExport(quiz);}}>📄 Export Exam</Btn>
                       <Btn size="sm" color={C.pu} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>✏️ Edit</Btn>
                       <Btn size="sm" color="#475569" onClick={()=>duplicateQuiz(quiz)}>📄 Duplicate</Btn>
-                      {quiz.status==="draft"?<Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>:<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}
+                      {quiz.modelGroupId?<><Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>{quiz.status!=="draft"&&<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}</>:quiz.status==="draft"?<Btn size="sm" color={C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>startEditQuiz(quiz)}>👥 تحديد الطلاب</Btn>:<Btn size="sm" color={quiz.status==="closed"?C.s:C.w} disabled={!!quizBusy[quiz.id]} onClick={()=>toggleQuiz(quiz)}>{quizBusy[quiz.id]?"Updating...":(quiz.status==="closed"?"Open":"Close")}</Btn>}
                       <Btn size="sm" color={C.d} onClick={()=>delQuiz(quiz.id)}>🗑</Btn>
                     </div>
                   </div>
