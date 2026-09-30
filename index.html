@@ -6001,26 +6001,22 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     if(!title.trim()){setModelMsg("⚠️ Add the Quiz Title above first.");return}
     if(!modelBank.length){setModelMsg("⚠️ Import the Excel question bank first.");return}
     if(!modelUnits.length){setModelMsg("⚠️ Select at least one Unit.");return}
-    if(visibility==="classes"&&!classIds.length){setModelMsg("⚠️ Select at least one class above.");return}
-    if(visibility==="private"&&!assignedStudents.length){setModelMsg("⚠️ Pick students above first.");return}
     const n=Math.max(1,Math.min(26,Number(modelCountCQ)||1)),qn=Math.max(2,Number(modelQuestionCount)||20);
     if(qn%2){setModelMsg("⚠️ Use an even question count so Grammar and Vocabulary are equal.");return}
     const pool=modelBank.filter(x=>modelUnits.includes(x.unit));
     if(pool.filter(x=>x.type==="Grammar").length<qn/2||pool.filter(x=>x.type==="Vocabulary").length<qn/2){setModelMsg("⚠️ Not enough Grammar/Vocabulary questions in the selected Units.");return}
-    const target=visibility==="private"?students.filter(st=>assignedStudents.includes(st.id)):students.filter(st=>classIds.some(cid=>sameClassId(cid,st.classId||st.className||st.class)));
-    if(!target.length){setModelMsg("⚠️ No students found in the selected assignment.");return}
     const groupId="modelgrp_"+uid(),usage={};
     setModelBusy(true);
     setModelMsg("Creating balanced models...");
     try{
     for(let mi=0;mi<n;mi++){
       const label=String.fromCharCode(65+mi),chosen=balancedModelQuestions(pool,qn,mi,usage);
-      const assigned=target.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
+      const assigned=[];
       const qq=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,difficulty:"Easy",unit:x.unit,bankId:x.bankId}));
-      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim(),type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim(),type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
       await fsSet("quizzes",quiz.id,quiz);
     }
-    setModelMsg("✅ Saved one Multiple Forms quiz with "+n+" forms and distributed them across "+target.length+" students. Each form has "+qn/2+" Grammar + "+qn/2+" Vocabulary.");
+    setModelMsg("✅ Saved "+n+" forms as one PRIVATE quiz. Nothing was published. Use تحديد الطلاب / Edit, choose the audience, then Save to publish.");
     setTimeout(()=>{ if(onBack) onBack(); },700);
     }catch(ex){
       setModelMsg("⚠️ Save failed: "+(ex&&ex.message?ex.message:ex));
@@ -11334,14 +11330,12 @@ function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}
     if(!bank.length){setMsg("⚠️ Import the Excel question bank first.");return}
     if(!title.trim()){setMsg("⚠️ Add the main test name.");return}
     if(!selectedUnits.length){setMsg("⚠️ Select at least one Unit.");return}
-    if(!selectedClasses.length){setMsg("⚠️ Select at least one class.");return}
     const pool=bank.filter(x=>selectedUnits.includes(x.unit));
     const n=Math.max(1,Math.min(26,Number(modelCount)||1)), qn=Math.max(2,Math.min(pool.length,Number(questionCount)||20));
     if(qn%2!==0){setMsg("⚠️ For equal Grammar/Vocabulary, use an even number of questions.");return}
     if(pool.filter(x=>x.type==="Grammar").length<qn/2||pool.filter(x=>x.type==="Vocabulary").length<qn/2){setMsg("⚠️ The selected Units do not contain enough Grammar and Vocabulary questions for one balanced model.");return}
     setMsg("Creating models...");
     const groupId="modelgrp_"+uid(),usage={},models=[];
-    const targetStudents=students.filter(st=>selectedClasses.some(cid=>sameClassId(cid,st.classId||st.className||st.class)));
     for(let mi=0;mi<n;mi++){
       let chosen=buildOne(pool,qn,mi,usage);
       // Enforce 50/50 type, while keeping unit distribution as even as possible.
@@ -11353,12 +11347,12 @@ function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}
       };
       chosen=[...takeType("Grammar"),...takeType("Vocabulary")];
       const label=String.fromCharCode(65+mi);
-      const assigned=targetStudents.filter((st,idx)=>idx%n===mi).map(st=>String(st.id));
+      const assigned=[];
       const questions=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,unit:x.unit,bankId:x.bankId}));
-      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim()+" — Model "+label,type:"Grammar & Vocabulary",difficulty:"Mixed",subject:"English",classIds:[],timer:0,masteryThreshold:MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle:true,mode:"standard",instantFeedback:false,reviewAnswers:false,assignedStudents:assigned,openDate:"",startDate:"",closeDate:"",questions,status:assigned.length?"open":"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:selectedUnits.slice(),modelCount:n};
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim()+" — Model "+label,type:"Grammar & Vocabulary",difficulty:"Mixed",subject:"English",classIds:[],timer:0,masteryThreshold:MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle:true,mode:"standard",instantFeedback:false,reviewAnswers:false,assignedStudents:assigned,openDate:"",startDate:"",closeDate:"",questions,status:"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:selectedUnits.slice(),modelCount:n};
       await fsSet("quizzes",quiz.id,quiz);models.push(quiz);
     }
-    setMsg("✅ Created "+n+" balanced models. Students were distributed automatically across the selected classes.");
+    setMsg("✅ Created "+n+" balanced forms as PRIVATE. No student can see them until you assign students and publish from the quiz card.");
     if(onCreated)await onCreated(models,groupId);setTimeout(()=>onClose(),900);
   }
   return <Modal open={open} onClose={onClose} title="🧠 Multiple Models — Excel Question Bank">
@@ -11783,22 +11777,44 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // QUIZ_FAST_ACTIONS_20260630: edit/open/close should not reload the whole platform.
   async function startEditQuiz(quiz){
     const current = fastPatchedQuiz(quiz);
-    const wasOpen = current.status==="open";
-    const editing = {...current, status: wasOpen ? "closed" : current.status};
+    const siblings=current.modelGroupId?myQuizzes.filter(x=>String(x.modelGroupId||"")===String(current.modelGroupId)):[current];
+    const wasOpen = siblings.some(x=>x.status==="open");
+    const audience=Array.from(new Set(siblings.flatMap(x=>Array.isArray(x.assignedStudents)?x.assignedStudents:[]).map(String)));
+    const editing = {...current, assignedStudents:audience, classIds:[], status: wasOpen ? "closed" : current.status};
     setResumeAfterEdit(wasOpen);
     setEditingQuiz(editing);
     setView("edit");
     if(wasOpen){
       patchQuizFast(current.id,{status:"closed"});
       setQuizBusy(prev=>({...prev,[current.id]:true}));
-      setQuizPerfMsg("Closing quiz for editing...");
-      try{ await fsSet("quizzes",current.id,editing); setQuizPerfMsg("Quiz closed for editing."); }
-      catch(e){ console.warn(e); setQuizPerfMsg("Could not close quiz in Firebase. Please try again."); }
+      setQuizPerfMsg("Closing all forms for editing...");
+      try{
+        for(const x of siblings) await fsSet("quizzes",x.id,{...x,status:"closed",updatedAt:today()});
+        setQuizPerfMsg("All forms closed for editing.");
+      }catch(e){ console.warn(e); setQuizPerfMsg("Could not close all forms. Please try again."); }
       finally{ setQuizBusy(prev=>({...prev,[current.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1800); }
     }
   }
   // On save while editing: reopen the quiz if it was open before editing. No full reload.
   async function saveEditedQuiz(q){
+    if(q.modelGroupId){
+      const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(q.modelGroupId)).slice().sort((a,b)=>String(a.modelLabel||"").localeCompare(String(b.modelLabel||"")));
+      const audience=Array.from(new Set((q.assignedStudents||[]).map(String)));
+      const publish=audience.length>0;
+      setQuizBusy(prev=>({...prev,[q.id]:true}));
+      setQuizPerfMsg(publish?"Publishing Multiple Forms quiz...":"Saving Multiple Forms quiz as private...");
+      try{
+        for(let i=0;i<siblings.length;i++){
+          const x=siblings[i], assigned=publish?audience.filter((sid,idx)=>idx%siblings.length===i):[];
+          const next={...x,title:q.title||x.title,modelGroupTitle:q.title||x.modelGroupTitle,type:q.type,difficulty:q.difficulty,subject:q.subject,timer:q.timer,masteryThreshold:q.masteryThreshold,allowRetake:q.allowRetake,maxRetakes:q.maxRetakes,shuffle:q.shuffle,mode:q.mode,instantFeedback:q.instantFeedback,reviewAnswers:q.reviewAnswers,openDate:q.openDate,startDate:q.startDate,closeDate:q.closeDate,classIds:[],assignedStudents:assigned,status:publish?"open":"draft",updatedAt:today()};
+          await fsSet("quizzes",x.id,next);
+        }
+        setQuizPerfMsg(publish?"✅ Published. Each selected student can see only one assigned form.":"🔒 Saved privately. No student can see this quiz.");
+        await reload();
+      }catch(e){console.warn(e);setQuizPerfMsg("Save failed. No cleanup was run.");}
+      finally{setQuizBusy(prev=>({...prev,[q.id]:false}));setTimeout(()=>setQuizPerfMsg(""),2400);}
+      setView(null);setEditingQuiz(null);setResumeAfterEdit(false);return;
+    }
     const finalQuiz = {...q, status: q.status==="draft" ? "draft" : (resumeAfterEdit ? "open" : q.status)};
     patchQuizFast(q.id, finalQuiz);
     setQuizBusy(prev=>({...prev,[q.id]:true}));
@@ -11815,7 +11831,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         patchQuizFast(editingQuiz.id,{status:"open"});
         setQuizBusy(prev=>({...prev,[editingQuiz.id]:true}));
         setQuizPerfMsg("Reopening quiz...");
-        try{ await fsSet("quizzes",editingQuiz.id,reopened); setQuizPerfMsg("Quiz reopened."); }
+        try{
+          if(editingQuiz.modelGroupId){
+            const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(editingQuiz.modelGroupId));
+            for(const x of siblings) await fsSet("quizzes",x.id,{...x,status:"open",updatedAt:today()});
+          }else await fsSet("quizzes",editingQuiz.id,reopened);
+          setQuizPerfMsg("Quiz reopened.");
+        }
         catch(e){ console.warn(e); setQuizPerfMsg("Could not reopen quiz. Check connection."); }
         finally{ setQuizBusy(prev=>({...prev,[editingQuiz.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1800); }
       }
@@ -11902,7 +11924,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       const blob=new Blob(["\ufeff",html],{type:"application/msword;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=safeExamFileName(examExportForm.quiz)+".doc";document.body.appendChild(a);a.click();setTimeout(()=>{try{a.remove();URL.revokeObjectURL(url)}catch(_e){}},1200);
     }catch(e){alert("Word export failed: "+(e.message||e));}finally{setExamExportBusy("");}
   }
-  async function delQuiz(id){if(!confirm("Delete this quiz?"))return;await fsDel("quizzes",id);await reload();}
+  async function delQuiz(id){
+    const q=myQuizzes.find(x=>String(x.id)===String(id));
+    if(q&&q.modelGroupId){
+      const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(q.modelGroupId));
+      if(!confirm("Delete this Multiple Forms quiz and all "+siblings.length+" forms?\n\nStudent accounts and other quizzes will not be touched."))return;
+      for(const x of siblings)await fsDel("quizzes",x.id);
+      await reload();return;
+    }
+    if(!confirm("Delete this quiz?"))return;await fsDel("quizzes",id);await reload();
+  }
   async function delResponse(rid, studentName){if(!confirm("Delete this attempt by "+studentName+"? This will update their progress and mastery."))return;await fsDel("responses",rid);await reload();}
   async function toggleQuiz(quiz){
     if(quizBusy[quiz.id]) return;
@@ -11913,7 +11944,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     patchQuizFast(quiz.id,{status:newStatus});
     setQuizBusy(prev=>({...prev,[quiz.id]:true}));
     setQuizPerfMsg((newStatus==="closed"?"Closing":"Opening")+" quiz...");
-    try{ await fsSet("quizzes",quiz.id,next); setQuizPerfMsg("Updated."); }
+    try{
+      if(quiz.modelGroupId){
+        const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(quiz.modelGroupId));
+        for(const x of siblings)await fsSet("quizzes",x.id,{...x,status:newStatus,updatedAt:today()});
+      }else await fsSet("quizzes",quiz.id,next);
+      setQuizPerfMsg("Updated.");
+    }
     catch(e){ console.warn(e); patchQuizFast(quiz.id,{status:oldStatus}); setQuizPerfMsg("Update failed. Status was restored."); }
     finally{ setQuizBusy(prev=>({...prev,[quiz.id]:false})); setTimeout(()=>setQuizPerfMsg(""),1500); }
   }
@@ -12674,7 +12711,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v310" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v311" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
