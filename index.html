@@ -5997,6 +5997,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     return result;
   }
   async function createModelsFromCreateQuiz(){
+    if(editQuiz){setModelMsg("🔒 Existing forms are locked. Edit/Save cannot create more forms.");return;}
     if(modelBusy)return;
     if(!title.trim()){setModelMsg("⚠️ Add the Quiz Title above first.");return}
     if(!modelBank.length){setModelMsg("⚠️ Import the Excel question bank first.");return}
@@ -6045,7 +6046,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
   }
   function applyPreview(){setQuestions(preview);setPreview(null);setShowImport(false);setShowPaste(false);setCsvPaste("");}
   function save(){
-    if(showModels && modelBank.length){ createModelsFromCreateQuiz(); return; }
+    // v312: editing can never create/regenerate forms.
+    if(!editQuiz && showModels && modelBank.length){ createModelsFromCreateQuiz(); return; }
     if(!title.trim()){setErr("⚠️ Add a quiz title.");window.scrollTo(0,0);return;}
     let valid;
     if(type==="Image Labeling"){
@@ -6088,7 +6090,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
     const saveAssignedStudents=visibility==="private"?assignedStudents:[];
     const hasAudience=saveAssignedStudents.length>0 || (visibility==="classes" && saveClassIds.length>0);
     const saveStatus=hasAudience?((E.status==="closed")?"closed":"open"):"draft";
-    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today()});
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today(),modelGroupId:E.modelGroupId||"",modelGroupTitle:E.modelGroupTitle||"",modelLabel:E.modelLabel||"",modelUnits:Array.isArray(E.modelUnits)?E.modelUnits:[],modelCount:Number(E.modelCount)||0});
   }
   const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
 
@@ -6448,7 +6450,8 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
           </div>}
         </Card>
 
-        <Card style={{marginBottom:"11px",border:"2px solid #0f766e",background:"#f0fdfa"}}>
+        {editQuiz&&E.modelGroupId&&<div style={{marginBottom:"10px",padding:"10px",borderRadius:"9px",background:"#fff7ed",border:"1px solid #fdba74",fontSize:"11px",fontWeight:"800",color:"#9a3412",fontFamily:F}}>🔒 Existing Multiple Forms: {Number(E.modelCount)||"current"} forms. Edit changes settings/students only; it cannot create or regenerate forms.</div>}
+        {!editQuiz&&<Card style={{marginBottom:"11px",border:"2px solid #0f766e",background:"#f0fdfa"}}>
           <div onClick={()=>setShowModels(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <strong style={{fontSize:"13px",color:"#0f766e",fontFamily:F}}>🧩 Multiple Models — uses all Quiz Settings above</strong><span style={{color:"#0f766e"}}>{showModels?"▲":"▼"}</span>
           </div>
@@ -6473,7 +6476,7 @@ function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
               <Btn color="#0f766e" disabled={modelBusy} onClick={createModelsFromCreateQuiz}>{modelBusy?"⏳ Saving Forms...":"✨ Save Multiple Forms Quiz"}</Btn>
             </div>}
           </div>}
-        </Card>
+        </Card>}
 
         <Card style={{marginBottom:"11px",border:"1px dashed "+C.p,background:"#f0f9ff"}}>
           <div onClick={()=>setShowImport(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
@@ -11799,6 +11802,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   async function saveEditedQuiz(q){
     if(q.modelGroupId){
       const siblings=myQuizzes.filter(x=>String(x.modelGroupId||"")===String(q.modelGroupId)).slice().sort((a,b)=>String(a.modelLabel||"").localeCompare(String(b.modelLabel||"")));
+      if(!siblings.length){setQuizPerfMsg("⚠️ Existing forms were not found. Nothing was created.");setView(null);setEditingQuiz(null);setResumeAfterEdit(false);return;}
+      // Save updates existing form IDs only. It never creates a new form.
       const audience=Array.from(new Set((q.assignedStudents||[]).map(String)));
       const publish=audience.length>0;
       setQuizBusy(prev=>({...prev,[q.id]:true}));
@@ -12711,7 +12716,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v311" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v312" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
