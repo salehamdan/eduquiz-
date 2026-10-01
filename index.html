@@ -9613,16 +9613,42 @@ function rtCurrentBadge(kp){
 function rtNextBadge(kp){
   return RT_BADGES.find(b=>kp<b.kp)||null;
 }
-// حساب المستوى التكيفي بناءً على آخر 3 محاولات
+// v316 — خمسة أسئلة: لا يكفي اختبار واحد للصعود.
+// يلزم اختباران متتاليان 5/5 (100%) في المستوى نفسه: الأول = 50% تقدم، الثاني = صعود.
+// 4/5 (80%) يثبت في المستوى ويعيد تقدم الصعود إلى 0%. 3/5 أو أقل ينزل مستوى واحدًا.
 function rtAdaptiveLevel(resps){
   if(!resps||!resps.length) return RT_ADAPTIVE_LEVELS[0];
-  const last3 = resps.slice(-3);
-  const avgScore = last3.reduce((s,r)=>s+(r.score||0),0)/last3.length;
-  const lastLv = RT_ADAPTIVE_LEVELS.find(l=>l.name===(resps[resps.length-1].level||"Beginner")||l.id===(resps[resps.length-1].levelId||1)) || RT_ADAPTIVE_LEVELS[0];
-  let newIdx = RT_ADAPTIVE_LEVELS.indexOf(lastLv);
-  if(avgScore>=80 && newIdx<RT_ADAPTIVE_LEVELS.length-1) newIdx++;
-  else if(avgScore<50 && newIdx>0) newIdx--;
+  const last=resps[resps.length-1]||{};
+  const lastLv = RT_ADAPTIVE_LEVELS.find(l=>l.name===(last.level||"Beginner")||l.id===(last.levelId||1)) || RT_ADAPTIVE_LEVELS[0];
+  let newIdx=RT_ADAPTIVE_LEVELS.indexOf(lastLv);
+  const score=Number(last.score)||0;
+  if(score===100){
+    const prev=resps.length>1?(resps[resps.length-2]||{}):null;
+    const prevLv=prev?(RT_ADAPTIVE_LEVELS.find(l=>l.name===(prev.level||"")||l.id===Number(prev.levelId))||null):null;
+    const twoPerfectSameLevel=!!(prev && Number(prev.score)===100 && prevLv && prevLv.id===lastLv.id);
+    if(twoPerfectSameLevel && newIdx<RT_ADAPTIVE_LEVELS.length-1) newIdx++;
+  } else if(score<=60 && newIdx>0) newIdx--;
   return RT_ADAPTIVE_LEVELS[newIdx];
+}
+function rtReadingProgress(resps){
+  if(!resps||!resps.length) return 0;
+  const current=rtAdaptiveLevel(resps);
+  const last=resps[resps.length-1]||{};
+  const lastLv=RT_ADAPTIVE_LEVELS.find(l=>l.name===(last.level||"")||l.id===Number(last.levelId))||null;
+  // At the highest level, two consecutive perfect attempts represent full mastery progress.
+  if(current.id===RT_ADAPTIVE_LEVELS[RT_ADAPTIVE_LEVELS.length-1].id && lastLv && lastLv.id===current.id && Number(last.score)===100){
+    const prev=resps.length>1?(resps[resps.length-2]||{}):null;
+    const prevLv=prev?(RT_ADAPTIVE_LEVELS.find(l=>l.name===(prev.level||"")||l.id===Number(prev.levelId))||null):null;
+    return (prev && Number(prev.score)===100 && prevLv && prevLv.id===current.id)?100:50;
+  }
+  // After a promotion the student starts the new level at 0%.
+  if(!lastLv || lastLv.id!==current.id) return 0;
+  return Number(last.score)===100?50:0;
+}
+function rtLevelChangeForAttempt(previous,attempt){
+  const before=rtAdaptiveLevel(previous||[]);
+  const after=rtAdaptiveLevel([...(previous||[]),attempt]);
+  return after.id!==before.id?{before,after}:null;
 }
 
 async function generateReadingTheorySession(apiKey, level, topic) {
@@ -9680,6 +9706,15 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   // v314: teacher can inspect every saved Reading Theory attempt without changing data.
   const [rtAttemptsViewer,setRtAttemptsViewer] = useState(null);
   const [rtAttemptDetail,setRtAttemptDetail] = useState(null);
+  // v315: snapshot unread attempts when Reading Theory is opened, then mark them seen.
+  const [rtNewAttempts] = useState(()=>{
+    let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){}
+    return myResps.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).slice().sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
+  });
+  React.useEffect(()=>{
+    const newest=myResps.reduce((m,r)=>Math.max(m,new Date(r.submittedAt||r.createdAt||0).getTime()||0),0);
+    if(newest){try{localStorage.setItem("eq_rt_teacher_seen_"+user.id,String(newest));}catch(e){} window.dispatchEvent(new Event("eq-rt-seen"));}
+  },[]);
 
   // مزامنة إعدادات Reading Theory من Firebase بدون إلغاء اختيار المعلم غير المحفوظ.
   React.useEffect(()=>{
@@ -9856,6 +9891,23 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
       <Btn color={C.p} onClick={()=>saveAccess()} style={{width:"100%",marginTop:"9px"}}>💾 Save Access Settings</Btn>
     </Card>
 
+    {/* v315 — New attempt / achievement notifications */}
+    {rtNewAttempts.length>0&&<Card style={{marginBottom:"11px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
+      <div style={{fontSize:"12px",fontWeight:"900",color:"#92400e",marginBottom:"8px"}}>🔔 New Reading Theory activity <span style={{background:"#dc2626",color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtNewAttempts.length}</span></div>
+      {rtNewAttempts.slice(0,8).map((r,i)=>{
+        const st=myStudents.find(x=>responseBelongsToStudent(r,x));
+        const all=(myResps.filter(x=>st?responseBelongsToStudent(x,st):String(x.studentId)===String(r.studentId))).slice().sort((a,b)=>new Date(a.submittedAt||0)-new Date(b.submittedAt||0));
+        const idx=all.findIndex(x=>String(x.id)===String(r.id)); const prev=idx>0?all.slice(0,idx):[];
+        const ch=rtLevelChangeForAttempt(prev,r);
+        const beforeKp=rtCalcKp(prev), afterKp=rtCalcKp([...prev,r]); const oldB=rtCurrentBadge(beforeKp),newB=rtCurrentBadge(afterKp);
+        const badgeNew=newB&&(!oldB||newB.id!==oldB.id);
+        return <div key={r.id||i} style={{padding:"7px 0",borderTop:i?"1px solid #fde68a":"none",fontSize:"11px",color:C.tx}}>
+          <b>📖 {st?st.name:(r.studentName||"Student")}</b> — new attempt: <b>{r.score||0}%</b> · {r.level||""}
+          {ch&&ch.after.id>ch.before.id&&<div style={{marginTop:"3px",fontWeight:"900",color:C.s}}>⬆️ New reading level: {ch.before.name} → {ch.after.name}</div>}
+          {badgeNew&&<div style={{marginTop:"3px",fontWeight:"900",color:"#92400e"}}>🏆 New badge: {newB.icon} {newB.name} · {afterKp} KP</div>}
+        </div>;
+      })}
+    </Card>}
     {/* النتائج */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px",marginBottom:"11px"}}>
       <Stat icon="📝" label="Attempts" value={filtered.length} color={C.p}/>
@@ -9876,6 +9928,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
       const next=rtNextBadge(sKp);
       const cls=st&&data.classes.find(c=>c.id===st.classId);
       const adaptLv=rtAdaptiveLevel(resps);
+      const readingProgress=rtReadingProgress(resps);
       return <Card key={st?st.id:resps[0].studentId} style={{marginBottom:"8px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"8px"}}>
           <div style={{flex:1}}>
@@ -9892,6 +9945,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
             <div style={{fontSize:"9px",color:C.mu,fontFamily:F}}>avg</div>
           </div>
         </div>
+        <div style={{marginTop:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"9px",color:C.mu,marginBottom:"3px"}}><span>📈 Reading-level progress</span><b>{readingProgress}%</b></div><div style={{height:"5px",background:"#f1f5f9",borderRadius:"999px"}}><div style={{height:"100%",width:readingProgress+"%",background:adaptLv.color,borderRadius:"999px"}}/></div></div>
         {next&&<div style={{marginTop:"7px"}}>
           <div style={{fontSize:"9px",color:C.mu,fontFamily:F,marginBottom:"3px"}}>{next.icon} {next.name}: {next.kp-sKp} KP to go</div>
           <div style={{height:"5px",background:"#f1f5f9",borderRadius:"999px"}}>
@@ -9960,6 +10014,7 @@ function ReadingTheoryStudent({user,data,reload}){
   const currentBadge=rtCurrentBadge(totalKp);
   const nextBadge=rtNextBadge(totalKp);
   const adaptLevel=rtAdaptiveLevel(rtResps);
+  const readingProgress=rtReadingProgress(rtResps);
   const earnedBadges=RT_BADGES.filter(b=>totalKp>=b.kp);
   const myAvg=rtResps.length?Math.round(rtResps.reduce((s,r)=>s+(r.score||0),0)/rtResps.length):null;
 
@@ -10159,6 +10214,7 @@ function ReadingTheoryStudent({user,data,reload}){
           <div style={{fontSize:"12px",color:"#94a3b8",fontFamily:F,marginBottom:"6px"}}>
             ⚡ {totalKp} Total points · {adaptLevel.emoji} {adaptLevel.name}
           </div>
+          <div style={{padding:"0 16px",marginBottom:"10px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#cbd5e1",marginBottom:"5px"}}><span>📈 Reading-level progress</span><b>{readingProgress}%</b></div><div style={{height:"8px",background:"#1e293b",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:readingProgress+"%",background:"#60a5fa",borderRadius:"999px"}}/></div><div style={{fontSize:"9px",color:"#94a3b8",marginTop:"4px"}}>First 5/5 = 50% · Second consecutive 5/5 = move up · 4/5 = stay · 3/5 or less = move down</div></div>
           {nextBadge&&<div style={{padding:"0 16px",marginBottom:"14px"}}>
             <div style={{fontSize:"10px",color:"#64748b",fontFamily:F,marginBottom:"5px"}}>{nextBadge.kp-totalKp} points to the next level ({nextBadge.icon} {nextBadge.name})</div>
             <div style={{height:"8px",background:"#1e293b",borderRadius:"999px",overflow:"hidden"}}>
@@ -11461,6 +11517,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [referralAlertCount,setReferralAlertCount]=useState(0);
   const [writingPendingCount,setWritingPendingCount]=useState(0);
   const [rpPendingCount,setRpPendingCount]=useState(0);
+  const [rtUnreadCount,setRtUnreadCount]=useState(0);
   const [modelsBuilderOpen,setModelsBuilderOpen]=useState(false);
 
   // v290: live pending-review counters for Sections > Writing / RP.
@@ -11547,6 +11604,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return Array.from(map.values());
   })();
   const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
+  // v315: red badge for unseen Reading Theory attempts.
+  useEffect(()=>{
+    function calc(){let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){} const mine=(data.readingTheoryResponses||[]).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));setRtUnreadCount(mine.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).length);}
+    calc();window.addEventListener("eq-rt-seen",calc);return()=>window.removeEventListener("eq-rt-seen",calc);
+  },[data.readingTheoryResponses,myStudents.length,user.id]);
+
   useEffect(()=>{
     let alive=true;
     (async()=>{try{
@@ -12753,10 +12816,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v314" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v316" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
-        <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{referralAlertCount>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount}</span>}</button>
+        <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
@@ -12768,7 +12831,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               <div>✍️ Writing {writingPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{writingPendingCount}</span>}</div>
               {writingPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{writingPendingCount} writing submission{writingPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
+          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="readingTheory"&&rtUnreadCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtUnreadCount}</span>}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
         </div>}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
