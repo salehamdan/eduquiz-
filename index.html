@@ -9973,13 +9973,13 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         {!rtAttemptDetail&&<div style={{display:"flex",flexDirection:"column",gap:"7px"}}>
           {rtAttemptsViewer.resps.map((r,i)=><button key={r.id||i} onClick={()=>setRtAttemptDetail(r)} style={{display:"grid",gridTemplateColumns:"34px 1fr auto",gap:"8px",alignItems:"center",textAlign:"left",padding:"9px",borderRadius:"10px",border:"1px solid "+C.br,background:"#fff",cursor:"pointer",fontFamily:F}}>
             <span style={{fontWeight:"900",color:C.p}}>#{rtAttemptsViewer.resps.length-i}</span>
-            <span><b style={{fontSize:"11px",color:C.tx}}>{r.topic||"Reading"}</b><span style={{display:"block",fontSize:"9px",color:C.mu,marginTop:"2px"}}>{r.level||""} · {r.submittedAt?new Date(r.submittedAt).toLocaleString():""}</span></span>
+            <span><b style={{fontSize:"11px",color:C.tx}}>{r.topic||"Reading"}</b><span style={{display:"block",fontSize:"9px",color:C.mu,marginTop:"2px"}}>{r.level||""} · {r.submittedAt?new Date(r.submittedAt).toLocaleString():""} · ⏱ {Number.isFinite(Number(r.durationSeconds))?((Math.floor(Number(r.durationSeconds)/60))+"m "+(Number(r.durationSeconds)%60)+"s"):"Not recorded"}</span></span>
             <span style={{fontSize:"13px",fontWeight:"900",color:gc(r.score||0)}}>{r.score||0}%</span>
           </button>)}
         </div>}
         {rtAttemptDetail&&<div>
           <button onClick={()=>setRtAttemptDetail(null)} style={{border:"none",background:"#eff6ff",color:C.p,borderRadius:"8px",padding:"7px 10px",cursor:"pointer",fontWeight:"800",marginBottom:"10px"}}>← All Attempts</button>
-          <div style={{padding:"10px",borderRadius:"10px",background:"#f8fafc",marginBottom:"10px"}}><b>{rtAttemptDetail.topic||"Reading"}</b><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>{rtAttemptDetail.level||""} · {rtAttemptDetail.score||0}% · {rtAttemptDetail.correct||0}/{rtAttemptDetail.total||((rtAttemptDetail.questions||[]).length)} correct · {rtAttemptDetail.submittedAt?new Date(rtAttemptDetail.submittedAt).toLocaleString():""}</div></div>
+          <div style={{padding:"10px",borderRadius:"10px",background:"#f8fafc",marginBottom:"10px"}}><b>{rtAttemptDetail.topic||"Reading"}</b><div style={{fontSize:"10px",color:C.mu,marginTop:"3px"}}>{rtAttemptDetail.level||""} · {rtAttemptDetail.score||0}% · {rtAttemptDetail.correct||0}/{rtAttemptDetail.total||((rtAttemptDetail.questions||[]).length)} correct · ⏱ {Number.isFinite(Number(rtAttemptDetail.durationSeconds))?((Math.floor(Number(rtAttemptDetail.durationSeconds)/60))+"m "+(Number(rtAttemptDetail.durationSeconds)%60)+"s"):"Not recorded"} · {rtAttemptDetail.submittedAt?new Date(rtAttemptDetail.submittedAt).toLocaleString():""}</div></div>
           <div style={{whiteSpace:"pre-wrap",lineHeight:1.7,fontSize:"12px",color:C.tx,padding:"11px",border:"1px solid "+C.br,borderRadius:"10px",marginBottom:"12px"}}>{rtAttemptDetail.passage||"Passage was not saved for this older attempt."}</div>
           {(rtAttemptDetail.questions||[]).map((q,qi)=>{const chosen=rtAttemptDetail.answers?rtAttemptDetail.answers[q.id]:undefined;return <div key={q.id||qi} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",marginBottom:"8px"}}>
             <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,marginBottom:"6px"}}>Q{qi+1}: {q.text}</div>
@@ -9999,6 +9999,7 @@ function ReadingTheoryStudent({user,data,reload}){
   const [result,setResult]=useState(null);
   const [errMsg,setErrMsg]=useState("");
   const [badgeModal,setBadgeModal]=useState(null);
+  const readingStartedAtRef=useRef(null);
 
   // التحقق من صلاحية الوصول
   const rtAccess=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
@@ -10032,7 +10033,7 @@ function ReadingTheoryStudent({user,data,reload}){
       const sess=await generateReadingTheorySession(key,adaptLevel,topic);
       sess.questions=sess.questions.slice(0,5).map((q,i)=>({...q,id:i+1}));
       sess.levelId=adaptLevel.id;
-      setSession(sess);setAnswers({});setResult(null);setPhase("reading");
+      setSession(sess);setAnswers({});setResult(null);readingStartedAtRef.current=Date.now();setPhase("reading");
     }catch(e){setErrMsg("Failed: "+e.message);setPhase("list");}
   }
 
@@ -10045,6 +10046,10 @@ function ReadingTheoryStudent({user,data,reload}){
     session.questions.forEach(q=>{if(answers[q.id]===q.correct)correct++;});
     const total=session.questions.length;
     const score=Math.round(correct/total*100);
+    const submittedMs=Date.now();
+    const startedMs=Number(readingStartedAtRef.current)||submittedMs;
+    const durationSeconds=Math.max(0,Math.round((submittedMs-startedMs)/1000));
+    const startedAt=new Date(startedMs).toISOString();
     const kpEarned=correct*rtKpPerCorrect(session.levelId||adaptLevel.id);
     const newTotalKp=totalKp+kpEarned;
     const oldBadge=rtCurrentBadge(totalKp);
@@ -10062,7 +10067,7 @@ function ReadingTheoryStudent({user,data,reload}){
         passage:session.passage,questions:session.questions,answers,
         correct,total,score,kpEarned,
         studentId:user.id,studentNumber:user.studentId,studentName:user.name,
-        classId:user.classId,submittedAt:new Date().toISOString(),createdAt:today()
+        classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()
       });
       await reload();
     }catch(e){console.warn("Save failed",e);}
@@ -12816,7 +12821,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v316" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v317" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
