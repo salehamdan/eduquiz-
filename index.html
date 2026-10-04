@@ -208,6 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
+<!-- V318_READING_PROGRESS_V2_REANALYSIS_20261004 -->
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
 <!-- V283_FOLLOWUP_COMPACT_REFERRAL_ALERT_NO_FLOATING_RP -->
 <!-- EDUQUIZ_BUILD: v281 | v279 preserved + comprehensive class-scoped delete with safety guards -->
@@ -2689,6 +2690,50 @@ async function rpOpenAITTSDataUrl(text, key, voice){
   });
 }
 
+function rpLogprobWordConfidence(logprobs){
+  const words=[]; let cur="", vals=[];
+  function flush(){ if(!cur.trim())return; const clean=cur.trim().replace(/^[^A-Za-z']+|[^A-Za-z']+$/g,""); if(clean){ const av=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:-9; words.push({word:clean.toLowerCase(),confidence:Math.max(0,Math.min(1,Math.exp(av)))}); } cur=""; vals=[]; }
+  (logprobs||[]).forEach(function(x){ const tok=String((x&&x.token)||""); const lp=Number(x&&x.logprob); if(/^\s/.test(tok)&&cur) flush(); cur+=tok; if(Number.isFinite(lp)) vals.push(lp); if(/[.!?,;:]\s*$/.test(tok)) flush(); }); flush(); return words;
+}
+function rpPronunciationFlags(reference, transcript, confidenceWords, sensitivity){
+  const ref=rpWords(reference||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
+  const got=rpWords(transcript||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
+  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.82:(mode==='low'?0.55:0.68);
+  const flags=[]; let gi=0;
+  for(let ri=0;ri<ref.length&&gi<got.length;ri++){
+    if(ref[ri]===got[gi]){ const c=conf[gi]&&Number(conf[gi].confidence); if(Number.isFinite(c)&&c<threshold) flags.push({word:ref[ri],refIndex:ri,confidence:c}); gi++; }
+    else { const nx=got.indexOf(ref[ri],gi+1); if(nx>=0&&nx-gi<=2) gi=nx+1; }
+  }
+  return flags;
+}
+function rpPauseExpressionFromWords(words, reference){
+  const w=(words||[]).filter(x=>Number.isFinite(Number(x.start))&&Number.isFinite(Number(x.end))).sort((a,b)=>a.start-b.start);
+  if(!w.length) return {expressionScore:70,pauseScore:70,longPauses:0,unexpectedPauses:0,readingSeconds:null};
+  let longPauses=0, unexpected=0, pausePenalty=0;
+  for(let i=1;i<w.length;i++){ const gap=Math.max(0,Number(w[i].start)-Number(w[i-1].end)); if(gap>=1.2){longPauses++;pausePenalty+=Math.min(14,Math.round(gap*6));} else if(gap>=0.65){unexpected++;pausePenalty+=5;} }
+  const readingSeconds=Math.max(.1,Number(w[w.length-1].end)-Number(w[0].start));
+  const expressionScore=Math.max(35,Math.min(100,100-pausePenalty));
+  return {expressionScore,pauseScore:expressionScore,longPauses,unexpectedPauses:unexpected,readingSeconds};
+}
+async function rpDetailedAudioEvidence(sub, task){
+  const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim(); if(!key) throw new Error("OpenAI key is missing.");
+  let blob=null; const du=await rpResolveAudioDataUrl(sub).catch(()=>""); if(du) blob=await (await fetch(du)).blob(); else if(sub&&sub.audioUrl) blob=await (await fetch(sub.audioUrl)).blob(); if(!blob) throw new Error("Audio file is not available.");
+  const mk=function(){return new File([blob],"reading-progress.webm",{type:blob.type||sub.audioType||"audio/webm"});};
+  const f1=new FormData(); f1.append("file",mk()); f1.append("model","gpt-4o-transcribe"); f1.append("language","en"); f1.append("response_format","json"); f1.append("include[]","logprobs");
+  const r1=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:f1}); if(!r1.ok) throw new Error("Detailed transcription failed: "+r1.status); const a=await r1.json();
+  let timed={words:[],duration:null}; try{ const f2=new FormData(); f2.append("file",mk()); f2.append("model","whisper-1"); f2.append("language","en"); f2.append("response_format","verbose_json"); f2.append("timestamp_granularities[]","word"); const r2=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:f2}); if(r2.ok) timed=await r2.json(); }catch(e){}
+  return {text:String(a.text||'').trim(),confidenceWords:rpLogprobWordConfidence(a.logprobs||[]),words:timed.words||[],duration:Number(timed.duration)||null};
+}
+function rpAnalyzeV2(reference, transcript, seconds, level, evidence, sensitivity){
+  const base=rpAnalyze(reference,transcript,seconds,level); const flags=rpPronunciationFlags(reference,transcript,(evidence&&evidence.confidenceWords)||[],sensitivity||'normal');
+  const pe=rpPauseExpressionFromWords((evidence&&evidence.words)||[],reference); const total=Math.max(1,base.totalWords||rpWords(reference).length); const mis=flags.length;
+  const accuracy=Math.max(0,Math.round(((Math.max(0,(base.correctWords||0)-mis))/total)*100));
+  const readSecs=pe.readingSeconds||Number(seconds)||0; const correctForWcpm=Math.max(0,(base.correctWords||0)-mis); const wcpm=readSecs>0?Math.round(correctForWcpm/(readSecs/60)):base.wcpm;
+  const paceScore=rpSpeedScoreFromWcpm(wcpm,level,total); const expression=Math.max(0,Math.min(100,pe.expressionScore));
+  const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.40+paceScore*.25+expression*.35)));
+  const mistakes=(base.mistakeCount||0)+mis; const finalScore=Math.max(0,Math.min(100,Math.round(accuracy*.45+paceScore*.20+expression*.35)));
+  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,scoringFormula:'Accuracy 40% + Pace 25% + Expression 35%'};
+}
 async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
   if(!key) throw new Error("OpenAI key is missing. Add it in Teacher-side Auto Correction or recreate/update the task with Auto mode.");
@@ -7428,30 +7473,37 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     }catch(e){}
   }
   async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(29,Number(retakeLimit)||0)); const storedKey=localStorage.getItem("rp_openai_api_key")||""; if(autoAnalysis && !storedKey){setMsg("⚠️ Auto analysis requires an OpenAI key. Please enter it in the Auto Correction settings above.");return;} const oldTask=tasks.find(t=>t.id===editingTaskId); let savedAudio=modelAudioDataUrl||""; if(!savedAudio && oldTask && String(oldTask.text||"").trim()===text.trim()) savedAudio=oldTask.modelAudioDataUrl||oldTask.modelAudioUrl||""; const taskObj={id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),retakeLimit:safeLimit,autoAnalysis:autoAnalysis,openaiKey:autoAnalysis?storedKey:"",modelAudioDataUrl:savedAudio||"",openDate:openDate||"",closeDate:closeDate||"",lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.status||"open"):"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}; setLocalTeacherTasks(prev=>rpMergeById(prev,[taskObj])); setMsg("Updating... Saving task"); try{await fsSet("readingTasks",id,taskObj); setMsg((editingTaskId?"✅ Reading task updated.":"✅ Reading task created.")+(savedAudio?" AI audio saved for students.":" No saved AI audio: student will use device voice fallback.")); resetTaskForm(); await reload(); setTimeout(function(){try{reload();}catch(e){}},1200); setTimeout(function(){try{reload();}catch(e){}},3500);}catch(e){setMsg("⚠️ Save task failed.");}}
-  async function analyzeOne(sub){
+  async function analyzeOne(sub, forceV2){
     const task=tasks.find(t=>t.id===sub.taskId)||(data.readingTasks||[]).find(t=>t.id===sub.taskId);
     if(!task) throw new Error("Task not found");
-    // V273: grading must be based on the submitted recording, not the browser live transcript.
-    // Browser SpeechRecognition can silently autocorrect mispronounced words to the expected spelling.
-    let tx="";
+    let tx="", analysis=null, evidence=null;
     if(rpHasAnyAudio(sub)){
-      tx=await rpTranscribeSubmissionAudio(sub, task);
+      evidence=await rpDetailedAudioEvidence(sub,task);
+      tx=evidence.text||"";
+      analysis=rpAnalyzeV2(task.text,tx,rpSecondsFromSubmission(sub)||0,task.level,evidence,'normal');
     }else{
       tx=String(sub.transcript||"").trim();
+      if(!tx) throw new Error("No audio transcription available.");
+      analysis=rpAnalyze(task.text,tx,rpSecondsFromSubmission(sub)||0,task.level);
+      analysis={...analysis,analysisVersion:1};
     }
-    if(!tx) throw new Error("No audio transcription available. Add OpenAI key or ask student to resubmit with audio.");
-    const analysis=rpAnalyze(task.text,tx,rpSecondsFromSubmission(sub)||0,task.level);
-    const updated={...sub,transcript:tx,analysis,status:"pending_review",analysisStatus:"completed",analyzedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-    setLocalTeacherSubs(prev=>rpMergeById(prev,[updated]));
-    await fsSet("readingSubmissions",sub.id,updated);
-    return analysis;
+    const now=new Date().toISOString();
+    const previous=(forceV2&&sub.analysis)?{analysis:sub.analysis,transcript:sub.transcript||'',savedAt:now}:sub.previousAnalysis;
+    const updated={...sub,transcript:tx,analysis,analysisVersion:analysis.analysisVersion||2,previousAnalysis:previous||null,status:"pending_review",analysisStatus:"completed",analyzedAt:now,updatedAt:now};
+    setLocalTeacherSubs(prev=>rpMergeById(prev,[updated])); await fsSet("readingSubmissions",sub.id,updated); return analysis;
+  }
+  async function reanalyzeV2(sub){
+    const bid="reanalyze_v2_"+sub.id;
+    try{setRpButton(bid,"Re-analyzing…");setMsg("Re-analyzing this attempt with Reading Progress V2…");await analyzeOne(sub,true);setMsg("✅ V2 analysis completed for this attempt only. Old analysis was preserved for comparison.");await reload();}
+    catch(e){setMsg("⚠️ Re-analysis failed. The old result was kept unchanged: "+(e.message||e));}
+    finally{clearRpButton(bid);}
   }
   async function analyze(sub){
     const bid="analyze_"+sub.id;
     try{
       setRpButton(bid,"Analyzing...");
       setMsg("Analyzing "+(sub.taskTitle||"recording")+"...");
-      await analyzeOne(sub);
+      await analyzeOne(sub,false);
       setMsg("✅ Recording analyzed and result is visible to student.");
       reload();
     }catch(e){
@@ -7806,10 +7858,13 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.s} disabled={!!rpBusy["approve_"+s.id]} onClick={async function(){const bid="approve_"+s.id;setRpButton(bid,"Updating...");const base={...s,studentId:(st&&st.studentId)||s.studentId,studentNumber:(st&&st.studentId)||s.studentNumber,studentUserId:(st&&st.id)||s.studentUserId,studentName:(st&&st.name)||s.studentName,taskId:(t&&t.id)||s.taskId,taskTitle:(t&&t.title)||s.taskTitle};const upd=rpBuildAcceptedSubmission(base);setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));setMsg("Updating... Approving");try{await fsSet("readingSubmissions",s.id,upd);try{await rpApplyFinalDecisionToStudentTask(upd,"accepted","");}catch(e){}try{await reload();}catch(e){}setMsg("✅ Approved this attempt only: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["approve_"+s.id]||"✅ Approve"}</Btn>}
             {rpIsPendingReviewSubmission(s)&&s.analysis&&<Btn size="sm" color={C.d} disabled={!!rpBusy["reject_"+s.id]} onClick={async function(){var reason=window.prompt("Reason for rejection (optional):","");const bid="reject_"+s.id;setRpButton(bid,"Updating...");const base={...s,studentId:(st&&st.studentId)||s.studentId,studentNumber:(st&&st.studentId)||s.studentNumber,studentUserId:(st&&st.id)||s.studentUserId,studentName:(st&&st.name)||s.studentName,taskId:(t&&t.id)||s.taskId,taskTitle:(t&&t.title)||s.taskTitle};const upd=rpBuildRejectedSubmission(base,reason||"");const marker=rpBuildStudentDecisionMarker(base,"rejected",reason||"");setLocalTeacherSubs(prev=>rpMergeById(prev,[upd,marker]));setMsg("Updating... Rejecting this attempt only");try{const upd=rpBuildRejectedSubmission(base,reason||"");await fsSet("readingSubmissions",s.id,upd);const res=await rpApplyFinalDecisionToStudentTask(upd,"rejected",reason||"");try{await reload();}catch(e){}setMsg("❌ Rejected this attempt only: "+(st?st.name:"student"));}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["reject_"+s.id]||"❌ Reject"}</Btn>}
             {rpIsPreviousReviewSubmission(s)&&<Btn size="sm" color={C.w} disabled={!!rpBusy["undo_"+s.id]} onClick={async function(){const bid="undo_"+s.id;setRpButton(bid,"Updating...");const upd={...s,status:"pending_review",updatedAt:new Date().toISOString()};setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));try{fsSet("readingSubmissions",s.id,upd).then(function(){try{reload();}catch(e){}});}finally{setTimeout(function(){clearRpButton(bid);},250);}}}>{rpBusy["undo_"+s.id]||"↩ Undo"}</Btn>}
+            {s.analysis&&Number(s.analysisVersion||s.analysis.analysisVersion||1)<2&&rpAudioSaved&&<Btn size="sm" color={C.pu} disabled={!!rpBusy["reanalyze_v2_"+s.id]} onClick={function(){reanalyzeV2(s);}}>{rpBusy["reanalyze_v2_"+s.id]||"🔄 Re-analyze"}</Btn>}
+            {s.analysis&&Number(s.analysisVersion||s.analysis.analysisVersion||1)>=2&&<span style={{fontSize:"10px",fontWeight:900,color:C.s,padding:"6px 8px"}}>✓ V2 Analysis</span>}
             <Btn size="sm" color={C.d} disabled={!!rpBusy["del_one_"+s.id]} onClick={function(){deleteSingleReadingAttempt(s);}}>{rpBusy["del_one_"+s.id]||"🗑 Delete"}</Btn>
           </div>
         </div>
-        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={Number(s.analysis.repetitionCount??((s.analysis.repeated||[]).length))||0} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}{s.transcript&&<RPColoredTranscript reference={s.referenceText||s.reference||s.text||((t&&t.text)||"")} transcript={s.transcript}/>}
+        {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={Number(s.analysis.repetitionCount??((s.analysis.repeated||[]).length))||0} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}{s.analysis&&Number(s.analysisVersion||s.analysis.analysisVersion||1)>=2&&<div style={{fontSize:"10px",color:C.mu,marginTop:"7px",padding:"7px",background:"#f8fafc",borderRadius:"9px"}}>Pronunciation: <b>{s.analysis.pronunciationScore??"—"}%</b> · Mispronunciation: <b>{(s.analysis.mispronunciations||[]).length}</b> · Self-correction: <b>{s.analysis.selfCorrections||0}</b> · Expression: <b>{s.analysis.expressionScore??"—"}%</b> · Pace: <b>{s.analysis.paceScore??"—"}%</b> · Long pauses: <b>{s.analysis.longPauses||0}</b> · Unexpected pauses: <b>{s.analysis.unexpectedPauses||0}</b>{s.previousAnalysis&&<span> · Previous: Acc <b>{s.previousAnalysis.analysis&&s.previousAnalysis.analysis.accuracy}%</b> / Fluency <b>{s.previousAnalysis.analysis&&s.previousAnalysis.analysis.fluency}%</b></span>}</div>}
+        {s.transcript&&<RPColoredTranscript reference={s.referenceText||s.reference||s.text||((t&&t.text)||"")} transcript={s.transcript}/>}
       </div>;
     })}</Card>
   </div>;
