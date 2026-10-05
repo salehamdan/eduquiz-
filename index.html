@@ -2431,6 +2431,53 @@ function rpLatestEffectiveAttempt(list){
   return arr.slice().sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b))[arr.length-1];
 }
 
+// RP327: conservative duplicate fingerprint. Used for display de-duplication and the one-time
+// Hussein cleanup below. It intentionally requires the same student + task + score/transcript payload.
+function rp327DuplicateFingerprint(r){
+  if(!r) return "";
+  const sid=eqDigits(r.studentNumber||r.studentId||r.studentUserId||r.userId||"") || rpNorm(r.studentName||r.name||"");
+  const task=String(r.taskId||r.taskKey||r.assignmentId||r.taskTitle||"").trim();
+  const tx=rpNorm(r.transcript||(r.analysis&&r.analysis.transcript)||"");
+  const sc=String(r.accuracy??r.finalScore??r.score??(r.analysis&&r.analysis.accuracy)??"");
+  const rec=String(r.recordingId||r.audioPath||r.storagePath||"").trim();
+  return [sid,task,sc,tx,rec].join("|");
+}
+function rp327DedupePendingDisplay(list){
+  const seen=new Set(), out=[];
+  (list||[]).forEach(function(r){
+    const fp=rp327DuplicateFingerprint(r) || String(r&&r.id||"");
+    if(seen.has(fp)) return;
+    seen.add(fp); out.push(r);
+  });
+  return out;
+}
+async function rp327CleanupHusseinExactDuplicatesOnce(){
+  try{
+    if(localStorage.getItem("rp327_hussein_exact_dedupe_done")==="1") return;
+    if(typeof fsAll!=="function" || typeof fsSet!=="function") return;
+    const all=await fsAll("readingSubmissions");
+    const normName=function(v){return rpNormArabic?rpNormArabic(v):rpNorm(v);};
+    const hus=(all||[]).filter(function(r){
+      if(!r || r.source==="rp_audio_chunk" || r.deleted===true || String(r.status||"").toLowerCase()==="deleted") return false;
+      const n=normName(r.studentName||r.name||"");
+      return n.includes("حسين") && n.includes("بوعريش");
+    });
+    const groups={};
+    hus.forEach(function(r){const fp=rp327DuplicateFingerprint(r); if(fp)(groups[fp]||(groups[fp]=[])).push(r);});
+    let changed=0;
+    for(const fp of Object.keys(groups)){
+      const g=groups[fp];
+      if(g.length<2) continue;
+      g.sort(function(a,b){return (Date.parse(a.submittedAt||a.createdAt||"")||0)-(Date.parse(b.submittedAt||b.createdAt||"")||0);});
+      for(const dup of g.slice(1)){
+        const tomb={...dup,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"duplicate_only",deleteMode:"rp327_exact_duplicate",status:"deleted",reviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,visibleToStudent:false,scoreVisible:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+        await fsSet("readingSubmissions",dup.id,tomb); changed++;
+      }
+    }
+    localStorage.setItem("rp327_hussein_exact_dedupe_done","1");
+    if(changed) try{window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",status:"rp327_deduped"}}));}catch(_e){}
+  }catch(e){console.warn("RP327 Hussein exact duplicate cleanup skipped",e&&e.message);}
+}
 function rpGenerateText(level, lines){
   const bank={
     beginner:["I like my school.","My friend reads a book.","We play in the park.","The sun is bright today.","I can speak English slowly."],
@@ -6832,7 +6879,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         return true;
       });
       const old=getAttemptCounter(r.taskId);
-      setAttemptCounter(r.taskId, Math.max(old+1, same.length));
+      setAttemptCounter(r.taskId, Math.max(old, same.length));
     }catch(e){}
   }
   function canAttemptTask(t){
@@ -7138,9 +7185,36 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if((sentBlobKey && sentBlobKey===key)||isRecordingSubmitted(recordingId)){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
     if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
 
+    // RP327: cloud-first single-attempt guard. The limit is checked against Firebase before accepting
+    // a new submission, not only against this device's local cache. This closes the window where
+    // repeated sync/re-render could create many pending documents while the student still saw 0/1.
+    try{
+      const freshCloud=(typeof fsAll==="function")?await fsAll("readingSubmissions"):[];
+      const myDigits=eqDigits(user.studentId||user.id||"");
+      const active=(freshCloud||[]).filter(function(r){
+        if(!r || r.source==="rp_audio_chunk" || String(r.id||"").includes("_chunk_")) return false;
+        if(r.deleted===true || String(r.status||"").toLowerCase()==="deleted" || rpAttemptState(r)==="deleted") return false;
+        const rd=eqDigits(r.studentNumber||r.studentId||r.studentUserId||r.userId||"");
+        const sameStudent=(myDigits&&rd&&myDigits===rd) || [r.studentId,r.studentUserId,r.userId].map(String).includes(String(user.id||""));
+        const sameTask=String(r.taskId||"")===String(task.id||"");
+        return sameStudent && sameTask && afterReset(r,task.id);
+      });
+      const allowed=totalAllowedAttempts(task);
+      const retake=extraRetakeAllowed(active);
+      if(active.length>=allowed && !retake){
+        setAttemptCounter(task.id,active.length);
+        setMsg("Attempt limit reached. Ask your teacher for retake permission.");
+        try{reload();}catch(_e){}
+        return;
+      }
+    }catch(_guardErr){ console.warn("RP327 cloud attempt guard unavailable",_guardErr); }
+
     setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
-    const id=uid();
+    // RP327 idempotency: one physical recording always maps to the same Firestore document id.
+    // Re-sending the same recording updates that document instead of creating another attempt.
+    const safePart=function(v){return String(v||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,90);};
+    const id="rp_attempt_"+safePart(user.studentId||user.id)+"_"+safePart(task.id)+"_"+safePart(recordingId||("rec_"+Date.now()));
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     var tx=(transcriptTokenRef.current && transcriptTokenRef.current===recordingId)?String(transcript||"").trim():"";
     const fullRecordedSeconds=Math.max(Number(seconds)||0, await rpGetBlobDurationSeconds(blob));
@@ -11623,6 +11697,7 @@ function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}
 }
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
+  useEffect(()=>{ try{rp327CleanupHusseinExactDuplicatesOnce();}catch(e){} },[]);
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
   const [attemptsModal,setAttemptsModal]=useState(null);
@@ -12969,7 +13044,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v326 · RP Legacy Ghost Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v327 · RP Single Submit Lock" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -13014,6 +13089,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               if(orphanPending) return false;
               return (taskOk||teacherOk||hasPayload) && rpIsPendingReviewSubmission(s);
             });
+            pending=rp327DedupePendingDisplay(pending);
             if(!pending.length) return null;
             var visible=pendingExpanded?pending:pending.slice(0,2);
             var extra=pending.length-2;
