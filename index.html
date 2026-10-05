@@ -7606,6 +7606,62 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     // Analysis starts only from the Safe Queue button, then runs one recording at a time.
     try{localStorage.setItem("rp_teacher_auto_correction","0");}catch(e){}
   },[]);
+
+  // RP326: one-time targeted migration for two legacy First-Second student mirrors.
+  // These two students had device-side RP attempts created by an old storage path before the
+  // current delete-sync contract. A cloud reset cutoff suppresses only attempts that existed
+  // before this migration; any new recording submitted afterwards remains fully visible.
+  useEffect(()=>{
+    if(!user || String(user.role||"").toLowerCase()==="student") return;
+    const markerId="rp_legacy_ghost_fix_v326";
+    if((data.appSettings||[]).some(x=>String(x&&x.id||"")===markerId)) return;
+    let cancelled=false;
+    (async function(){
+      function arNorm(v){
+        return String(v||"").toLowerCase().replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[\u064B-\u065F\u0670]/g,"").replace(/\s+/g," ").trim();
+      }
+      const targets=(myStudents||[]).filter(function(st){
+        const n=arNorm(st&&st.name);
+        return (n.includes("احمد")&&n.includes("العبيد")) || (n.includes("الياس")&&n.includes("الصبي"));
+      });
+      if(targets.length<2) return; // never run a partial cleanup by guess.
+      const stamp=new Date().toISOString();
+      try{
+        for(const st of targets){
+          for(const t of (tasks||[])){
+            if(cancelled) return;
+            const id="rpr_v326_"+String(st.id||st.studentId||"").replace(/[^a-zA-Z0-9_-]/g,"_")+"_"+String(t.id||"").replace(/[^a-zA-Z0-9_-]/g,"_");
+            await fsSet("readingAttemptResets",id,{id,teacherId:user.id,taskId:t.id,targetType:"student",studentId:st.id,studentNumber:st.studentId||"",classId:st.classId||"",resetAt:stamp,createdAt:stamp,reason:"RP326 legacy ghost cleanup",migrationVersion:326});
+          }
+        }
+        await fsSet("appSettings",markerId,{id:markerId,completed:true,completedAt:stamp,studentIds:targets.map(st=>st.id),studentNumbers:targets.map(st=>st.studentId||""),studentNames:targets.map(st=>st.name),version:326});
+        if(cancelled) return;
+        try{
+          // Clear only matching legacy mirrors on the teacher/view-as device. The cloud reset
+          // above is authoritative on every other device and does not affect future attempts.
+          const ids=new Set();
+          targets.forEach(st=>[st.id,st.studentId].filter(Boolean).forEach(v=>ids.add(String(v))));
+          ["rp_student_attempts","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7","eq_readingSubmissions"].forEach(function(k){
+            try{
+              const a=JSON.parse(localStorage.getItem(k)||"[]");
+              if(!Array.isArray(a)) return;
+              const kept=a.filter(function(r){
+                const vals=[r&&r.studentId,r&&r.studentNumber,r&&r.studentUserId,r&&r.userId,r&&r.uid].filter(Boolean).map(String);
+                return !vals.some(v=>ids.has(v));
+              });
+              localStorage.setItem(k,JSON.stringify(kept));
+            }catch(_e){}
+          });
+        }catch(_e){}
+        setMsg("✅ RP326: تم تنظيف المحاولات القديمة العالقة للطالبين فقط. التسجيلات الجديدة لن تتأثر.");
+        await reload();
+      }catch(e){
+        console.warn("RP326 targeted legacy cleanup failed",e&&e.message);
+        setMsg("⚠️ RP326 legacy cleanup could not finish: "+(e&&e.message||e));
+      }
+    })();
+    return ()=>{cancelled=true;};
+  },[user&&user.id,(data.appSettings||[]).length,(myStudents||[]).length,(tasks||[]).length]);
   async function resetReadingAttempts(){
     if(!resetTaskId){setMsg("⚠️ اختر المهمة أولاً. / Choose a task first.");return;}
     const t=tasks.find(x=>x.id===resetTaskId);
@@ -12913,7 +12969,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v325 · RP Delete Sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v326 · RP Legacy Ghost Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
