@@ -6735,7 +6735,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     else __rpStudentDedup[j]={...old,...x};
   });
   // v322: student view is always derived from the live final state; deleted attempts disappear immediately.
-  // v323: keep exact deleted tombstones in the student-side decision set.
+  // v324: keep exact deleted tombstones in the student-side decision set.
   // attemptsForTask() uses them to suppress stale local/device copies of the same attempt.
   const subs=__rpStudentDedup.filter(function(x){return !!x;});
   const resets=(data.readingAttemptResets||[]);
@@ -6846,8 +6846,12 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     // Reject/delete from the teacher can be saved under the same attempt id OR under a cloud-only record.
     // In both cases, do not let old localStorage pending attempts or local attempt counters keep the
     // student card stuck on "Waiting for teacher analysis".
+    // RP324: exact deletion is authoritative by attempt id across the full live collection.
+    // Do not require the tombstone to pass legacy student/task matching before it can suppress
+    // a stale local copy of the same attempt. This fixes teacher-eye/student views that kept 1/1 pending.
+    const globalDeletedIds=new Set(subs.filter(function(s){return s && (s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted");}).map(function(s){return String(s.id||"");}).filter(Boolean));
     const cloudAll=subs.filter(function(s){return s && rpSameTaskForStudentRecordFinalAware(s,t) && afterReset(s,t.id);});
-    const cloudDeletedIds=new Set(cloudAll.filter(function(s){return s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted";}).map(function(s){return String(s.id||"");}));
+    const cloudDeletedIds=new Set([...globalDeletedIds,...cloudAll.filter(function(s){return s.deleted===true || String(s.status||"").toLowerCase()==="deleted" || rpAttemptState(s)==="deleted";}).map(function(s){return String(s.id||"");})]);
     const cloudById={};
     cloudAll.forEach(function(s){ if(s&&s.id) cloudById[String(s.id)]={...(cloudById[String(s.id)]||{}),...s}; });
     const terminalCloud=cloudAll.filter(function(s){
@@ -6898,7 +6902,10 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     });
     const map={};
     [...local,...cloud].forEach(function(r){ if(r&&r.id) map[String(r.id)]={...(map[String(r.id)]||{}),...r}; });
-    const arr=Object.values(map).filter(function(r){return r && r.deleted!==true && String(r.status||"").toLowerCase()!=="deleted" && rpAttemptState(r)!=="deleted";});
+    const arr=Object.values(map).filter(function(r){
+      const id=String(r&&r.id||"");
+      return r && (!id || !globalDeletedIds.has(id)) && r.deleted!==true && String(r.status||"").toLowerCase()!=="deleted" && rpAttemptState(r)!=="deleted";
+    });
     const cut=resetCutoffForTask(t.id);
     // Do not create artificial pending counters when Firebase already has any final teacher decision,
     // including deleted attempts. Otherwise the student page recreates a fake Waiting card.
@@ -12885,7 +12892,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v323 · RP Delete Sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v324 · RP Delete Sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -14532,10 +14539,21 @@ document.addEventListener("click", function(e){
   async function rpDeleteAttemptPermanent(rec){
     const base={...(rec||{}), id:String((rec&&rec.id)||"")};
     if(!base.id) return null;
-    // v323: never physically remove the only cloud decision for an RP attempt.
+    // v324: never physically remove the only cloud decision for an RP attempt.
     // Save an exact tombstone with the same id so every student device/view receives the deletion
     // and can suppress stale local attempt markers. No sibling attempt or task is touched.
     rpRememberDeletedAttempt(base);
+    // RP324: purge the student's device-side mirror immediately. The cloud tombstone remains
+    // authoritative for other devices, but the teacher-eye view must not wait for a listener refresh.
+    try{
+      const local=JSON.parse(localStorage.getItem("rp_student_attempts")||"[]");
+      const kept=Array.isArray(local)?local.filter(function(x){return String(x&&x.id||"")!==base.id;}):[];
+      localStorage.setItem("rp_student_attempts",JSON.stringify(kept));
+      if(base.taskId){
+        const remaining=kept.filter(function(x){return x && String(x.taskId||"")===String(base.taskId||"") && x.deleted!==true && String(x.status||"").toLowerCase()!=="deleted";}).length;
+        try{ setAttemptCounter(base.taskId,remaining); }catch(_e){}
+      }
+    }catch(_e){}
     const tomb=(typeof rpDeletedPatch==="function")?rpDeletedPatch(base,(window.__eqCurrentUser&&window.__eqCurrentUser.id)||"teacher"):{...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,visibleToStudent:false,scoreVisible:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const current=recordsLive().concat(records());
     const keepMap=new Map();
@@ -14551,7 +14569,7 @@ document.addEventListener("click", function(e){
       else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(base.id).set(tomb,{merge:true});
       else await cloudSaveRecord(tomb);
     }catch(e){
-      console.warn("RP v323 tombstone save failed",e&&e.message);
+      console.warn("RP v324 tombstone save failed",e&&e.message);
       throw e;
     }
     try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:base.id,status:"deleted_exact"}})); }catch(_e){}
