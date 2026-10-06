@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v294</title>
+<title>EduQuiz — Smart Assessment v327</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,6 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
+<!-- V327_RP_SAFE_ATTEMPT_DEDUPE_LAZY_AUDIO_SEQUENCE_SCORING_20261006 -->
 <!-- V319_RP_V2_VISIBLE_REANALYZE_AND_VERSION_20261004 -->
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
 <!-- V283_FOLLOWUP_COMPACT_REFERRAL_ALERT_NO_FLOATING_RP -->
@@ -2731,8 +2732,16 @@ function rpAnalyzeV2(reference, transcript, seconds, level, evidence, sensitivit
   const readSecs=pe.readingSeconds||Number(seconds)||0; const correctForWcpm=Math.max(0,(base.correctWords||0)-mis); const wcpm=readSecs>0?Math.round(correctForWcpm/(readSecs/60)):base.wcpm;
   const paceScore=rpSpeedScoreFromWcpm(wcpm,level,total); const expression=Math.max(0,Math.min(100,pe.expressionScore));
   const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.40+paceScore*.25+expression*.35)));
-  const mistakes=(base.mistakeCount||0)+mis; const finalScore=Math.max(0,Math.min(100,Math.round(accuracy*.45+paceScore*.20+expression*.35)));
-  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,scoringFormula:'Accuracy 40% + Pace 25% + Expression 35%'};
+  const mistakes=(base.mistakeCount||0)+mis; let finalScore=Math.max(0,Math.min(100,Math.round(accuracy*.45+paceScore*.20+expression*.35)));
+  // V327: quality guardrails. Expression/pace must not hide a materially inaccurate or broken reading.
+  const errorRate=Math.min(1,Math.max(0,mistakes/total));
+  const pauseCount=Number(pe.longPauses||0)+Number(pe.unexpectedPauses||0);
+  let fluency2=fluency;
+  if(accuracy<70 || errorRate>=0.30){ fluency2=Math.min(fluency2,55); finalScore=Math.min(finalScore,60); }
+  else if(accuracy<80 || errorRate>=0.20){ fluency2=Math.min(fluency2,68); finalScore=Math.min(finalScore,72); }
+  else if(accuracy<90 || errorRate>=0.10){ fluency2=Math.min(fluency2,82); finalScore=Math.min(finalScore,85); }
+  if(pauseCount>=Math.max(4,Math.ceil(total/12))){ fluency2=Math.min(fluency2,72); finalScore=Math.min(finalScore,82); }
+  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency:fluency2,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,scoringFormula:'Accuracy + Pace + Expression with V327 error/pause caps'};
 }
 async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
@@ -6923,10 +6932,32 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     });
     const map={};
     [...local,...cloud].forEach(function(r){ if(r&&r.id) map[String(r.id)]={...(map[String(r.id)]||{}),...r}; });
-    const arr=Object.values(map).filter(function(r){
+    let arr=Object.values(map).filter(function(r){
       const id=String(r&&r.id||"");
       return r && (!id || !globalDeletedIds.has(id)) && r.deleted!==true && String(r.status||"").toLowerCase()!=="deleted" && rpAttemptState(r)!=="deleted";
     });
+    // V327: count one physical submitted recording once, even when legacy/local/cloud mirrors
+    // use different document ids. Retry drafts are never promoted here; only submitted records arrive.
+    function physicalAttemptKey(r){
+      const direct=[r&&r.recordingId,r&&r.audioPath,r&&r.storagePath].filter(Boolean).map(String);
+      if(direct.length) return "media:"+direct[0];
+      const sid=eqDigits(r&&(r.studentNumber||r.studentId||r.studentUserId||r.userId)||"");
+      const tid=String(r&&(r.taskId||r.taskKey||r.assignmentId)||"");
+      const tm=Date.parse(r&&(r.submittedAt||r.createdAt||r.timestamp)||"");
+      // Legacy mirrors were commonly written seconds apart. Bucket only records lacking media identity.
+      return sid&&tid&&Number.isFinite(tm) ? "legacy:"+sid+"|"+tid+"|"+Math.floor(tm/15000) : "id:"+String(r&&r.id||Math.random());
+    }
+    const physicalMap=new Map();
+    arr.forEach(function(r){
+      const k=physicalAttemptKey(r), old=physicalMap.get(k);
+      if(!old){ physicalMap.set(k,r); return; }
+      const oldState=rpAttemptState(old), newState=rpAttemptState(r);
+      const oldFinal=(oldState==="accepted"||oldState==="rejected"||oldState==="retake");
+      const newFinal=(newState==="accepted"||newState==="rejected"||newState==="retake");
+      if(newFinal&&!oldFinal) physicalMap.set(k,{...old,...r});
+      else if(newFinal===oldFinal && rpAttemptTimeMs(r)>=rpAttemptTimeMs(old)) physicalMap.set(k,{...old,...r});
+    });
+    arr=Array.from(physicalMap.values());
     const cut=resetCutoffForTask(t.id);
     // Do not create artificial pending counters when Firebase already has any final teacher decision,
     // including deleted attempts. Otherwise the student page recreates a fake Waiting card.
@@ -14994,11 +15025,16 @@ document.addEventListener("click", function(e){
   function score(ref,spoken,seconds=60){
     const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
     const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
-    let correct=0, used=Array(b.length).fill(false);
-    a.forEach(w=>{
-      const i=b.findIndex((x,j)=>!used[j]&&x===w);
-      if(i>=0){correct++;used[i]=true;}
-    });
+    // V327: accuracy must respect reading order. The old bag-of-words match could score
+    // scrambled/poor reading too highly because a word anywhere in the transcript counted as correct.
+    const rows=a.length+1, cols=b.length+1;
+    let prev=new Uint16Array(cols), cur=new Uint16Array(cols);
+    for(let i=1;i<rows;i++){
+      cur.fill(0);
+      for(let j=1;j<cols;j++) cur[j]=(a[i-1]===b[j-1])?(prev[j-1]+1):Math.max(prev[j],cur[j-1]);
+      const tmp=prev; prev=cur; cur=tmp;
+    }
+    const correct=Number(prev[cols-1]||0);
 
     const total=a.length;
     const missing=Math.max(0,total-correct);
@@ -15882,14 +15918,12 @@ document.addEventListener("click", function(e){
         out+=`<details data-rp-student="${rpHtmlEscape(skey)}" ${openStudentKeys.has(skey)?"open":""} style="border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden"><summary style="padding:11px;cursor:pointer;font-weight:900;color:#1e293b;display:flex;justify-content:space-between;gap:8px;align-items:center"><span>👤 ${rpHtmlEscape(info.name||"Student")} <span style="font-size:10px;color:#64748b;font-weight:700">${rpHtmlEscape(info.sid||"")} · ${studentItems.length} محاولة</span></span><span style="font-size:12px;color:#2563eb">الأحدث: ${finalScore(latest)===""?"-":finalScore(latest)+"%"}</span></summary><div style="display:grid;gap:10px;padding:10px;background:#f8fafc">`;
         let studentHtml="";
         for(const r of studentItems){
-      const item=r.audioId?await getAudio(r.audioId):null;
-      let chunkDataUrl="";
-      if(!item && !r.audioDataUrl && !r.audioUrl && r.audioChunked && r.audioChunkCount && typeof rpResolveAudioDataUrl==="function"){
-        try{ chunkDataUrl=await rpResolveAudioDataUrl(r); }catch(_e){}
-      }
-      const url=item&&item.blob?URL.createObjectURL(item.blob):(r.audioDataUrl||r.audioUrl||chunkDataUrl||"");
-      const audioSize=item&&item.size?item.size:(r.audioSize||0);
-      const audioType=item&&item.type?item.type:(r.audioType||"audio/webm");
+      // V327: never hydrate IndexedDB blobs/chunked audio while rendering the ARB/RP list.
+      // Audio is resolved only after the teacher presses Play (rpPlayTeacherRecording).
+      const audioAvailable=hasAudioRecord(r);
+      const url=audioAvailable?"lazy://rp-audio":"";
+      const audioSize=r.audioSize||0;
+      const audioType=r.audioType||"audio/webm";
       const acceptReady=canAcceptRecord(r);
       const acceptBg=acceptReady?"#16a34a":"#94a3b8";
       const acceptLabel=acceptReady?"Accept":"Analyze first";
