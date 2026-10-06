@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v327</title>
+<title>EduQuiz — Smart Assessment v328</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,7 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- V327_RP_SAFE_ATTEMPT_DEDUPE_LAZY_AUDIO_SEQUENCE_SCORING_20261006 -->
+<!-- V328_RP_PRONUNCIATION_CONFIDENCE_TEACHER_OVERRIDE_PRIVATE_20261006 -->
 <!-- V319_RP_V2_VISIBLE_REANALYZE_AND_VERSION_20261004 -->
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
 <!-- V283_FOLLOWUP_COMPACT_REFERRAL_ALERT_NO_FLOATING_RP -->
@@ -2183,6 +2183,9 @@ function rpMetricFromSubmission(s,k){
 }
 
 function rpAcceptedScoreFromSubmission(s){
+  // V328: an explicit teacher score is authoritative, including 0.
+  const manualFirst=rpSafeNumber(s&&s.teacherScore);
+  if(manualFirst!==null) return Math.max(0,Math.min(100,Math.round(manualFirst)));
   try{
     const acc=rpMetricFromSubmission(s,"accuracy");
     const flu=rpMetricFromSubmission(s,"fluency");
@@ -2190,7 +2193,7 @@ function rpAcceptedScoreFromSubmission(s){
     const wc=rpMetricFromSubmission(s,"wcpm");
     if(Number(acc)>=100 && Number(flu)>=100 && Number(mis)===0 && (wc===null || Number(wc)>=60)) return 100;
   }catch(_e){}
-  const primary=[s&&s.teacherScore,s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
+  const primary=[s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
   for(const v of primary){ const n=rpSafeNumber(v); if(n!==null && n>0) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
   const fallback=[s&&s.accuracy,s&&s.analysis&&s.analysis.accuracy,s&&s.analysis&&s.analysis.rawAccuracy];
   for(const v of fallback){ const n=rpSafeNumber(v); if(n!==null) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
@@ -2209,7 +2212,7 @@ function rpBuildAcceptedSubmission(s, extra){
     ...(s||{}), ...(extra||{}),
     status:"accepted", reviewStatus:"accepted", teacherReview:"accepted", teacherReviewStatus:"accepted", studentStatus:"accepted",
     accepted:true, approved:true, teacherAccepted:true, teacherApproved:true, pending:false,
-    analysisStatus:"completed", visibleToStudent:true, scoreVisible:true,
+    analysisStatus:"completed", visibleToStudent:true, scoreVisible:false,
     approvedAt:(s&&s.approvedAt)||now, acceptedAt:(s&&s.acceptedAt)||now, reviewedAt:now, updatedAt:now,
     teacherScore:score===""?(s&&s.teacherScore):score, finalScore:score===""?(s&&s.finalScore):score, score:score===""?(s&&s.score):score,
     accuracy:accuracy===null?(s&&s.accuracy):accuracy,
@@ -2328,7 +2331,7 @@ function rpBuildStudentDecisionMarker(s, status, reason){
     teacherAccepted:cleanStatus==="accepted"||cleanStatus==="approved",
     teacherApproved:cleanStatus==="accepted"||cleanStatus==="approved",
     visibleToStudent:cleanStatus!=="deleted",
-    scoreVisible:cleanStatus==="accepted"||cleanStatus==="approved",
+    scoreVisible:false,
     updatedAt:now,
     reviewedAt:now,
     acceptedAt:(cleanStatus==="accepted"||cleanStatus==="approved")?now:(base.acceptedAt||base.approvedAt||""),
@@ -2697,13 +2700,29 @@ function rpLogprobWordConfidence(logprobs){
   (logprobs||[]).forEach(function(x){ const tok=String((x&&x.token)||""); const lp=Number(x&&x.logprob); if(/^\s/.test(tok)&&cur) flush(); cur+=tok; if(Number.isFinite(lp)) vals.push(lp); if(/[.!?,;:]\s*$/.test(tok)) flush(); }); flush(); return words;
 }
 function rpPronunciationFlags(reference, transcript, confidenceWords, sensitivity){
-  const ref=rpWords(reference||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
-  const got=rpWords(transcript||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
-  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.82:(mode==='low'?0.55:0.68);
-  const flags=[]; let gi=0;
-  for(let ri=0;ri<ref.length&&gi<got.length;ri++){
-    if(ref[ri]===got[gi]){ const c=conf[gi]&&Number(conf[gi].confidence); if(Number.isFinite(c)&&c<threshold) flags.push({word:ref[ri],refIndex:ri,confidence:c}); gi++; }
-    else { const nx=got.indexOf(ref[ri],gi+1); if(nx>=0&&nx-gi<=2) gi=nx+1; }
+  // V328: align reference/transcript in sequence first, then judge confidence on the matched spoken word.
+  // This prevents confidenceWords[gi] from drifting after an omission/insertion.
+  const ref=rpWords(reference||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,'')).filter(Boolean);
+  const got=rpWords(transcript||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,'')).filter(Boolean);
+  const cw=(confidenceWords||[]).map(x=>({word:String(x&&x.word||'').toLowerCase().replace(/[^a-z']/g,''),confidence:Number(x&&x.confidence)}));
+  const mode=String(sensitivity||'normal');
+  // Reading Progress is intentionally conservative about "correct": a recognized word with weak acoustic confidence is review-worthy.
+  const threshold=mode==='strict'?0.94:(mode==='low'?0.80:0.89);
+  const n=ref.length,m=got.length, dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
+  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++) dp[i][j]=ref[i-1]===got[j-1]?dp[i-1][j-1]+1:Math.max(dp[i-1][j],dp[i][j-1]);
+  const pairs=[]; let i=n,j=m;
+  while(i>0&&j>0){ if(ref[i-1]===got[j-1]){pairs.push([i-1,j-1]);i--;j--;} else if(dp[i-1][j]>=dp[i][j-1]) i--; else j--; }
+  pairs.reverse();
+  // Align confidence stream to transcript words by ordered word matching, not raw array index.
+  const confForGot=new Array(m).fill(null); let ci=0;
+  for(let g=0;g<m;g++){
+    while(ci<cw.length && cw[ci].word!==got[g]) ci++;
+    if(ci<cw.length){ confForGot[g]=cw[ci].confidence; ci++; }
+  }
+  const flags=[];
+  for(const [ri,gi] of pairs){
+    const c=confForGot[gi];
+    if(Number.isFinite(c)&&c<threshold) flags.push({word:ref[ri],refIndex:ri,transcriptIndex:gi,confidence:c,reason:'low_acoustic_confidence'});
   }
   return flags;
 }
@@ -2741,7 +2760,7 @@ function rpAnalyzeV2(reference, transcript, seconds, level, evidence, sensitivit
   else if(accuracy<80 || errorRate>=0.20){ fluency2=Math.min(fluency2,68); finalScore=Math.min(finalScore,72); }
   else if(accuracy<90 || errorRate>=0.10){ fluency2=Math.min(fluency2,82); finalScore=Math.min(finalScore,85); }
   if(pauseCount>=Math.max(4,Math.ceil(total/12))){ fluency2=Math.min(fluency2,72); finalScore=Math.min(finalScore,82); }
-  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency:fluency2,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,scoringFormula:'Accuracy + Pace + Expression with V327 error/pause caps'};
+  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency:fluency2,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:3,scoringFormula:'V328 sequence accuracy + acoustic-confidence pronunciation flags + pace + expression caps'};
 }
 async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
@@ -15450,7 +15469,16 @@ document.addEventListener("click", function(e){
         action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
-    panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid)a[i].teacherScore=e.target.value; if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
+    panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid){
+      const raw=String(e.target.value||'').trim();
+      a[i].teacherScore=raw;
+      if(raw!=='' && Number.isFinite(Number(raw))){
+        const manual=Math.max(0,Math.min(100,Math.round(Number(raw))));
+        a[i].teacherScore=manual; a[i].finalScore=manual; a[i].score=manual; a[i].teacherOverride=true; a[i].teacherOverrideAt=new Date().toISOString(); a[i].scoreVisible=false;
+      }else{
+        a[i].teacherOverride=false;
+      }
+    } if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
     panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search"){rpDrawerVisibleLimit=10;renderCards();}});
     panel.addEventListener("change",e=>{
       if(e.target.id==="rp-v11-class"){
