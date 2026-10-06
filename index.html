@@ -2182,9 +2182,6 @@ function rpMetricFromSubmission(s,k){
 }
 
 function rpAcceptedScoreFromSubmission(s){
-  // v330: teacher manual score is authoritative for the student-facing accepted score.
-  const manualTeacher=rpSafeNumber(s&&s.teacherScore);
-  if(manualTeacher!==null && String(s&&s.teacherScore??"").trim()!=="") return Math.max(0,Math.min(100,Math.round(manualTeacher)));
   try{
     const acc=rpMetricFromSubmission(s,"accuracy");
     const flu=rpMetricFromSubmission(s,"fluency");
@@ -2192,7 +2189,7 @@ function rpAcceptedScoreFromSubmission(s){
     const wc=rpMetricFromSubmission(s,"wcpm");
     if(Number(acc)>=100 && Number(flu)>=100 && Number(mis)===0 && (wc===null || Number(wc)>=60)) return 100;
   }catch(_e){}
-  const primary=[s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
+  const primary=[s&&s.teacherScore,s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
   for(const v of primary){ const n=rpSafeNumber(v); if(n!==null && n>0) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
   const fallback=[s&&s.accuracy,s&&s.analysis&&s.analysis.accuracy,s&&s.analysis&&s.analysis.rawAccuracy];
   for(const v of fallback){ const n=rpSafeNumber(v); if(n!==null) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
@@ -2701,7 +2698,7 @@ function rpLogprobWordConfidence(logprobs){
 function rpPronunciationFlags(reference, transcript, confidenceWords, sensitivity){
   const ref=rpWords(reference||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
   const got=rpWords(transcript||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
-  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.94:(mode==='low'?0.78:0.88);
+  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.82:(mode==='low'?0.55:0.68);
   const flags=[]; let gi=0;
   for(let ri=0;ri<ref.length&&gi<got.length;ri++){
     if(ref[ri]===got[gi]){ const c=conf[gi]&&Number(conf[gi].confidence); if(Number.isFinite(c)&&c<threshold) flags.push({word:ref[ri],refIndex:ri,confidence:c}); gi++; }
@@ -7143,8 +7140,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
 
     setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
-    // v330: same physical recording re-save updates one RP document instead of creating duplicates.
-    const id="rps_"+String(recordingId||("rec_"+Date.now())).replace(/[^a-zA-Z0-9_-]/g,"_");
+    const id=uid();
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     var tx=(transcriptTokenRef.current && transcriptTokenRef.current===recordingId)?String(transcript||"").trim():"";
     const fullRecordedSeconds=Math.max(Number(seconds)||0, await rpGetBlobDurationSeconds(blob));
@@ -12973,7 +12969,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v330 · Safe RP + Faster Login" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v326 · RP Legacy Ghost Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -13930,8 +13926,7 @@ function App() {
     const onVis=()=>{ if(document.visibilityState==="visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVis);
-    // v330: avoid re-downloading every collection every 7s. RP has its own live listeners.
-    const timer=setInterval(refresh, 60000);
+    const timer=setInterval(refresh, 7000);
     return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); clearInterval(timer); };
   },[user&&user.id,user&&user.role]);
 
@@ -13981,11 +13976,7 @@ function App() {
     return ()=>{unsubs.forEach(u=>{try{u&&u();}catch(e){}});};
   },[user&&user.id,user&&user.role]);
 
-    function handleLogin(u){
-      // v330: Landing has already loaded/validated data; enter immediately.
-      // Background/live sync below keeps RP current without blocking login on a second full Firebase read.
-      setUser(fixAhmedStudent(u));
-    }
+    function handleLogin(u){setUser(fixAhmedStudent(u));reload();}
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} /* keep EQ_LOGIN_MEMORY_KEY so the student does not rewrite name/class/id/password each time */ try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
