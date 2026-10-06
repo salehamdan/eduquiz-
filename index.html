@@ -2182,6 +2182,9 @@ function rpMetricFromSubmission(s,k){
 }
 
 function rpAcceptedScoreFromSubmission(s){
+  // V328: a teacher-entered manual score is authoritative. Never speed-adjust or replace it with AI/system metrics.
+  const manualTeacher=rpSafeNumber(s&&s.teacherScore);
+  if(manualTeacher!==null && String(s&&s.teacherScore??"").trim()!=="") return Math.max(0,Math.min(100,Math.round(manualTeacher)));
   try{
     const acc=rpMetricFromSubmission(s,"accuracy");
     const flu=rpMetricFromSubmission(s,"fluency");
@@ -2189,7 +2192,7 @@ function rpAcceptedScoreFromSubmission(s){
     const wc=rpMetricFromSubmission(s,"wcpm");
     if(Number(acc)>=100 && Number(flu)>=100 && Number(mis)===0 && (wc===null || Number(wc)>=60)) return 100;
   }catch(_e){}
-  const primary=[s&&s.teacherScore,s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
+  const primary=[s&&s.finalScore,s&&s.aiScore,s&&s.score,s&&s.analysis&&s.analysis.finalScore,s&&s.analysis&&s.analysis.score];
   for(const v of primary){ const n=rpSafeNumber(v); if(n!==null && n>0) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
   const fallback=[s&&s.accuracy,s&&s.analysis&&s.analysis.accuracy,s&&s.analysis&&s.analysis.rawAccuracy];
   for(const v of fallback){ const n=rpSafeNumber(v); if(n!==null) return rpSpeedAdjustedMetric(s,"score",Math.max(0,Math.min(100,Math.round(n)))); }
@@ -2698,7 +2701,7 @@ function rpLogprobWordConfidence(logprobs){
 function rpPronunciationFlags(reference, transcript, confidenceWords, sensitivity){
   const ref=rpWords(reference||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
   const got=rpWords(transcript||'').map(x=>String(x.raw||x.word||x||'').toLowerCase().replace(/[^a-z']/g,''));
-  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.82:(mode==='low'?0.55:0.68);
+  const conf=confidenceWords||[]; const mode=String(sensitivity||'normal'); const threshold=mode==='strict'?0.94:(mode==='low'?0.78:0.88);
   const flags=[]; let gi=0;
   for(let ri=0;ri<ref.length&&gi<got.length;ri++){
     if(ref[ri]===got[gi]){ const c=conf[gi]&&Number(conf[gi].confidence); if(Number.isFinite(c)&&c<threshold) flags.push({word:ref[ri],refIndex:ri,confidence:c}); gi++; }
@@ -2732,7 +2735,7 @@ function rpAnalyzeV2(reference, transcript, seconds, level, evidence, sensitivit
   const paceScore=rpSpeedScoreFromWcpm(wcpm,level,total); const expression=Math.max(0,Math.min(100,pe.expressionScore));
   const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.40+paceScore*.25+expression*.35)));
   const mistakes=(base.mistakeCount||0)+mis; const finalScore=Math.max(0,Math.min(100,Math.round(accuracy*.45+paceScore*.20+expression*.35)));
-  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,scoringFormula:'Accuracy 40% + Pace 25% + Expression 35%'};
+  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:2,pronunciationEvidence:'transcription-logprob-guard',pronunciationSensitivity:String(sensitivity||'normal'),scoringFormula:'Accuracy 40% + Pace 25% + Expression 35%'};
 }
 async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
@@ -7140,7 +7143,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
 
     setSubmitting(true);
     const beforeCount=attemptsForTask(task).length;
-    const id=uid();
+    // V328 duplicate guard: one physical recording always maps to one Firestore document.
+    // Re-running the same submit updates the same document instead of creating another Pending Review.
+    const id="rps_"+String(recordingId||("rec_"+Date.now())).replace(/[^a-zA-Z0-9_-]/g,"_");
     const path="reading-progress/"+(user.classId||"class")+"/"+(user.studentId||user.id)+"/"+task.id+"-"+Date.now()+".webm";
     var tx=(transcriptTokenRef.current && transcriptTokenRef.current===recordingId)?String(transcript||"").trim():"";
     const fullRecordedSeconds=Math.max(Number(seconds)||0, await rpGetBlobDurationSeconds(blob));
@@ -12969,14 +12974,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v326 · RP Legacy Ghost Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v328 · RP Safe Scoring + Nav Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
-            <button onClick={()=>{setNavOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+            <button onClick={()=>{setNavOpen(false);setTimeout(()=>{try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}},80);}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
               <div>🎙️ RP {rpPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rpPendingCount}</span>}</div>
               {rpPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{rpPendingCount} recording{rpPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
