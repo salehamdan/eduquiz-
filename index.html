@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v334</title>
+<title>EduQuiz — Smart Assessment v335</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
 <!-- RP185_SCORING_RULES_V1_20260704 -->
 <!-- RP_SCORING_RULES_V1_202607: short/medium/long completion + mistake-rate + WCPM caps -->
+<!-- RP_ENGINE_V1_20261007: single-source strict word accuracy + acoustic flags + independent WCPM/fluency; shared teacher/student analysis -->
 <!-- RP188_TEACHER_COLORED_TRANSCRIPT_REPETITION_202607 -->
 <!-- RP_FLUENCY_REPETITION_RULES_V1_202607: word-by-word + repetition caps only -->
 <!-- RP190_COLORED_ANALYSIS_FIRST_MATCH_NOT_ZERO_20260704 -->
@@ -1839,9 +1840,11 @@ function rpTranscriptTokenStyle(kind){
   if(kind==='extra') return {...base,background:'#fed7aa',color:'#9a3412',borderColor:'#fdba74'};
   return base;
 }
-function RPColoredTranscript({reference, transcript}){
+function RPColoredTranscript({reference, transcript, analysis}){
   if(!transcript) return null;
   var a=rpTranscriptColorAnalysis(reference||'', transcript||'');
+  var misSet={}; ((analysis&&analysis.mispronunciations)||[]).forEach(function(f){if(f&&Number.isFinite(Number(f.refIndex)))misSet[Number(f.refIndex)]=true;});
+  (a.tokens||[]).forEach(function(t){ if(t&&t.kind==='correct'&&misSet[Number(t.refIndex)]){ t.kind='wrong'; t.title='Mispronunciation / acoustic evidence'; a.summary.correct=Math.max(0,(a.summary.correct||0)-1); a.summary.wrong=(a.summary.wrong||0)+1; } });
   var sm=a.summary||{};
   return <div style={{marginTop:'8px',padding:'9px',border:'1px solid #e2e8f0',borderRadius:'12px',background:'#ffffff'}}>
     <div style={{fontSize:'11px',fontWeight:900,color:'#334155',marginBottom:'5px'}}>📝 Student Transcript</div>
@@ -2787,22 +2790,48 @@ async function rpDetailedAudioEvidence(sub, task){
   return {text:String(a.text||'').trim(),confidenceWords:rpLogprobWordConfidence(a.logprobs||[]),words:timed.words||[],duration:Number(timed.duration)||null};
 }
 function rpAnalyzeV2(reference, transcript, seconds, level, evidence, sensitivity){
-  const base=rpAnalyze(reference,transcript,seconds,level); const flags=rpPronunciationFlags(reference,transcript,(evidence&&evidence.confidenceWords)||[],sensitivity||'normal');
-  const pe=rpPauseExpressionFromWords((evidence&&evidence.words)||[],reference); const total=Math.max(1,base.totalWords||rpWords(reference).length); const mis=flags.length;
-  const accuracy=Math.max(0,Math.round(((Math.max(0,(base.correctWords||0)-mis))/total)*100));
-  const readSecs=pe.readingSeconds||Number(seconds)||0; const correctForWcpm=Math.max(0,(base.correctWords||0)-mis); const wcpm=readSecs>0?Math.round(correctForWcpm/(readSecs/60)):base.wcpm;
-  const paceScore=rpSpeedScoreFromWcpm(wcpm,level,total); const expression=Math.max(0,Math.min(100,pe.expressionScore));
-  const fluency=Math.max(0,Math.min(100,Math.round(accuracy*.40+paceScore*.25+expression*.35)));
-  const mistakes=(base.mistakeCount||0)+mis; let finalScore=Math.max(0,Math.min(100,Math.round(accuracy*.45+paceScore*.20+expression*.35)));
-  // V327: quality guardrails. Expression/pace must not hide a materially inaccurate or broken reading.
-  const errorRate=Math.min(1,Math.max(0,mistakes/total));
-  const pauseCount=Number(pe.longPauses||0)+Number(pe.unexpectedPauses||0);
-  let fluency2=fluency;
-  if(accuracy<70 || errorRate>=0.30){ fluency2=Math.min(fluency2,55); finalScore=Math.min(finalScore,60); }
-  else if(accuracy<80 || errorRate>=0.20){ fluency2=Math.min(fluency2,68); finalScore=Math.min(finalScore,72); }
-  else if(accuracy<90 || errorRate>=0.10){ fluency2=Math.min(fluency2,82); finalScore=Math.min(finalScore,85); }
-  if(pauseCount>=Math.max(4,Math.ceil(total/12))){ fluency2=Math.min(fluency2,72); finalScore=Math.min(finalScore,82); }
-  return {...base,accuracy,rawAccuracy:accuracy,wcpm,fluency:fluency2,finalScore,score:finalScore,correctWords:correctForWcpm,mistakeCount:mistakes,mistakes,pronunciationScore:Math.max(0,Math.round(100-(mis/total*100))),mispronunciations:flags,expressionScore:expression,paceScore,longPauses:pe.longPauses,unexpectedPauses:pe.unexpectedPauses,readingSeconds:readSecs,analysisVersion:3,scoringFormula:'V328 sequence accuracy + acoustic-confidence pronunciation flags + pace + expression caps'};
+  // RP_ENGINE_V1: one scoring source for new/re-analyzed attempts.
+  // Transcript aligns the reading; acoustic confidence can downgrade a matched word,
+  // but transcript recognition alone never upgrades a missing/wrong word.
+  const base=rpAnalyze(reference,transcript,seconds,level);
+  const flags=rpPronunciationFlags(reference,transcript,(evidence&&evidence.confidenceWords)||[],sensitivity||'normal');
+  const pe=rpPauseExpressionFromWords((evidence&&evidence.words)||[],reference);
+  const total=Math.max(1,Number(base.totalWords)||rpWords(reference).length||1);
+  const uniqueMis=new Map();
+  (flags||[]).forEach(f=>{ if(f&&Number.isFinite(Number(f.refIndex))) uniqueMis.set(Number(f.refIndex),f); });
+  const mis=[...uniqueMis.values()];
+  const transcriptCorrect=Math.max(0,Number(base.correctWords)||0);
+  const correctWords=Math.max(0,transcriptCorrect-mis.length);
+  const accuracy=Math.max(0,Math.min(100,Math.round((correctWords/total)*100)));
+
+  // WCPM is a measurement, not a grade. Prefer timestamped active-reading duration.
+  const readSecs=Math.max(.1,Number(pe.readingSeconds)||Number(seconds)||Number(base.seconds)||.1);
+  const wcpm=Math.max(0,Math.round(correctWords/(readSecs/60)));
+
+  // Fluency is deliberately separate from Accuracy: pauses/continuity dominate it.
+  // Fast accurate readers are not penalized merely for being fast.
+  const pauseBurden=Math.min(100,((Number(pe.longPauses)||0)*14)+((Number(pe.unexpectedPauses)||0)*6));
+  const repetitionBurden=Math.min(35,(Number(base.repetitionCount)||0)*5);
+  const continuity=Math.max(0,100-pauseBurden-repetitionBurden);
+  const expression=Math.max(0,Math.min(100,Number(pe.expressionScore)||70));
+  const paceScore=rpSpeedScoreFromWcpm(wcpm,level,total);
+  let fluency=Math.round((expression*.55)+(continuity*.30)+(Math.min(100,paceScore)*.15));
+  fluency=Math.max(0,Math.min(100,fluency));
+
+  // Final AI score remains reviewable; teacher score is authoritative after Accept.
+  // Accuracy has the largest weight; WCPM contributes only lightly through paceScore.
+  const finalScore=Math.max(0,Math.min(100,Math.round((accuracy*.60)+(fluency*.30)+(Math.min(100,paceScore)*.10))));
+  const baseMistakes=Math.max(0,Number(base.mistakeCount)||0);
+  const mistakes=baseMistakes+mis.length;
+  return {...base,
+    accuracy,rawAccuracy:accuracy,wcpm,fluency,finalScore,score:finalScore,
+    correctWords,mistakeCount:mistakes,mistakes,
+    pronunciationScore:Math.max(0,Math.round(100-(mis.length/total*100))),
+    mispronunciations:mis,expressionScore:expression,paceScore,
+    longPauses:Number(pe.longPauses)||0,unexpectedPauses:Number(pe.unexpectedPauses)||0,
+    readingSeconds:readSecs,analysisVersion:4,engineVersion:'RP_ENGINE_V1',
+    scoringFormula:'RP_ENGINE_V1: strict ordered accuracy + acoustic downgrade; WCPM measured separately; fluency from expression/continuity/pace; final 60% accuracy + 30% fluency + 10% pace'
+  };
 }
 async function rpTranscribeSubmissionAudio(sub, task){
   const key=String((task&&task.openaiKey)||localStorage.getItem("rp_openai_api_key")||"").trim();
@@ -7385,7 +7414,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",lineHeight:1.6}}>Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
       {rpSum.last && rpStudentHasColoredPreview(rpSum.last, tasks.find(x=>String(x.id)===String(rpSum.last.taskId))||tasks[0]) && <div style={{marginTop:"10px",padding:"8px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"12px"}}>
         <div style={{fontSize:"11px",fontWeight:900,color:"#92400e",marginBottom:"5px"}}>🧩 Colored Analysis — المحاولة الأخيرة قبل اعتماد المعلم</div>
-        <RPColoredTranscript reference={rpStudentReference(rpSum.last, tasks.find(x=>String(x.id)===String(rpSum.last.taskId))||tasks[0])} transcript={rpStudentTranscript(rpSum.last)}/>
+        <RPColoredTranscript reference={rpStudentReference(rpSum.last, tasks.find(x=>String(x.id)===String(rpSum.last.taskId))||tasks[0])} transcript={rpStudentTranscript(rpSum.last)} analysis={rpSum.last&&rpSum.last.analysis}/>
       </div>}
     </Card>
     {recentSubmit&&rpRecentSubmitStillPending(recentSubmit)&&<Card style={{marginBottom:"10px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
@@ -7437,7 +7466,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
               {(lastAccVal!=null||lastWcpmVal!=null||lastFluencyVal!=null||lastMistakesVal!=null) && <div style={{fontSize:"11px",color:C.tx,marginTop:"3px"}}>🎯 {lastAccVal==null?"-":lastAccVal+"%"} accuracy · ⚡ {lastWcpmVal==null?"-":lastWcpmVal} WCPM · 🌊 {lastFluencyVal==null?"-":lastFluencyVal+"%"} fluency · 📖 {lastWordsText} words · ❌ {lastMistakesVal==null?"-":lastMistakesVal} mistakes</div>}
               {rpStudentHasColoredPreview(last,t) && <div style={{marginTop:"8px",padding:"7px",background:"#fff",border:"1px solid #fde68a",borderRadius:"10px"}}>
                 <div style={{fontSize:"11px",fontWeight:900,color:"#92400e",marginBottom:"5px"}}>🧩 Colored Analysis — قبل اعتماد المعلم</div>
-                <RPColoredTranscript reference={rpStudentReference(last,t)} transcript={rpStudentTranscript(last)}/>
+                <RPColoredTranscript reference={rpStudentReference(last,t)} transcript={rpStudentTranscript(last)} analysis={last&&last.analysis}/>
               </div>}
             </div>}
             {isApproved && <div style={{marginTop:"5px",padding:"6px 9px",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"7px"}}>
@@ -7649,7 +7678,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function reanalyzeV2(sub){
     const bid="reanalyze_v2_"+sub.id;
-    try{setRpButton(bid,"Re-analyzing…");setMsg("Re-analyzing this attempt with Reading Progress V2…");await analyzeOne(sub,true);setMsg("✅ V2 analysis completed for this attempt only. Old analysis was preserved for comparison.");await reload();}
+    try{setRpButton(bid,"Re-analyzing…");setMsg("Re-analyzing this attempt with Reading Progress Engine V1…");await analyzeOne(sub,true);setMsg("✅ Engine V1 analysis completed for this attempt only. Old analysis was preserved for comparison.");await reload();}
     catch(e){setMsg("⚠️ Re-analysis failed. The old result was kept unchanged: "+(e.message||e));}
     finally{clearRpButton(bid);}
   }
@@ -8075,7 +8104,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           </div>
         </div>
         {s.analysis&&<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"6px",marginTop:"8px"}}><Stat icon="🎯" label="Accuracy" value={(rpMetricFromSubmission(s,"accuracy")??"-")+(rpMetricFromSubmission(s,"accuracy")===null?"":"%")} color={gc(rpMetricFromSubmission(s,"accuracy")||0)}/><Stat icon="⚡" label="WCPM" value={rpMetricFromSubmission(s,"wcpm")??"-"} color={C.p}/><Stat icon="📖" label="Words" value={(rpMetricFromSubmission(s,"correctWords")??"-")+"/"+(rpMetricFromSubmission(s,"totalWords")??"-")} color={C.pu}/><Stat icon="🔁" label="Reread" value={Number(s.analysis.repetitionCount??((s.analysis.repeated||[]).length))||0} color={C.w}/><Stat icon="❌" label="Mistakes" value={rpMetricFromSubmission(s,"mistakes")??"-"} color={C.d}/></div>}{s.analysis&&Number(s.analysisVersion||s.analysis.analysisVersion||1)>=2&&<div style={{fontSize:"10px",color:C.mu,marginTop:"7px",padding:"7px",background:"#f8fafc",borderRadius:"9px"}}>Pronunciation: <b>{s.analysis.pronunciationScore??"—"}%</b> · Mispronunciation: <b>{(s.analysis.mispronunciations||[]).length}</b> · Self-correction: <b>{s.analysis.selfCorrections||0}</b> · Expression: <b>{s.analysis.expressionScore??"—"}%</b> · Pace: <b>{s.analysis.paceScore??"—"}%</b> · Long pauses: <b>{s.analysis.longPauses||0}</b> · Unexpected pauses: <b>{s.analysis.unexpectedPauses||0}</b>{s.previousAnalysis&&<span> · Previous: Acc <b>{s.previousAnalysis.analysis&&s.previousAnalysis.analysis.accuracy}%</b> / Fluency <b>{s.previousAnalysis.analysis&&s.previousAnalysis.analysis.fluency}%</b></span>}</div>}
-        {s.transcript&&<RPColoredTranscript reference={s.referenceText||s.reference||s.text||((t&&t.text)||"")} transcript={s.transcript}/>}
+        {s.transcript&&<RPColoredTranscript reference={s.referenceText||s.reference||s.text||((t&&t.text)||"")} transcript={s.transcript} analysis={s.analysis}/>}
       </div>;
     })}</Card>
   </div>;
@@ -13089,7 +13118,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v334 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v335 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
