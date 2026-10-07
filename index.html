@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v333</title>
+<title>EduQuiz — Smart Assessment v334</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,7 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- V333_STABLE_LOGIN_RESULTS_RP_ATOMIC_SCORE_20261007 -->
+<!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
 <!-- V330_LOGIN_FAST_CACHE_20261007: RP pending idempotency + student 3430 active-roster repair + lightweight login -->
 <!-- V328_RP_PRONUNCIATION_CONFIDENCE_TEACHER_OVERRIDE_PRIVATE_20261006 -->
@@ -13089,7 +13089,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v333 · Safe Repair" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v334 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -14012,7 +14012,7 @@ function App() {
       const sess=loadSession();
       // Show cached dashboard immediately when available, then refresh Firebase in the background.
       const cached=eqLoadFastDataCache();
-      const useCachedStartup = cached && !data && !(sess && String(sess.role||"")!=="student");
+      const useCachedStartup = cached && !data;
       if(useCachedStartup){
         try{
           setData(cached);
@@ -14025,7 +14025,12 @@ function App() {
       // is loaded after successful login, not before the login screen can open.
       // V333: startup/login must never wait for heavy dashboard/RP/result collections.
       // Load only the light authentication roster first; hydrate the full dashboard after first paint.
-      const d = await loadLoginData(); setData(d);
+      const d = await loadLoginData();
+      // V334: when a valid teacher session already has a cached dashboard, keep that usable
+      // dashboard on screen. The lightweight auth snapshot is only for validation; full data
+      // refreshes in the background. This removes the long blank/login wait without touching data.
+      const keepCachedTeacher = !!(cached && sess && String(sess.role||"")!=="student");
+      if(!keepCachedTeacher) setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
@@ -14044,6 +14049,10 @@ function App() {
     if(!user) return;
     let busy=false,last=0;
     const refresh=async()=>{
+      // V334: opening/closing the mobile keyboard can fire focus/visibility events.
+      // Never reload the app while the teacher is editing a field.
+      const ae=document.activeElement;
+      if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(String(ae.tagName||""))) return;
       const now=Date.now(); if(busy || now-last<45000) return; last=now;
       busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
@@ -15532,7 +15541,7 @@ document.addEventListener("click", function(e){
       const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
       const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){
         const rec=recordsLive().find(x=>x.id===rid) || records().find(x=>x.id===rid);
-        if(st==="accepted" && !canAcceptRecord(rec)) return alert("حلّل التسجيل أولًا قبل القبول.");
+        if(st==="accepted" && !(canAcceptRecord(rec) || (rpAttemptState(rec)==="accepted" && rpHasAcceptableResult(rec)))) return alert("حلّل التسجيل أولًا قبل القبول.");
         if(st==="retake_allowed"&&!confirm("السماح للطالب بالتسجيل مرة أخرى؟"))return;
         if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
@@ -15555,7 +15564,10 @@ document.addEventListener("click", function(e){
           const upd=rpBuildRejectedSubmission(rec||{id:rid},reason);
           action=(async function(){ await updateRecord(rid,upd); await rpApplyFinalDecisionToStudentTask({...upd,id:rid},"rejected",reason); })();
         } else action=updateRecord(rid,{status:st,deleted:false});
-        action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        action.then(async()=>{
+          if(st==="accepted") rpTeacherDrafts.delete(String(rid));
+          try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();
+        }).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
     panel.addEventListener("input",e=>{
@@ -15564,6 +15576,9 @@ document.addEventListener("click", function(e){
       // V333: score/notes stay as an on-screen draft until Accept is pressed.
       // No status mutation and no cloud write while the teacher is typing.
       e.target.dataset.rpDirty="1";
+      const id=sid||nid, d=rpTeacherDrafts.get(String(id))||{};
+      if(sid) d.score=e.target.value; if(nid) d.notes=e.target.value;
+      rpTeacherDrafts.set(String(id),d);
     });
     panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search"){rpDrawerVisibleLimit=10;renderCards();}});
     panel.addEventListener("change",e=>{
@@ -15988,8 +16003,20 @@ document.addEventListener("click", function(e){
     return filtered;
   }
 
+  const rpTeacherDrafts=new Map();
+  function rpCaptureTeacherDrafts(panel){
+    if(!panel) return;
+    panel.querySelectorAll('[data-score],[data-notes]').forEach(function(el){
+      const id=el.getAttribute('data-score')||el.getAttribute('data-notes'); if(!id)return;
+      const d=rpTeacherDrafts.get(id)||{};
+      if(el.hasAttribute('data-score')) d.score=el.value; else d.notes=el.value;
+      rpTeacherDrafts.set(id,d);
+    });
+  }
   async function renderCards(){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
+    // V334: preserve teacher typing even if another safe RP refresh occurs.
+    rpCaptureTeacherDrafts(panel);
     try{ if(typeof window.rpRunTeacherAutoNowSilent==="function" && (!window.__rpAutoLastRun || Date.now()-window.__rpAutoLastRun>8000)){ window.__rpAutoLastRun=Date.now(); setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},80); } }catch(_e){}
     try{ await rpRefreshRosters(true); }catch(_e){ try{ rpRefreshRosters(false); }catch(__e){} }
     let allLocalRaw=recordsFastWithBackgroundSync();
@@ -16038,10 +16065,15 @@ document.addEventListener("click", function(e){
       const url=audioAvailable?"lazy://rp-audio":"";
       const audioSize=r.audioSize||0;
       const audioType=r.audioType||"audio/webm";
-      const acceptReady=canAcceptRecord(r);
+      const alreadyAccepted=rpAttemptState(r)==="accepted";
+      // V334: an already accepted/analyzed recording may always be re-evaluated by the teacher.
+      const acceptReady=alreadyAccepted ? rpHasAcceptableResult(r) : canAcceptRecord(r);
       const acceptBg=acceptReady?"#16a34a":"#94a3b8";
-      const acceptLabel=acceptReady?"Accept":"Analyze first";
-      studentHtml+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${rpAttemptState(r)} · <b>Raw:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<button type="button" data-rp-play="${r.id}" style="margin-top:8px;padding:10px 14px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;font-size:13px">▶️ Play full recording</button>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${rpMetricValue(r,"accuracy")===""?"-":rpMetricValue(r,"accuracy")}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${rpMetricValue(r,"wcpm")===""?"-":rpMetricValue(r,"wcpm")}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${rpMetricValue(r,"fluency")===""?"-":rpMetricValue(r,"fluency")}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${rpMetricValue(r,"mistakes")===""?"-":rpMetricValue(r,"mistakes")}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${rpMetricValue(r,"correctWords")===""?"-":rpMetricValue(r,"correctWords")}/${rpMetricValue(r,"totalWords")===""?"-":rpMetricValue(r,"totalWords")}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${rpHtmlEscape(r.transcript)}</div>${rpColoredTranscriptHtml((r.referenceText||r.reference||r.text||""), r.transcript)}`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${r.teacherScore||""}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${r.teacherNotes||""}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+      const acceptLabel=acceptReady?(alreadyAccepted?"Accept New Grade":"Accept"):"Analyze first";
+      const draft=rpTeacherDrafts.get(String(r.id))||{};
+      const scoreValue=(draft.score!==undefined)?draft.score:(r.teacherScore||"");
+      const notesValue=(draft.notes!==undefined)?draft.notes:(r.teacherNotes||"");
+      studentHtml+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${rpAttemptState(r)} · <b>Raw:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<button type="button" data-rp-play="${r.id}" style="margin-top:8px;padding:10px 14px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;font-size:13px">▶️ Play full recording</button>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${rpMetricValue(r,"accuracy")===""?"-":rpMetricValue(r,"accuracy")}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${rpMetricValue(r,"wcpm")===""?"-":rpMetricValue(r,"wcpm")}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${rpMetricValue(r,"fluency")===""?"-":rpMetricValue(r,"fluency")}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${rpMetricValue(r,"mistakes")===""?"-":rpMetricValue(r,"mistakes")}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${rpMetricValue(r,"correctWords")===""?"-":rpMetricValue(r,"correctWords")}/${rpMetricValue(r,"totalWords")===""?"-":rpMetricValue(r,"totalWords")}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${rpHtmlEscape(r.transcript)}</div>${rpColoredTranscriptHtml((r.referenceText||r.reference||r.text||""), r.transcript)}`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${rpHtmlEscape(scoreValue)}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${rpHtmlEscape(notesValue)}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
 
         }
         out+=studentHtml+`</div></details>`;
