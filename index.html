@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v332</title>
+<title>EduQuiz — Smart Assessment v333</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,6 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
+<!-- V333_STABLE_LOGIN_RESULTS_RP_ATOMIC_SCORE_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
 <!-- V330_LOGIN_FAST_CACHE_20261007: RP pending idempotency + student 3430 active-roster repair + lightweight login -->
 <!-- V328_RP_PRONUNCIATION_CONFIDENCE_TEACHER_OVERRIDE_PRIVATE_20261006 -->
@@ -7132,10 +7133,8 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   }
   const [task,setTask]=useState(null); const [recentSubmit,setRecentSubmit]=useState(null); const [recording,setRecording]=useState(false); const [blob,setBlob]=useState(null); const [audioUrl,setAudioUrl]=useState("");
   const [seconds,setSeconds]=useState(0); const [transcript,setTranscript]=useState(""); const [msg,setMsg]=useState(""); const [modelPlaying,setModelPlaying]=useState(false); const [modelRate,setModelRate]=useState(0.85); const [submitting,setSubmitting]=useState(false); const [sentBlobKey,setSentBlobKey]=useState(""); const [recordingId,setRecordingId]=useState(""); const mediaRef=useRef(null); const chunksRef=useRef([]); const tRef=useRef(null); const recRef=useRef(null); const modelRef=useRef(null); const audioCtxRef=useRef(null); const analyserRef=useRef(null); const voiceRef=useRef(false); const recTokenRef=useRef(""); const transcriptTokenRef=useRef("");
-  useEffect(()=>{
-    const timer=setInterval(()=>{ try{ if(typeof reload==="function") reload(); }catch(e){} },5000);
-    return ()=>clearInterval(timer);
-  },[reload,user&&user.id]);
+  // V333: no 5-second full reload. It was resetting result views and unsaved RP teacher input.
+  useEffect(()=>{},[user&&user.id]);
   function currentBlobKey(){return blob?String(blob.size)+"_"+String(blob.type)+"_"+String(task&&task.id||"")+"_"+String(recordingId||""):"";}
   function submittedRecordingIds(){try{return JSON.parse(localStorage.getItem("rp_submitted_recording_ids")||"[]");}catch(e){return []}}
   function markRecordingSubmitted(id){try{localStorage.setItem("rp_submitted_recording_ids",JSON.stringify([...new Set([...submittedRecordingIds(),id])]))}catch(e){}}
@@ -13090,7 +13089,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v332 · Safe Repair" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v333 · Safe Repair" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -14024,7 +14023,9 @@ function App() {
       }
       // V329: logged-out startup only needs authentication/class data. Heavy dashboard/RP data
       // is loaded after successful login, not before the login screen can open.
-      const d = sess ? await loadAllData() : await loadLoginData(); setData(d);
+      // V333: startup/login must never wait for heavy dashboard/RP/result collections.
+      // Load only the light authentication roster first; hydrate the full dashboard after first paint.
+      const d = await loadLoginData(); setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
@@ -14034,23 +14035,22 @@ function App() {
         if(linked){saveSession(linked);setUser(fixAhmedStudent(linked));}
       }
       setLoading(false);
+      // V333: hydrate heavy collections only after the usable screen is already visible.
+      if(sess){ setTimeout(function(){ reload().catch(function(e){console.warn("V333 background hydrate failed",e);}); },700); }
     })();
   },[]);
 
   useEffect(()=>{
     if(!user) return;
-    let busy=false;
+    let busy=false,last=0;
     const refresh=async()=>{
-      if(busy) return;
-      busy=true;
-      try{ await reload(); }catch(e){}
-      finally{ busy=false; }
+      const now=Date.now(); if(busy || now-last<45000) return; last=now;
+      busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
     const onVis=()=>{ if(document.visibilityState==="visible") refresh(); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVis);
-    const timer=setInterval(refresh, 7000);
-    return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); clearInterval(timer); };
+    return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); };
   },[user&&user.id,user&&user.role]);
 
   // v274 — keep the teacher session alive for 55 minutes from the LAST real activity.
@@ -15537,7 +15537,19 @@ document.addEventListener("click", function(e){
         if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
         const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
         let action;
-        if(st==="accepted") action=acceptRecordFull(rid);
+        if(st==="accepted"){
+          const scoreEl=panel.querySelector('[data-score="'+CSS.escape(rid)+'"]');
+          const notesEl=panel.querySelector('[data-notes="'+CSS.escape(rid)+'"]');
+          const raw=scoreEl?String(scoreEl.value||'').trim():'';
+          const manual=(raw!==''&&Number.isFinite(Number(raw)))?Math.max(0,Math.min(100,Math.round(Number(raw)))):null;
+          action=(async function(){
+            if(manual!==null){
+              const now=new Date().toISOString();
+              await updateRecord(rid,{teacherScore:manual,finalScore:manual,score:manual,teacherNotes:notesEl?notesEl.value:(rec&&rec.teacherNotes)||'',teacherOverride:true,teacherOverrideAt:now,status:'accepted',reviewStatus:'accepted',teacherReview:'accepted',teacherReviewStatus:'accepted',studentStatus:'accepted',analysisStatus:'completed',accepted:true,approved:true,teacherAccepted:true,teacherApproved:true,pending:false,visibleToStudent:true,scoreVisible:true,acceptedAt:(rec&&rec.acceptedAt)||now,approvedAt:(rec&&rec.approvedAt)||now,updatedAt:now});
+              await rpApplyFinalDecisionToStudentTask({...rec,id:rid,teacherScore:manual,finalScore:manual,score:manual,status:'accepted',visibleToStudent:true,scoreVisible:true},'accepted','');
+            }else await acceptRecordFull(rid);
+          })();
+        }
         else if(st==="rejected"){
           const reason=window.prompt("سبب الرفض (اختياري):","")||"";
           const upd=rpBuildRejectedSubmission(rec||{id:rid},reason);
@@ -15546,16 +15558,13 @@ document.addEventListener("click", function(e){
         action.then(async()=>{try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();}).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
       }
     });
-    panel.addEventListener("input",e=>{const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes"); if(!sid&&!nid)return; const id=sid||nid; const a=records(); const i=a.findIndex(r=>r.id===id); if(i>=0){ if(sid){
-      const raw=String(e.target.value||'').trim();
-      a[i].teacherScore=raw;
-      if(raw!=='' && Number.isFinite(Number(raw))){
-        const manual=Math.max(0,Math.min(100,Math.round(Number(raw))));
-        a[i].teacherScore=manual; a[i].finalScore=manual; a[i].score=manual; a[i].teacherOverride=true; a[i].teacherOverrideAt=new Date().toISOString(); a[i].status="accepted"; a[i].reviewStatus="accepted"; a[i].teacherReview="accepted"; a[i].teacherReviewStatus="accepted"; a[i].studentStatus="accepted"; a[i].analysisStatus="completed"; a[i].accepted=true; a[i].approved=true; a[i].teacherAccepted=true; a[i].teacherApproved=true; a[i].pending=false; a[i].visibleToStudent=true; a[i].scoreVisible=true; a[i].acceptedAt=a[i].acceptedAt||new Date().toISOString(); a[i].approvedAt=a[i].approvedAt||a[i].acceptedAt;
-      }else{
-        a[i].teacherOverride=false;
-      }
-    } if(nid)a[i].teacherNotes=e.target.value; a[i].updatedAt=new Date().toISOString(); saveRecords(a); } clearTimeout(rpInputSaveTimer); rpInputSaveTimer=setTimeout(async()=>{try{const latest=records().find(r=>r.id===id); if(latest) await cloudSaveRecord(latest);}catch(_e){}},650);});
+    panel.addEventListener("input",e=>{
+      const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes");
+      if(!sid&&!nid)return;
+      // V333: score/notes stay as an on-screen draft until Accept is pressed.
+      // No status mutation and no cloud write while the teacher is typing.
+      e.target.dataset.rpDirty="1";
+    });
     panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search"){rpDrawerVisibleLimit=10;renderCards();}});
     panel.addEventListener("change",e=>{
       if(e.target.id==="rp-v11-class"){
@@ -16104,7 +16113,8 @@ document.addEventListener("click", function(e){
   }
 
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},4000);
+  // V333: do not rebuild the RP drawer every 4 seconds; this erased teacher-entered scores.
+  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},30000);
 })();
  // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
 </script>
