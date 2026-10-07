@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v328</title>
+<title>EduQuiz — Smart Assessment v330</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -208,7 +208,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 </head>
 <body>
-<!-- V329_THREE_SURGICAL_FIXES_20261007: RP pending idempotency + student 3430 active-roster repair + lightweight login -->
+<!-- V330_LOGIN_FAST_CACHE_20261007: RP pending idempotency + student 3430 active-roster repair + lightweight login -->
 <!-- V328_RP_PRONUNCIATION_CONFIDENCE_TEACHER_OVERRIDE_PRIVATE_20261006 -->
 <!-- V319_RP_V2_VISIBLE_REANALYZE_AND_VERSION_20261004 -->
 <!-- RP278_STABLE_STUDENT_DELETE_SYNC -->
@@ -3700,7 +3700,7 @@ function findPreloadedStudent(allUsers, studentId, name, classId) {
 }
 function partialIdHint(enteredId, officialId) { return null; }
 
-function Landing({onLogin, prefillQuiz}) {
+function Landing({onLogin, prefillQuiz, loginData}) {
   const [lang,setLang] = useState(()=>{ try{ const saved=localStorage.getItem("eq_lang"); if(saved)return saved; }catch(e){} return (navigator.language||"").toLowerCase().startsWith("ar")?"ar":"en"; });
   const T = LANG_TEXT[lang];
   const isAr = lang==="ar";
@@ -3723,6 +3723,10 @@ function Landing({onLogin, prefillQuiz}) {
   const [err,setErr] = useState(""); const [loading,setLoading] = useState(false);
   const [classes,setClasses] = useState([]);
   const [studentGooglePolicy,setStudentGooglePolicy] = useState("optional");
+  // V330: App already loaded the login roster before Landing is shown. Reuse that exact
+  // snapshot for the button press instead of downloading the same Firebase collections again.
+  const loginDataRef = useRef(loginData || null);
+  useEffect(()=>{ if(loginData && Array.isArray(loginData.users)) loginDataRef.current=loginData; },[loginData]);
   function activeLoginClassesFromData(d){
     // Login must match the visible Classes tab, not the hard-coded official class list.
     const live = eqRealActiveClassesFromData(d||{});
@@ -3738,17 +3742,26 @@ function Landing({onLogin, prefillQuiz}) {
 
   useEffect(()=>{
     eqHardCleanLoggedOutUI();
-    loadLoginData().then(function(d){
+    const applyLoginSnapshot=function(d){
+      if(!d) return;
+      loginDataRef.current=d;
       const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
       setClasses(active);
       const gp=(d.appSettings||[]).find(x=>x&&x.id==="student_google_registration_policy");
       setStudentGooglePolicy(gp&&gp.mode==="required"?"required":"optional");
-      if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){ 
+      if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
         const fallback=(active[0]&&active[0].id)||"";
         sf(x=>({...x,classId:fallback}));
         if(fallback) saveLoginMemory({classId:fallback});
       }
-    });
+    };
+    if(loginData && Array.isArray(loginData.users)){
+      // Zero extra Firebase reads on Landing mount.
+      applyLoginSnapshot(loginData);
+    }else{
+      // Safety fallback for unusual direct renders only.
+      loadLoginData().then(applyLoginSnapshot).catch(function(e){console.warn("V330 login snapshot fallback failed",e);});
+    }
   },[]);
 
   async function doResetPassword(){
@@ -3765,7 +3778,14 @@ function Landing({onLogin, prefillQuiz}) {
   async function doLogin() {
     if(!f.email){setErr("Enter your Student ID (or Email for teachers).");return;}
     setLoading(true); setErr("");
-    const d = await loadLoginData();
+    // V330 critical path: never re-download users/classes/settings/deletion collections here.
+    // Landing is rendered only after App has a login snapshot; use it synchronously.
+    let d = loginDataRef.current || loginData;
+    if(!d || !Array.isArray(d.users)){
+      // Defensive fallback only; normal login never reaches this branch.
+      d = await loadLoginData();
+      loginDataRef.current=d;
+    }
     const users = d.users;
     const firebaseUsers = Array.isArray(d.firebaseUsers) ? d.firebaseUsers : (FIREBASE_OK ? [] : users);
     const id = f.email.trim().toLowerCase();
@@ -13069,7 +13089,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v329 · RP Legacy Ghost Fix" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v330 · Login Fast Cache" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -14080,8 +14100,8 @@ function App() {
 
     function handleLogin(u){
       setUser(fixAhmedStudent(u));
-      // V329: authentication completes immediately; hydrate the heavy dashboard collections afterward.
-      setTimeout(function(){ reload().catch(function(e){console.warn("V329 post-login data refresh failed",e);}); },0);
+      // V330: authentication completes from the existing login snapshot; hydrate heavy collections after first paint.
+      setTimeout(function(){ reload().catch(function(e){console.warn("V330 post-login data refresh failed",e);}); },350);
     }
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} /* keep EQ_LOGIN_MEMORY_KEY so the student does not rewrite name/class/id/password each time */ try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
@@ -14100,7 +14120,7 @@ function App() {
     </div>;
   }
   // If opened via a quiz share link, ALWAYS show the quiz entry (guest), even if someone is logged in.
-  if(directQuiz && !user) return <Landing onLogin={handleLogin} prefillQuiz={directQuiz}/>;
+  if(directQuiz && !user) return <Landing onLogin={handleLogin} prefillQuiz={directQuiz} loginData={data}/>;
   if(directQuiz && user && user.role==="teacher"){
     // Teacher opened a student quiz link on their own device — let them choose
     return <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px",fontFamily:F}}>
@@ -14114,7 +14134,7 @@ function App() {
   if(directQuiz && user && user.role==="student"){
     // Student logged in with a quiz link - take them straight to the quiz (handled in StudentApp via directQuiz)
   }
-  if(!user||!data) return <Landing onLogin={handleLogin} prefillQuiz={directQuiz}/>;
+  if(!user||!data) return <Landing onLogin={handleLogin} prefillQuiz={directQuiz} loginData={data}/>;
 
   // Banner shown when a teacher is viewing as a student
   const parkedBanner = parkedTeacher ? (
