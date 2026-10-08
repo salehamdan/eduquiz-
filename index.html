@@ -208,6 +208,7 @@ try{
 <!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
+<!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -13119,7 +13120,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v342 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v343 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -16712,31 +16713,37 @@ function attemptCard(s){const t=DATA.tasks.find(x=>String(x.id)===String(s.taskI
 function tabSubs(el){const subs=visibleSubs().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));el.innerHTML='<div class="w12box"><b>Submissions</b><div style="font-size:12px;color:#64748b">حدد الطلاب ثم اطلب إعادة محاولة. الحذف يتزامن مع الطالب.</div><button id="retSel" class="w12btn" style="background:#f59e0b;color:white;margin-top:8px">Request Retake for Selected</button></div>'+(subs.map(s=>'<label class="w12box" style="display:flex;gap:8px;align-items:center"><input type="checkbox" class="subcheck" value="'+esc(s.id)+'"><span>'+esc(s.studentName||"Student")+' — '+esc(s.status||"pending_review")+'</span></label>'+attemptCard(s)).join("")||'<div class="w12box">No submissions yet.</div>');el.querySelector("#retSel").onclick=async()=>{const ids=Array.from(el.querySelectorAll(".subcheck:checked")).map(x=>x.value);if(!ids.length)return alert("حدد طالبًا أو أكثر");visibleSubs().forEach(s=>{if(ids.includes(String(s.id)))createRetake(s)});await save();tabSubs(el)};bindActions(el,()=>tabSubs(el))}
 function studentForSub(s){return users().find(u=>{const al=aliases(u);return al.has(String(s.studentId))||subStudentIds(s).some(x=>al.has(x))||String(s.studentName||"").includes(name(u))})||{name:s.studentName||"Student",studentId:s.studentId||"",id:s.studentId||"",classId:""}}
 function tabEval(el){
-  const tasks=DATA.tasks||[],subs=visibleSubs().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
-  el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">اختر المهمة أولاً، ثم اختر طالبًا من الطلاب الذين سلّموا هذه المهمة.</div><div style="display:grid;gap:10px;margin-top:10px"><select id="evTask" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px"><option value="">Select Writing Task</option>'+tasks.map((t,i)=>'<option value="'+esc(t.id)+'">'+esc(t.title||('Writing Task '+(i+1)))+'</option>').join("")+'</select><select id="evStudent" disabled style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px"><option value="">Select Student</option></select></div></div><div id="evInfo"></div><div id="evList"></div>';
-  const tsk=el.querySelector('#evTask'),stu=el.querySelector('#evStudent'),info=el.querySelector('#evInfo'),list=el.querySelector('#evList');
-  function studentKey(s){const u=studentForSub(s);return String((u&&u.id)||s.studentId||s.studentName||'student')}
-  function taskSubs(){return tsk.value?subs.filter(s=>String(s.taskId)===String(tsk.value)):[]}
-  function fillStudents(){
-    const arr=taskSubs(),m=new Map();
-    arr.forEach(s=>{const k=studentKey(s);if(!m.has(k))m.set(k,s)});
-    const rows=Array.from(m.entries()).sort((a,b)=>String(a[1].studentName||name(studentForSub(a[1]))||'').localeCompare(String(b[1].studentName||name(studentForSub(b[1]))||''),'ar'));
-    stu.innerHTML='<option value="">Select Student ('+rows.length+' submitted)</option>'+rows.map(([k,s])=>{const u=studentForSub(s);return'<option value="'+esc(k)+'">'+esc(name(u)||s.studentName||'Student')+(num(u)||s.studentId?' — '+esc(num(u)||s.studentId):'')+'</option>'}).join('');
-    stu.disabled=!tsk.value||!rows.length;stu.value='';
-    info.innerHTML=tsk.value?'<div class="w12box" style="font-size:12px;color:#64748b"><b>'+rows.length+'</b> students submitted this task.</div>':'';
-    list.innerHTML=tsk.value?(rows.length?'<div class="w12box" style="color:#64748b">Select a student to open the writing and evaluation.</div>':'<div class="w12box">No submissions for this task yet.</div>'):'';
+  const tasks=DATA.tasks||[];
+  let openId="";
+  el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">اختر المهمة، ثم اضغط اسم الطالب لفتح استجابته وتقييمه. بعد Accept يختفي الطالب من Pending ويبقى محفوظًا في Writing Results.</div><select id="evTask" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px;margin-top:10px"><option value="">Select Writing Task</option>'+tasks.map((t,i)=>'<option value="'+esc(t.id)+'">'+esc(t.title||('Writing Task '+(i+1)))+'</option>').join("")+'</select></div><div id="evSummary"></div><div id="evList"></div>';
+  const tsk=el.querySelector('#evTask'),sum=el.querySelector('#evSummary'),list=el.querySelector('#evList');
+  function latestPerStudent(arr){
+    const m=new Map();
+    arr.slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||""))).forEach(s=>{
+      const u=studentForSub(s),al=Array.from(aliases(u));
+      const k=String((u&&u.id)||al.find(x=>/^student_/.test(String(x)))||s.studentId||s.studentName||s.id);
+      if(!m.has(k))m.set(k,s);
+    });
+    return Array.from(m.values());
   }
-  function showStudent(){
-    if(!tsk.value||!stu.value){fillStudents();return}
-    const arr=taskSubs().filter(s=>studentKey(s)===String(stu.value));
-    if(!arr.length){list.innerHTML='<div class="w12box">No submission found.</div>';return}
-    const latest=arr[0];
-    info.innerHTML='<div class="w12box" style="font-size:12px;color:#64748b">Attempts for this student in this task: <b>'+arr.length+'</b>. Latest submission is shown below.</div>';
-    list.innerHTML=attemptCard(latest);
-    bindActions(list,()=>tabEval(el));
+  function isPending(s){return !['accepted','cancelled','deleted','retaken'].includes(String(s.status||'pending_review'));}
+  function render(){
+    const tid=String(tsk.value||'');
+    if(!tid){sum.innerHTML='';list.innerHTML='<div class="w12box" style="color:#64748b">Select a Writing Task to show submitted students.</div>';return;}
+    const all=latestPerStudent(visibleSubs().filter(s=>String(s.taskId)===tid));
+    const pending=all.filter(isPending);
+    const accepted=all.filter(s=>String(s.status||'')==='accepted');
+    sum.innerHTML='<div class="w12grid"><div class="w12box"><b>Submitted</b><br><span style="font-size:26px;font-weight:900">'+all.length+'</span></div><div class="w12box"><b>Pending Evaluation</b><br><span style="font-size:26px;font-weight:900;color:#d97706">'+pending.length+'</span></div><div class="w12box"><b>Accepted</b><br><span style="font-size:26px;font-weight:900;color:#16a34a">'+accepted.length+'</span></div></div>';
+    if(!pending.length){list.innerHTML='<div class="w12box" style="text-align:center;color:#16a34a;font-weight:900">✅ No pending writing evaluations for this task.</div>';return;}
+    list.innerHTML=pending.map(s=>{
+      const u=studentForSub(s),nm=name(u)||s.studentName||'Student',no=num(u)||s.studentId||'',isOpen=String(openId)===String(s.id);
+      return '<div class="w12box" style="padding:0;overflow:hidden"><button type="button" data-open="'+esc(s.id)+'" style="width:100%;border:0;background:white;padding:13px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;font-family:inherit"><span><b>'+esc(nm)+'</b><span style="display:block;font-size:11px;color:#64748b;margin-top:2px">'+esc(no)+(cname(u.classId)?' · '+esc(cname(u.classId)):'')+'</span></span><span style="font-size:12px;font-weight:900;color:#d97706">Pending '+(isOpen?'▲':'▼')+'</span></button><div data-body="'+esc(s.id)+'" style="display:'+(isOpen?'block':'none')+';padding:0 10px 10px">'+(isOpen?attemptCard(s):'')+'</div></div>';
+    }).join('');
+    list.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{openId=String(openId)===String(b.dataset.open)?'':String(b.dataset.open);render()});
+    bindActions(list,()=>{openId='';render()});
   }
-  tsk.onchange=fillStudents;
-  stu.onchange=showStudent;
+  tsk.onchange=()=>{openId='';render()};
+  render();
 }
 function tabScores(el){
   const us=users().filter(u=>selected(u)),tasks=DATA.tasks||[];
@@ -16757,7 +16764,7 @@ async function studentPanel(forcedStudent,strictMode){const body=panel("✍️ W
 setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
 })();
 </script>
-<!-- V341_WRITING_RESULTS_SUBMISSIONS_FIX_20261008 -->
+<!-- V343_WRITING_RESULTS_SUBMISSIONS_FIX_20261008 -->
 <!-- END_WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_20260627 -->
 
 
