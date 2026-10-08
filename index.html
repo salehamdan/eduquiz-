@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- V337_WRITING_STUDENT_CORRECT_ROUTE_20261008: top tab opens student-only Writing panel with explicit current student context; teacher panel remains teacher-only -->
+<!-- V338_WRITING_STUDENT_NATIVE_ROUTE_20261008: v335 base; student top-tab calls existing student Writing panel with strict displayed-student identity; no teacher/session leakage -->
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v337</title>
+<title>EduQuiz — Smart Assessment v338</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -5665,7 +5665,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
       <HDR title={"Hi, "+user.name.split(" ")[0]+"! 👋"} sub={myClass?myClass.name:"ID: "+user.studentId}
         right={<><Btn size="sm" onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}} color={C.mu}>🔄</Btn><Btn size="sm" onClick={()=>setProfileOpen(true)} color={C.p}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
-      <TabBar tabs={tabs} active={tab} onChange={(next)=>{if(next==="writing"){try{if(window.eqOpenWritingStudent)window.eqOpenWritingStudent(user);}catch(e){console.error(e);}return;}setTab(next);}}/>
+      <TabBar tabs={tabs} active={tab} onChange={(next)=>{if(next==="writing"){try{if(typeof window.eqOpenWritingForStudent==="function")window.eqOpenWritingForStudent(user);}catch(e){console.error("Writing student route",e);}return;}setTab(next);}}/>
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"780px",margin:"0 auto",padding:"14px"}}>
         {tab==="home" && <div>
@@ -13119,7 +13119,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v337 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v338 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
@@ -14511,4 +14511,2440 @@ document.addEventListener("click", function(e){
       const f=filters||rpDeleteSelectedFilters();
       const info=(typeof rpRecInfo==="function")?rpRecInfo(r||{}):{};
       const recTaskVal=(typeof taskKey==="function")?taskKey(r):String(r.taskId||r.taskKey||r.assignmentId||"");
-      co
+      const labelNorm=rpNorm((typeof taskLabel==="function")?taskLabel(r):(r.taskTitle||r.title||r.taskName||r.taskId||""));
+      const taskText=rpNorm([((typeof taskLabel==="function")?taskLabel(r):""),r.taskId,r.taskTitle,r.title,r.taskName,r.assignmentTitle].join(" "));
+      const stuText=rpNorm([info.name,info.sid,info.u&&info.u.id,r.studentName,r.studentId,r.studentNumber,r.studentUserId,r.userId,info.className,r.className].join(" "));
+      const okClass=!f.clsVal || String(info.classId||r.classId||"")===f.clsVal;
+      const okStu=!f.stuVal || String(info.sid||"")===f.stuVal || String(info.u&&info.u.id||"")===f.stuVal || rpNorm(info.name||"")===rpNorm(f.stuVal) || stuText.includes(rpNorm(f.stuVal));
+      const okSearch=!f.searchQ || stuText.includes(f.searchQ);
+      const okTask=!f.taskVal || (String(f.taskVal).startsWith("label::") ? labelNorm===String(f.taskVal).slice(7) : (String(recTaskVal)===String(f.taskVal) || taskText.includes(rpNorm(f.taskVal))));
+      return okClass && okStu && okSearch && okTask;
+    }catch(_e){return false;}
+  }
+  function rpDescribeDeleteFilters(f){
+    try{
+      const parts=[];
+      const classSel=document.getElementById("rp-v11-class");
+      const stuSel=document.getElementById("rp-v11-student");
+      const taskSel=document.getElementById("rp-v11-task");
+      if(f.clsVal) parts.push("الصف: "+(classSel&&classSel.selectedOptions[0]?classSel.selectedOptions[0].textContent:f.clsVal));
+      if(f.stuVal) parts.push("الطالب: "+(stuSel&&stuSel.selectedOptions[0]?stuSel.selectedOptions[0].textContent:f.stuVal));
+      if(f.taskVal) parts.push("المهمة: "+(taskSel&&taskSel.selectedOptions[0]?taskSel.selectedOptions[0].textContent:f.taskVal));
+      if(f.searchQ) parts.push("بحث: "+f.searchQ);
+      return parts.length?parts.join("\n"):"لا توجد فلاتر محددة";
+    }catch(_e){return "";}
+  }
+  async function rpDeleteStorageForRecord(r){
+    try{
+      if(!(typeof firebase!=="undefined" && firebase.storage)) return false;
+      const url=String(r.audioUrl||r.downloadURL||r.storageUrl||r.audioDownloadUrl||"");
+      if(!url || !/^https?:/i.test(url)) return false;
+      await firebase.storage().refFromURL(url).delete();
+      return true;
+    }catch(e){ return false; }
+  }
+  async function rpClearIndexedDbByKeepAudioIds(keepAudioIds){
+    try{
+      const db=await openDB();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(STORE,"readwrite");
+        const store=tx.objectStore(STORE);
+        const req=store.openCursor();
+        req.onsuccess=function(ev){
+          const cur=ev.target.result;
+          if(cur){
+            const id=String((cur.value&&cur.value.id)||cur.key||"");
+            if(!keepAudioIds.has(id)) cur.delete();
+            cur.continue();
+          }
+        };
+        tx.oncomplete=resolve;
+        tx.onerror=function(){reject(tx.error);};
+      });
+    }catch(e){ console.warn("RP181 IndexedDB cleanup failed", e&&e.message); }
+  }
+  function rpTargetChunkIds(records, targetIds){
+    const out=new Set();
+    try{
+      (records||[]).forEach(function(r){
+        const id=String(r&& (r.id||r._id) || "");
+        if(!id) return;
+        if(targetIds.has(id)){ out.add(id); return; }
+        const pid=rpParentSubmissionId(r);
+        if(pid && targetIds.has(String(pid))){ out.add(id); return; }
+        if(String(r.source||"")==="rp_audio_chunk"){
+          for(const tid of targetIds){ if(id.includes(String(tid))){ out.add(id); break; } }
+        }
+      });
+    }catch(_e){}
+    return out;
+  }
+  async function rpDeleteRecordsHard(targetIds, allRecords){
+    targetIds=new Set(Array.from(targetIds||[]).map(String).filter(Boolean));
+    let deleted=0, failed=0, storageDeleted=0;
+    const byId=new Map((allRecords||[]).map(function(r){return [String(r.id||r._id||""),r];}));
+    for(const id of targetIds){
+      const r=byId.get(String(id))||{id:id};
+      try{ if(await rpDeleteStorageForRecord(r)) storageDeleted++; }catch(_e){}
+      try{
+        if(typeof fsDel==="function") await fsDel("readingSubmissions", id);
+        else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(id).delete();
+        deleted++;
+      }catch(e){ failed++; console.warn("RP181 delete failed", id, e&&e.message); }
+    }
+    return {deleted,failed,storageDeleted};
+  }
+  async function rpAfterHardDelete(keepRecords){
+    keepRecords=(keepRecords||[]).map(function(r){return normalizeRecord({...r,id:String(r.id||r._id)});});
+    try{
+      [RP_KEY].concat(OLD_KEYS).forEach(function(k){ localStorage.setItem(k, JSON.stringify(keepRecords)); });
+      localStorage.setItem("eq_readingSubmissions", JSON.stringify(keepRecords));
+      localStorage.removeItem("rp_purge_keep_only_hussein_fayez_done_at");
+    }catch(e){}
+    const keepAudioIds=new Set(keepRecords.map(function(r){return String(r.audioId||"");}).filter(Boolean));
+    await rpClearIndexedDbByKeepAudioIds(keepAudioIds);
+    saveRecords(keepRecords);
+    try{ RP_LIVE_CACHE=keepRecords; __rpLastCloudSyncAt=Date.now(); }catch(_e){}
+    try{ await syncCloudIntoLocal(); }catch(_e){}
+    try{ if(typeof renderCards==="function") await renderCards(); }catch(_e){}
+  }
+  // RP256: restore the original protected cleanup. Delete every RP record except Hussein Fayez #3209.
+  function rpNormArabic(v){
+    return String(v||"").toLowerCase().replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/\s+/g," ").trim();
+  }
+  function rpIsHusseinFayezRecord(r){
+    try{
+      const info=(typeof rpRecInfo==="function")?rpRecInfo(r||{}):{};
+      const n=rpNormArabic((info&&info.name)||r.studentName||r.name||r.fullName||"");
+      const sid=String((info&&info.sid)||r.studentNumber||r.studentNo||r.studentId||r.idNumber||r.password||"").replace(/\D/g,"");
+      if(sid==="3209") return true;
+      return n.includes("حسين") && n.includes("محمد") && n.includes("الفايز");
+    }catch(_e){return false;}
+  }
+  async function rpHardPurgeAllExceptHusseinFayez(){
+    if(!isTeacher()){ alert("افتح حساب المعلم أولًا ثم نفذ التنظيف من زر RP."); return; }
+    const cutoffText=window.prompt("تنظيف تسجيلات Reading Progress القديمة فقط مع حماية حسين الفايز #3209.\nسيبقى كل تسجيل في أو بعد التاريخ الذي تكتبه.\nأدخل أول تاريخ للبيانات الحالية:","2026-08-01");
+    if(cutoffText===null)return;
+    const cutoffMs=Date.parse(String(cutoffText||"")+"T00:00:00");
+    if(!Number.isFinite(cutoffMs)){alert("التاريخ غير صحيح.");return;}
+    const phrase=window.prompt("سيتم حذف تسجيلات RP الأقدم من "+cutoffText+" فقط، مع حماية حسين بن محمد بن حسين الفايز (#3209).\nاكتب بالضبط: احذف القديم عدا حسين");
+    if(String(phrase||"").trim()!=="احذف القديم عدا حسين") return;
+    const btn=document.getElementById("rp-v11-hard-purge-all"),old=btn?btn.textContent:"";
+    if(btn){btn.disabled=true;btn.textContent="جاري تنظيف RP القديم...";}
+    let cloud=[];try{cloud=(typeof fsAll==="function")?(await fsAll("readingSubmissions")):[];}catch(e){cloud=[];}
+    const all=(cloud||[]).map(r=>({id:String(r.id||r._id||""),...r})).filter(r=>r&&r.id);
+    function timeMs(r){const vals=[r.updatedAt,r.reviewedAt,r.acceptedAt,r.approvedAt,r.analyzedAt,r.submittedAt,r.createdAt,r.timestamp,r.recordedAt,r.uploadedAt];for(const v of vals){if(v===undefined||v===null||v==="")continue;const n=Number(v);if(Number.isFinite(n)&&String(v).trim()!=="")return n<100000000000?n*1000:n;const t=Date.parse(String(v));if(Number.isFinite(t))return t;}return 0;}
+    const protectedDirect=all.filter(r=>r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&rpIsHusseinFayezRecord(r));
+    const protectedIds=new Set(protectedDirect.map(r=>String(r.id||"")));
+    const protectedAllIds=rpTargetChunkIds(all,protectedIds);
+    const oldDirectIds=new Set(all.filter(r=>r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&!rpIsHusseinFayezRecord(r)&&timeMs(r)>0&&timeMs(r)<cutoffMs).map(r=>String(r.id||"")));
+    const oldAllIds=rpTargetChunkIds(all,oldDirectIds);
+    protectedAllIds.forEach(id=>oldAllIds.delete(id));
+    const res=await rpDeleteRecordsHard(oldAllIds,all);
+    const keepDirect=all.filter(r=>r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&!oldAllIds.has(String(r.id||"")));
+    await rpAfterHardDelete(keepDirect);
+    if(btn){btn.disabled=false;btn.textContent=old||"🛡️ تنظيف RP القديم مع حماية حسين";}
+    alert("انتهى تنظيف RP القديم.\nالمحذوف: "+res.deleted+"\nفشل الحذف: "+res.failed+"\nالمحفوظ لحسين القديم: "+protectedDirect.length+"\nوالبيانات الحالية بعد "+cutoffText+" بقيت كما هي.");
+  }
+
+  async function rpHardPurgeAllRecords(){
+    if(!isTeacher()){ alert("افتح حساب المعلم أولًا."); return; }
+    const btn=document.getElementById("rp-v11-hard-purge-all");
+    const old=btn?btn.textContent:"";
+    let cloud=[]; try{ cloud=(typeof fsAll==="function") ? (await fsAll("readingSubmissions")) : []; }catch(e){ cloud=[]; }
+    const all=(cloud||[]).map(function(r){return {id:String(r.id||r._id||""), ...r};}).filter(function(r){return r&&r.id;});
+    const targetIds=new Set(all.map(function(r){return String(r.id||r._id||"");}).filter(Boolean));
+    const phrase=window.prompt("حذف نهائي لكل تسجيلات Reading Progress من Firebase والمنصة.\nالعدد المتوقع: "+targetIds.size+"\nلن يتم استثناء أي طالب.\nاكتب بالضبط: احذف كل التسجيلات");
+    if(String(phrase||"").trim()!=="احذف كل التسجيلات") return;
+    if(btn){btn.disabled=true;btn.textContent="جاري حذف كل التسجيلات...";}
+    const res=await rpDeleteRecordsHard(targetIds, all);
+    await rpAfterHardDelete([]);
+    if(btn){btn.disabled=false;btn.textContent=old||"🧹 حذف كل تسجيلات RP";}
+    alert("انتهى حذف كل تسجيلات RP.\nالمحذوف من Firestore: "+res.deleted+"\nفشل الحذف: "+res.failed+"\nملفات Storage المحذوفة إن وجدت: "+res.storageDeleted);
+  }
+  async function rpHardDeleteByCurrentFilters(){
+    if(!isTeacher()){ alert("افتح حساب المعلم أولًا."); return; }
+    const f=rpDeleteSelectedFilters();
+    if(!f.clsVal && !f.stuVal && !f.taskVal && !f.searchQ){
+      alert("اختر من القوائم: صفًا أو طالبًا أو مهمة، أو اكتب بحثًا أولًا. القوائم الآن تُحمّل من بيانات المنصة وليس من التسجيلات الظاهرة فقط.");
+      return;
+    }
+    const btn=document.getElementById("rp-v11-target-delete");
+    const old=btn?btn.textContent:"";
+    let cloud=[]; try{ cloud=(typeof fsAll==="function") ? (await fsAll("readingSubmissions")) : []; }catch(e){ cloud=[]; }
+    const local=recordsLive().concat(records());
+    const map=new Map();
+    (cloud||[]).concat(local||[]).forEach(function(r){ const id=String(r&& (r.id||r._id) || ""); if(id) map.set(id,{id:id,...r}); });
+    const all=Array.from(map.values());
+    const direct=all.filter(function(r){ return rpRecordMatchesDeleteFilters(r,f); });
+    const directIds=new Set(direct.map(function(r){return String(r.id||r._id||"");}).filter(Boolean));
+    const targetIds=rpTargetChunkIds(all,directIds);
+    const desc=rpDescribeDeleteFilters(f);
+    const phrase=window.prompt("حذف محدد لتسجيلات Reading Progress.\n"+desc+"\nالعدد المتوقع: "+targetIds.size+"\nاكتب بالضبط: احذف المحدد");
+    if(String(phrase||"").trim()!=="احذف المحدد") return;
+    if(btn){btn.disabled=true;btn.textContent="جاري حذف المحدد...";}
+    const res=await rpDeleteRecordsHard(targetIds, all);
+    const keep=all.filter(function(r){ return !targetIds.has(String(r.id||r._id||"")); });
+    await rpAfterHardDelete(keep);
+    if(btn){btn.disabled=false;btn.textContent=old||"🎯 حذف حسب الطالب/الصف/المهمة";}
+    alert("انتهى حذف التسجيلات المحددة.\n"+desc+"\nالمحذوف من Firestore: "+res.deleted+"\nفشل الحذف: "+res.failed+"\nملفات Storage المحذوفة إن وجدت: "+res.storageDeleted);
+  }
+  // Protected cleanup remains the default legacy action; full purge still exists under its explicit name.
+  try{ window.rpHardPurgeAllExceptHusseinFayez=rpHardPurgeAllExceptHusseinFayez; window.rpHardPurgeAllRecords=rpHardPurgeAllRecords; window.rpHardDeleteByCurrentFilters=rpHardDeleteByCurrentFilters; }catch(_e){}
+
+  let __rpLastCloudSyncAt=0;
+  function rpSameStudentTaskLoose(a,b){
+    try{
+      const ai=rpRecInfo(a||{}), bi=rpRecInfo(b||{});
+      const ad=String(ai.sid||a.studentNumber||a.studentId||"").replace(/\D/g,"");
+      const bd=String(bi.sid||b.studentNumber||b.studentId||"").replace(/\D/g,"");
+      const an=rpNorm(ai.name||a.studentName||"");
+      const bn=rpNorm(bi.name||b.studentName||"");
+      const sameStudent=!!((ad&&bd&&ad===bd) || (an&&bn&&an===bn));
+      const at=rpNorm(taskLabel(a)||a.taskTitle||a.taskId||"");
+      const bt=rpNorm(taskLabel(b)||b.taskTitle||b.taskId||"");
+      return sameStudent && !!at && at===bt;
+    }catch(_e){return false;}
+  }
+  async function syncCloudIntoLocal(){
+    const cloud=await cloudRecords();
+    (cloud||[]).forEach(function(r){ if(isDeleted(r) || rpAttemptState(r)==="deleted") rpRememberDeletedAttempt(r); });
+    let merged=mergeRecords(records(), cloud);
+    // RP178: final local/cloud tombstones are applied by exact attempt id/fingerprint, not by loose student+task,
+    // so deleted attempts do not return, while future new attempts for the same task still appear normally.
+    merged=merged.filter(function(r){
+      if(!r) return false;
+      if(isDeleted(r) || rpAttemptState(r)==="deleted") return true;
+      return !rpIsLocallyDeletedAttempt(r);
+    });
+    saveRecords(merged);
+    try{ RP_LIVE_CACHE=merged; }catch(_e){}
+    __rpLastCloudSyncAt=Date.now();
+    return merged;
+  }
+  function recordsFastWithBackgroundSync(){
+    const now=Date.now();
+    if(now-__rpLastCloudSyncAt>5000){
+      __rpLastCloudSyncAt=now;
+      syncCloudIntoLocal().then(function(){try{ if(document.getElementById("rp-v11-panel")?.style.display==="block") renderCards(); }catch(e){}});
+    }
+    return recordsLive();
+  }
+
+  function session(){ try{return JSON.parse(localStorage.getItem("eq_session")||"null")||{};}catch(e){return{};} }
+  function user(){
+    const u=session();
+    return {
+      id:String(u.id||u.studentId||u.ID||u.number||u.studentNumber||u.name||"unknown").trim(),
+      name:String(u.name||u.fullName||u.studentName||u.id||"Student").trim(),
+      className:String(u.className||u.classId||u.class||u.grade||"Unassigned").trim(),
+      role:String(u.role||u.type||"").toLowerCase()
+    };
+  }
+  function isTeacher(){
+    const u=user(), b=document.body.innerText||"";
+    return u.role.includes("teacher") || b.includes("TEACHER DASHBOARD") || b.includes("Teacher Dashboard") || b.includes("+ Quiz");
+  }
+  function taskId(){return "reading-progress-task-1";}
+  function latest(studentId){ const a=records().filter(r=>r.studentId===studentId&&r.taskId===taskId()); return a.length?a[a.length-1]:null; }
+  function canSubmit(studentId){
+    // التسجيل مفتوح دائمًا للطالب. لا نغلقه بسبب محاولة سابقة.
+    return true;
+  }
+  function finalScore(r){
+    try{
+      const v=rpAcceptedScoreFromSubmission(r);
+      if(v!=="" && v!==null && v!==undefined){
+        const n=Number(v);
+        if(Number.isFinite(n)) return Math.max(0,Math.min(100,Math.round(n)));
+      }
+    }catch(_e){}
+    const vals=[r&&r.teacherScore,r&&r.finalScore,r&&r.aiScore,r&&r.score,r&&r.analysis&&r.analysis.finalScore,r&&r.analysis&&r.analysis.score,r&&r.analysis&&r.analysis.accuracy,r&&r.accuracy].map(Number).filter(Number.isFinite);
+    return vals.length?Math.max(0,Math.min(100,Math.round(vals[0]))):"";
+  }
+
+  function rpMetricValue(r,k){
+    const v=rpMetricFromSubmission(r,k);
+    return v===null?"":v;
+  }
+  function isDeleted(r){ return !!(r && ((rpIsExactDeletedAttempt(r) && (r.deleted===true || String(r.status||"").toLowerCase()==="deleted")) || rpIsLocallyDeletedAttempt(r))); }
+  function isRejected(r){ return !!(r && r.status==="rejected"); }
+  function isRetakeOpen(r){ return !!(r && r.status==="retake_allowed"); }
+  function isTeacherApproved(r){
+    const manual=Number(r&&r.teacherScore);
+    return !!(r && (rpIsAcceptedSubmission(r) || (!Number.isNaN(manual) && manual>0)));
+  }
+  function isCountableAttempt(r){
+    // لا تدخل المحاولة في لوحة الأداء إلا بعد اعتماد المعلم أو وضع درجة يدوية.
+    // submitted / retake_allowed / rejected / deleted لا تدخل في المتوسط.
+    return !!(r && !isDeleted(r) && !isRejected(r) && isTeacherApproved(r) && finalScore(r)!=="");
+  }
+  async function rpDeleteAttemptPermanent(rec){
+    const base={...(rec||{}), id:String((rec&&rec.id)||"")};
+    if(!base.id) return null;
+    // v325: never physically remove the only cloud decision for an RP attempt.
+    // Save an exact tombstone with the same id so every student device/view receives the deletion
+    // and can suppress stale local attempt markers. No sibling attempt or task is touched.
+    rpRememberDeletedAttempt(base);
+    // RP324: purge the student's device-side mirror immediately. The cloud tombstone remains
+    // authoritative for other devices, but the teacher-eye view must not wait for a listener refresh.
+    try{
+      const local=JSON.parse(localStorage.getItem("rp_student_attempts")||"[]");
+      const kept=Array.isArray(local)?local.filter(function(x){return String(x&&x.id||"")!==base.id;}):[];
+      localStorage.setItem("rp_student_attempts",JSON.stringify(kept));
+      if(base.taskId){
+        const remaining=kept.filter(function(x){return x && String(x.taskId||"")===String(base.taskId||"") && x.deleted!==true && String(x.status||"").toLowerCase()!=="deleted";}).length;
+        try{ setAttemptCounter(base.taskId,remaining); }catch(_e){}
+      }
+    }catch(_e){}
+    const tomb=(typeof rpDeletedPatch==="function")?rpDeletedPatch(base,(window.__eqCurrentUser&&window.__eqCurrentUser.id)||"teacher"):{...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,visibleToStudent:false,scoreVisible:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const current=recordsLive().concat(records());
+    const keepMap=new Map();
+    current.forEach(function(r){
+      const id=String(r&& (r.id||r._id) || "");
+      if(!id || id===base.id) return;
+      if(rpIsLocallyDeletedAttempt(r)) return;
+      keepMap.set(id,{...r,id:id});
+    });
+    saveRecords(Array.from(keepMap.values()));
+    try{
+      if(typeof fsSet==="function") await fsSet("readingSubmissions", base.id, tomb);
+      else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(base.id).set(tomb,{merge:true});
+      else await cloudSaveRecord(tomb);
+    }catch(e){
+      console.warn("RP v325 tombstone save failed",e&&e.message);
+      throw e;
+    }
+    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:base.id,status:"deleted_exact"}})); }catch(_e){}
+    return tomb;
+  }
+
+  async function updateRecord(id,updates){
+    const a=records(), i=a.findIndex(r=>r.id===id);
+    if(i>=0){
+      const m={...a[i],...updates};
+      if(updates && updates.finalScore!==undefined){
+        m.finalScore=Math.max(0,Math.min(100,Math.round(Number(updates.finalScore)||0)));
+      }else{
+        m.finalScore=finalScore(m);
+      }
+      m.updatedAt=new Date().toISOString();
+      if(updates && (updates.analysisStatus==="Completed" || updates.transcript!==undefined || updates.accuracy!==undefined)){
+        m.analyzedAt=m.updatedAt;
+      }
+      if(updates && (updates.status || updates.teacherScore!==undefined || updates.teacherNotes!==undefined)){
+        if(updates.status==="accepted"||updates.status==="approved"){
+          Object.assign(m, rpBuildAcceptedSubmission(m, updates));
+        } else if(updates.status==="submitted" || updates.status==="pending" || updates.status==="pending_review"){
+          m.status="pending_review"; m.reviewStatus="pending"; m.teacherReview="pending"; m.teacherReviewStatus="pending"; m.studentStatus="pending"; m.visibleToStudent=true; m.scoreVisible=false;
+        } else if(updates.status==="rejected"){
+          m.status="rejected"; m.reviewStatus="rejected"; m.teacherReview="rejected"; m.teacherReviewStatus="rejected"; m.studentStatus="rejected";
+          m.analysisStatus="rejected"; m.pending=false; m.accepted=false; m.approved=false; m.teacherAccepted=false; m.teacherApproved=false;
+          m.visibleToStudent=true; m.scoreVisible=false; m.rejectedAt=m.rejectedAt||m.updatedAt;
+        } else if(updates.status==="deleted"){
+          m.status="deleted"; m.deleted=true; m.reviewStatus="deleted"; m.teacherReview="deleted"; m.teacherReviewStatus="deleted"; m.studentStatus="deleted";
+          m.visibleToStudent=false; m.scoreVisible=false; m.deletedAt=m.deletedAt||m.updatedAt;
+        } else if(updates.status==="retake_allowed"){
+          m.reviewStatus="retake_allowed"; m.teacherReview="retake_allowed"; m.teacherReviewStatus="retake_allowed"; m.studentStatus="retake_allowed";
+        }
+        m.reviewedAt=m.updatedAt;
+      }
+      a[i]=m;
+      saveRecords(a);
+      // RP120: Accept must persist before refreshing, otherwise Firebase old pending can reappear.
+      try{ await cloudSaveRecord(m); }catch(_e){}
+      try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:m.id,status:m.status}})); }catch(_e){}
+      return m;
+    }
+    return null;
+  }
+  async function setClass(cls, status){
+    const a=records();
+    const saves=[];
+    a.forEach(r=>{
+      if(r.className===cls){
+        r.status=status;
+        r.updatedAt=new Date().toISOString();
+        r.reviewedAt=r.updatedAt;
+        r.finalScore=finalScore(r);
+        saves.push(cloudSaveRecord(r));
+      }
+    });
+    saveRecords(a);
+    await Promise.allSettled(saves);
+  }
+
+  // Patch MediaRecorder and save the finished audio in IndexedDB.
+  if(window.MediaRecorder && !window.__rpV11Patched){
+    window.__rpV11Patched = true;
+    const Original = window.MediaRecorder;
+    window.MediaRecorder = function(stream, options){
+      const opts = Original.isTypeSupported("audio/webm;codecs=opus") ? {mimeType:"audio/webm;codecs=opus", audioBitsPerSecond:16000} : options;
+      const mr = new Original(stream, opts);
+      const chunks = [];
+      mr.addEventListener("dataavailable", e => { if(e.data && e.data.size) chunks.push(e.data); });
+      mr.addEventListener("stop", async () => {
+        try{
+          const blob = new Blob(chunks,{type:mr.mimeType||"audio/webm"});
+          const item = await saveAudio(blob);
+          window.__RP_LAST_AUDIO_ID = item.id;
+          window.__RP_LAST_AUDIO_URL = URL.createObjectURL(blob);
+          window.__RP_LAST_AUDIO_SIZE = item.size;
+          console.log("RP audio saved locally ✅");
+        }catch(err){
+          alert("Audio save failed: " + (err.message||err));
+        }
+      });
+      return mr;
+    };
+    window.MediaRecorder.isTypeSupported = Original.isTypeSupported.bind(Original);
+  }
+
+  function rpFallbackReadFastCache(){
+    try{ return (JSON.parse(localStorage.getItem("eq_fast_data_cache_v1")||"null")||{}).data || {}; }catch(e){ return {}; }
+  }
+  function rpFallbackCurrentTask(){
+    const d=rpFallbackReadFastCache();
+    const uRaw=session();
+    const body=document.body.innerText||"";
+    const tasks=(d.readingTasks||[]).filter(t=>t && t.deleted!==true && t.status!=="deleted");
+    const assigned=tasks.filter(t=>{
+      const cls=t.classIds||[]; const stu=t.studentIds||[];
+      const classOk=!cls.length || cls.includes(uRaw.classId) || cls.includes(uRaw.className);
+      const stuOk=!stu.length || stu.includes(uRaw.id) || stu.includes(uRaw.studentId);
+      return classOk && stuOk;
+    });
+    const candidates=assigned.length?assigned:tasks;
+    let best=null, bestScore=-1;
+    candidates.forEach(t=>{
+      let sc=0;
+      if(t.title && body.includes(t.title)) sc+=5;
+      if(t.text && body.includes(String(t.text).slice(0,35))) sc+=8;
+      if(String(t.status||"open")!=="closed") sc+=1;
+      if(sc>bestScore){best=t;bestScore=sc;}
+    });
+    return best || candidates[0] || null;
+  }
+  async function rpFallbackDeliverLatestAudio(){
+    try{
+      if(isTeacher()) return;
+      const audioId=window.__RP_LAST_AUDIO_ID;
+      if(!audioId) return;
+      if(window.__RP_LAST_DELIVERED_AUDIO_ID===audioId) return;
+      const item=await getAudio(audioId);
+      if(!item || !item.blob) return;
+      const uRaw=session();
+      const u=user();
+      const task=rpFallbackCurrentTask() || {};
+      const dataUrl=await blobToDataUrl(item.blob);
+      const id="rp_direct_"+String(audioId).replace(/[^a-zA-Z0-9_\-]/g,"_");
+      const rec={
+        id,
+        source:"rp_shared_submission",
+        deliveryVersion:"rp106_direct_audio_fallback",
+        taskId: task.id || task.taskId || "reading-progress-task-1",
+        taskTitle: task.title || task.taskTitle || "Reading Progress Task",
+        referenceText: task.text || task.referenceText || getVisibleReferenceText() || "",
+        teacherId: task.teacherId || "",
+        studentId: uRaw.id || uRaw.studentId || u.id,
+        studentUserId: uRaw.id || u.id,
+        userId: uRaw.id || u.id,
+        studentNumber: uRaw.studentId || u.id,
+        studentName: uRaw.name || u.name,
+        classId: uRaw.classId || "",
+        className: uRaw.className || u.className || uRaw.classId || "",
+        submittedAt:new Date().toISOString(),
+        createdAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString(),
+        status:"submitted",
+        analysisStatus:"Pending",
+        audioId:item.id,
+        audioStatus:"audio attached",
+        audioSize:item.size,
+        audioType:item.type||"audio/webm",
+        audioDataUrl:dataUrl,
+        uploadStatus:"rp106_direct_firestore_audio",
+        transcript:"",
+        accuracy:"", wcpm:"", fluency:"", mistakes:"", finalScore:"", teacherScore:"", teacherNotes:""
+      };
+      const a=records().filter(r=>r && r.id!==id);
+      a.push(rec); saveRecords(a);
+      try{ await cloudSaveRecord(rec); }catch(e){ console.warn("RP direct fallback cloud save failed", e); }
+      try{ await fsSet("readingSubmissions", id, rec); }catch(e){ console.warn("RP direct fallback fsSet failed", e); }
+      window.__RP_LAST_DELIVERED_AUDIO_ID=audioId;
+      console.log("RP106 direct delivery saved", rec);
+    }catch(err){ console.warn("RP106 direct delivery failed", err); }
+  }
+  // V273: disabled the old parallel safety-delivery click hook.
+  // The React submit path already saves the attempt before audio upload; running a second delivery path
+  // created a second document (rp_direct_...) for the same recording and therefore duplicate evaluations.
+  // Keep rpFallbackDeliverLatestAudio defined only for backward compatibility; do not auto-run it.
+
+  function getKey(){
+    try{
+      return String(localStorage.getItem(API_KEY)||localStorage.getItem("eq_aikey")||localStorage.getItem("openai_api_key")||localStorage.getItem("ai_key")||"").trim();
+    }catch(e){return"";}
+  }
+  function setKey(k){ try{ if(k)localStorage.setItem(API_KEY,k); else localStorage.removeItem(API_KEY);}catch(e){} }
+
+  async function transcribeBlob(blob,type){
+    const key=getKey();
+    if(!key) throw new Error("Add OpenAI API Key first.");
+    const file = new File([blob], "student-reading.webm", {type:type||"audio/webm"});
+    const form=new FormData();
+    form.append("file",file);
+    form.append("model","whisper-1");
+    form.append("language","en");
+    form.append("response_format","json");
+    const resp=await fetch("https://api.openai.com/v1/audio/transcriptions",{method:"POST",headers:{"Authorization":"Bearer "+key},body:form});
+    if(!resp.ok){ const t=await resp.text(); throw new Error("OpenAI error "+resp.status+": "+t.slice(0,200)); }
+    let data =await resp.json();
+    return (data.text||"").trim();
+  }
+  async function transcribe(audioId){
+    const item=await getAudio(audioId);
+    if(!item||!item.blob) throw new Error("Audio file not found. Allow retake and ask student to submit again.");
+    return await transcribeBlob(item.blob,item.type||"audio/webm");
+  }
+  async function transcribeRecord(r){
+    if(r.audioId){
+      const item=await getAudio(r.audioId);
+      if(item&&item.blob) return await transcribeBlob(item.blob,item.type||"audio/webm");
+    }
+    const chunkDataUrl=(typeof rpResolveAudioDataUrl==="function")?await rpResolveAudioDataUrl(r).catch(()=>""):"";
+    if(chunkDataUrl){
+      const blob=await (await fetch(chunkDataUrl)).blob();
+      return await transcribeBlob(blob,r.audioType||blob.type||"audio/webm");
+    }
+    if(r.audioUrl){
+      const blob=await (await fetch(r.audioUrl)).blob();
+      return await transcribeBlob(blob,r.audioType||blob.type||"audio/webm");
+    }
+    throw new Error("Audio file not found. Allow retake and ask student to submit again.");
+  }
+  function defaultRefText(){ return "Reading every day helps students learn new words. A good reader stops, thinks, and tries again when a sentence is difficult. Students can improve their fluency by practicing short texts many times."; }
+  function cleanRefCandidate(t){
+    return String(t||"").replace(/\s+/g," ").trim();
+  }
+  function getVisibleReferenceText(){
+    // اختر نص القراءة الحقيقي فقط، ولا تأخذ نص لوحة الأداء أو تعليمات المعلم.
+    const bad=/reading progress|performance|rejected|deleted|counted|average|best|attempts|accepted|retake|teacher note|teacher score|record your reading|start recording|submit to teacher|audio|status|transcript|reference text|teacher|home|progress|mastery|badge|logout|retry|back|microphone|recording|analyze|fluency|wcpm|mistakes|accuracy|score|submissions/i;
+
+    function visible(el){
+      try{
+        const st=getComputedStyle(el);
+        const r=el.getBoundingClientRect();
+        return st.display!=="none" && st.visibility!=="hidden" && r.width>20 && r.height>8;
+      }catch(e){ return true; }
+    }
+
+    const nodes=[...document.querySelectorAll("p, .reading-text, [data-reading-text], article, blockquote")];
+    const cands=[];
+
+    nodes.forEach(n=>{
+      if(!visible(n)) return;
+      const raw=cleanRefCandidate(n.innerText||n.textContent||"");
+      if(!raw || raw.length<8 || raw.length>600) return;
+      if(!/[a-zA-Z]/.test(raw) || !/[.!?]/.test(raw)) return;
+      if(bad.test(raw)) return;
+
+      const words=raw.split(/\s+/).filter(Boolean);
+      if(words.length<3 || words.length>120) return;
+
+      // استبعد النصوص التي تبدو كلوحة/واجهة وليست فقرة قراءة.
+      const uiWords=/button|click|status|score|attempt|teacher|student|average|accepted|rejected|deleted|counted|performance/i;
+      if(uiWords.test(raw)) return;
+
+      // الأفضلية للنصوص القصيرة والواضحة داخل بطاقة القراءة.
+      let score=100;
+      if(n.matches("[data-reading-text], .reading-text, p")) score+=40;
+      if(words.length<=12) score+=25;
+      if(words.length>=3 && words.length<=80) score+=20;
+      score-=Math.abs(words.length-20);
+
+      cands.push({t:raw, words:words.length, score});
+    });
+
+    cands.sort((a,b)=>b.score-a.score);
+    return cands[0]?.t || "";
+  }
+  function refText(r){
+    return cleanRefCandidate(r&&r.referenceText) || cleanRefCandidate(r&&r.text) || cleanRefCandidate(r&&r.taskText) || defaultRefText();
+  }
+
+  // RP172: Analyze Saved Recording must not fall back to 60 seconds.
+  // Resolve the actual audio duration from the saved webm/audio when seconds are missing.
+  async function rpRecordBlobForTiming(r){
+    try{
+      if(r && r.audioId){ const item=await getAudio(r.audioId); if(item&&item.blob) return item.blob; }
+      const chunkDataUrl=(typeof rpResolveAudioDataUrl==="function")?await rpResolveAudioDataUrl(r).catch(()=>""):"";
+      if(chunkDataUrl) return await (await fetch(chunkDataUrl)).blob();
+      if(r && r.audioDataUrl) return await (await fetch(r.audioDataUrl)).blob();
+      if(r && r.audioUrl) return await (await fetch(r.audioUrl)).blob();
+    }catch(e){}
+    return null;
+  }
+  async function rpAudioElementDurationSeconds(blob){
+    return new Promise(resolve=>{
+      try{
+        if(!blob) return resolve(0);
+        const url=URL.createObjectURL(blob);
+        const a=new Audio(); let done=false;
+        function finish(v){ if(done) return; done=true; try{URL.revokeObjectURL(url);}catch(_){} const n=Number(v); resolve(Number.isFinite(n)&&n>0?n:0); }
+        a.preload="metadata";
+        a.onloadedmetadata=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); else setTimeout(()=>finish(a.duration||0),500); };
+        a.ondurationchange=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); };
+        a.onerror=()=>finish(0);
+        setTimeout(()=>finish(a.duration||0),3000);
+        a.src=url;
+      }catch(e){ resolve(0); }
+    });
+  }
+  async function rpTrimmedAudioReadingSeconds(blob){
+    try{
+      const AudioCtx=window.AudioContext||window.webkitAudioContext;
+      if(!blob || !AudioCtx) return 0;
+      const buf=await blob.arrayBuffer();
+      const ctx=new AudioCtx();
+      let audio;
+      try{ audio=await ctx.decodeAudioData(buf.slice(0)); }catch(e){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const sr=audio.sampleRate||44100, len=audio.length||0;
+      if(!len){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const ch=[]; for(let c=0;c<audio.numberOfChannels;c++) ch.push(audio.getChannelData(c));
+      const win=Math.max(256,Math.round(sr*0.05));
+      const rms=[];
+      for(let i=0;i<len;i+=win){
+        let sum=0,count=0,end=Math.min(len,i+win);
+        for(let j=i;j<end;j++){ let v=0; for(let c=0;c<ch.length;c++) v+=ch[c][j]||0; v/=Math.max(1,ch.length); sum+=v*v; count++; }
+        rms.push(Math.sqrt(sum/Math.max(1,count)));
+      }
+      try{ctx.close&&ctx.close();}catch(_){}
+      if(!rms.length) return 0;
+      const sorted=rms.slice().sort((a,b)=>a-b), noise=sorted[Math.floor(sorted.length*.25)]||0, peak=sorted[sorted.length-1]||0;
+      const threshold=Math.max(0.010, noise*2.6, peak*0.06);
+      let first=-1,last=-1;
+      for(let i=0;i<rms.length;i++){ if(rms[i]>=threshold){ first=i; break; } }
+      for(let i=rms.length-1;i>=0;i--){ if(rms[i]>=threshold){ last=i; break; } }
+      if(first<0||last<first) return 0;
+      const full=audio.duration||len/sr;
+      const start=Math.max(0, first*win/sr - .15);
+      const end=Math.min(full, (last+1)*win/sr + .15);
+      const reading=end-start;
+      if(!Number.isFinite(reading)||reading<=0) return 0;
+      return Math.max(1,Math.round(reading));
+    }catch(e){ return 0; }
+  }
+  async function rpResolveAnalyzeSeconds(r){
+    // RP173/RP176: for Analyze Saved Recording, trust the audio file first.
+    // If decoding fails, do NOT blindly choose the old default 60; choose the real saved recording time when present.
+    const blob=await rpRecordBlobForTiming(r);
+    if(blob){
+      const trimmed=await rpTrimmedAudioReadingSeconds(blob);
+      if(trimmed>0) return trimmed;
+      const dur=await rpAudioElementDurationSeconds(blob);
+      if(dur>0) return Math.round(dur);
+    }
+    function valid(v){ const n=Number(v); return Number.isFinite(n)&&n>=3&&n<=300?Math.round(n):null; }
+    const candidates=[
+      r&&r.actualReadingSeconds, r&&r.effectiveReadingSeconds,
+      r&&r.recordingSeconds, r&&r.fullRecordingSeconds, r&&r.fullRecordedSeconds,
+      r&&r.durationSeconds, r&&r.seconds, r&&r.audioDuration, r&&r.duration,
+      r&&r.analysis&&r.analysis.actualReadingSeconds, r&&r.analysis&&r.analysis.effectiveReadingSeconds,
+      r&&r.analysis&&r.analysis.recordingSeconds, r&&r.analysis&&r.analysis.fullRecordingSeconds,
+      r&&r.analysis&&r.analysis.durationSeconds, r&&r.analysis&&r.analysis.seconds, r&&r.analysis&&r.analysis.audioDuration
+    ].map(valid).filter(x=>x!==null);
+    if(!candidates.length) return 0;
+    const nonDefault=candidates.filter(x=>Math.abs(x-60)>1);
+    return Math.min(...(nonDefault.length?nonDefault:candidates));
+  }
+  function score(ref,spoken,seconds=60){
+    const clean=s=>String(s||"").toLowerCase().replace(/[^\w\s']/g," ").replace(/\s+/g," ").trim();
+    const a=clean(ref).split(" ").filter(Boolean), b=clean(spoken).split(" ").filter(Boolean);
+    // V327: accuracy must respect reading order. The old bag-of-words match could score
+    // scrambled/poor reading too highly because a word anywhere in the transcript counted as correct.
+    const rows=a.length+1, cols=b.length+1;
+    let prev=new Uint16Array(cols), cur=new Uint16Array(cols);
+    for(let i=1;i<rows;i++){
+      cur.fill(0);
+      for(let j=1;j<cols;j++) cur[j]=(a[i-1]===b[j-1])?(prev[j-1]+1):Math.max(prev[j],cur[j-1]);
+      const tmp=prev; prev=cur; cur=tmp;
+    }
+    const correct=Number(prev[cols-1]||0);
+
+    const total=a.length;
+    const missing=Math.max(0,total-correct);
+    const extra=Math.max(0,b.length-correct);
+    const repeated=b.filter((w,i)=>i>0&&b[i-1]===w).length;
+
+    const accuracy=total?Math.round(correct/total*100):0;
+
+    // Use real duration when available. For short texts, do not punish speed too harshly.
+    const safeSeconds=Math.max(1, Number(seconds)||0);
+    const minutes=Math.max(safeSeconds/60, 1/60);
+    const wcpm=Math.round(correct/minutes);
+
+    // RP169: WCPM is only the measured speed. A perfect word match must NOT force fluency/score to 100.
+    // Target speed depends on text length: short tasks are more forgiving, normal RP tasks require real pace.
+    const speedTarget = total<=30 ? 60 : (total<=50 ? 75 : 90);
+    let speedScore=Math.max(0,Math.min(100,Math.round(wcpm/speedTarget*100)));
+    const completion=total?Math.round(correct/total*100):0;
+
+    const mistakePenalty = (missing*12) + (extra*4) + (repeated*3);
+    let fluency=Math.max(0,Math.min(100,Math.round(
+      accuracy*0.45 + completion*0.15 + speedScore*0.40 - repeated*2
+    )));
+
+    let finalScore=Math.round(
+      accuracy*0.45 + completion*0.15 + fluency*0.20 + speedScore*0.20 - Math.min(20,mistakePenalty*0.25)
+    );
+
+    // Hard cap by speed: slow perfect reading remains accurate, but not fluent/high-scored.
+    function capByWcpm(v){
+      if(!Number.isFinite(Number(wcpm))) return v;
+      if(total<=30) return Math.min(v, wcpm<25?82:(wcpm<35?86:(wcpm<45?90:(wcpm<60?94:100))));
+      if(total<=50) return Math.min(v, wcpm<30?78:(wcpm<45?86:(wcpm<60?92:100)));
+      if(wcpm<30) return Math.min(v,70);
+      if(wcpm<45) return Math.min(v,80);
+      if(wcpm<60) return Math.min(v,88);
+      if(wcpm<75) return Math.min(v,94);
+      return v;
+    }
+    function fluencyCapByWcpm(v){
+      if(!Number.isFinite(Number(wcpm))) return v;
+      if(total<=30) return Math.min(v, wcpm<25?62:(wcpm<35?72:(wcpm<45?80:(wcpm<60?90:100))));
+      if(total<=50) return Math.min(v, wcpm<30?60:(wcpm<45?76:(wcpm<60?88:100)));
+      if(wcpm<30) return Math.min(v,55);
+      if(wcpm<45) return Math.min(v,70);
+      if(wcpm<60) return Math.min(v,82);
+      if(wcpm<75) return Math.min(v,92);
+      return v;
+    }
+    fluency=Math.max(0,Math.min(100,Math.round(fluencyCapByWcpm(fluency))));
+    finalScore=Math.max(0,Math.min(100,Math.round(capByWcpm(finalScore))));
+
+    return {
+      accuracy,
+      wcpm,
+      fluency,
+      speedScore,
+      finalScore,
+      mistakes:missing+extra+repeated,
+      missing,
+      extra,
+      repeated,
+      correctWords:correct,
+      totalWords:total,
+      aiScore:finalScore,
+      analysisStatus:"Completed"
+    };
+  }
+  async function analyzeOne(id,silent=false){
+    const r=records().find(x=>x.id===id);
+    if(!r) return alert("Submission not found.");
+    if(!hasAudioRecord(r)) return alert("No audio attached. Allow retake and ask student to record again.");
+    await updateRecord(id,{analysisStatus:"Analyzing saved recording..."});
+    await renderCards();
+    try{
+      const text=await transcribeRecord(r);
+      const secs=await rpResolveAnalyzeSeconds(r);
+      if(!secs || secs<=0) throw new Error("Could not read recording duration. Ask student to submit again or enter a teacher score manually.");
+      const res=score(refText(r),text,secs);
+      const saved=await updateRecord(id,{...res,analysis:{...res,seconds:secs,readingSeconds:secs,actualReadingSeconds:secs,effectiveReadingSeconds:secs},transcript:text,seconds:secs,durationSeconds:secs,readingSeconds:secs,actualReadingSeconds:secs,effectiveReadingSeconds:secs,analysisStatus:"Completed"});
+      if(!silent) console.log("تم التحليل من التسجيل نفسه. Final:", finalScore(saved||res)+"%");
+    }catch(err){
+      const em=String(err&&err.message||err||"");
+      const noKey=/api key|key missing|add openai/i.test(em);
+      await updateRecord(id,{analysisStatus:noKey?"Waiting for teacher auto analysis":"Failed: "+em});
+      if(!silent) alert("فشل التحليل: "+em);
+    }
+    await renderCards();
+  }
+  async function testKey(){
+    const key=getKey(); if(!key) return alert("ضع مفتاح OpenAI أولًا.");
+    try{
+      const resp=await fetch("https://api.openai.com/v1/models",{headers:{"Authorization":"Bearer "+key}});
+      if(!resp.ok) throw new Error("Status "+resp.status);
+      alert("API Key works ✅");
+    }catch(e){ alert("API Key test failed: "+e.message); }
+  }
+  function fmt(n){ n=Number(n||0); if(!n)return"-"; if(n<1024)return n+" B"; if(n<1048576)return Math.round(n/1024)+" KB"; return (n/1048576).toFixed(1)+" MB"; }
+
+  function normalizeArabicLoose(v){
+    return String(v||"")
+      .replace(/[أإآٱ]/g,"ا")
+      .replace(/ى/g,"ي")
+      .replace(/ة/g,"ه")
+      .replace(/[\u064B-\u065F\u0670]/g,"")
+      .replace(/\s+/g," ")
+      .trim()
+      .toLowerCase();
+  }
+  function textOfRecordForRestore(r){
+    try{
+      return normalizeArabicLoose([
+        r && r.id,
+        r && r.studentId,
+        r && r.studentName,
+        r && r.name,
+        r && r.fullName,
+        r && r.userId,
+        r && r.studentUid,
+        r && r.uid,
+        r && r.className,
+        r && r.classId,
+        r && r.taskId,
+        r && r.taskTitle,
+        r && r.title,
+        r && r.referenceText
+      ].filter(x=>x!==undefined&&x!==null).join(" "));
+    }catch(e){return "";}
+  }
+  function isTargetOldStudentRecord(r){
+    const t=textOfRecordForRestore(r);
+    if(!t) return false;
+    return t.includes("3135") || t.includes("3136") ||
+      t.includes(normalizeArabicLoose("حسن محمد العلي")) || t.includes(normalizeArabicLoose("حسن العلي")) ||
+      t.includes(normalizeArabicLoose("أحمد علي الخميس")) || t.includes(normalizeArabicLoose("احمد علي الخميس"));
+  }
+  function repairOldStudentRecord(r){
+    const nr=normalizeRecord({...r});
+    const t=textOfRecordForRestore(nr);
+    if(t.includes("3135") || t.includes(normalizeArabicLoose("حسن محمد العلي")) || t.includes(normalizeArabicLoose("حسن العلي"))){
+      nr.studentId="3135";
+      nr.studentName="حسن محمد العلي";
+      nr.classId=nr.classId||"class_3_1";
+      nr.className=nr.className&&nr.className!=="Unassigned"?nr.className:"ثالث أول";
+    }
+    if(t.includes("3136") || t.includes(normalizeArabicLoose("أحمد علي الخميس")) || t.includes(normalizeArabicLoose("احمد علي الخميس"))){
+      nr.studentId="3136";
+      nr.studentName="أحمد علي الخميس";
+      nr.classId=nr.classId||"class_3_1";
+      nr.className=nr.className&&nr.className!=="Unassigned"?nr.className:"ثالث أول";
+    }
+    nr.id = nr.id || ("restored_"+nr.studentId+"_"+(nr.submittedAt||nr.createdAt||Date.now())+"_"+Math.random().toString(36).slice(2));
+    nr.taskId = nr.taskId || taskId();
+    nr.restoredFromOldStorage = nr.restoredFromOldStorage || new Date().toISOString();
+    return nr;
+  }
+  function collectArraysDeep(value, out, depth){
+    if(depth>3 || !value) return;
+    if(Array.isArray(value)){
+      if(value.some(x=>x && typeof x==="object" && (x.audioId||x.audioDataUrl||x.audioUrl||x.studentId||x.studentName||x.taskId))) out.push(value);
+      value.forEach(x=>collectArraysDeep(x,out,depth+1));
+    }else if(typeof value==="object"){
+      Object.keys(value).forEach(k=>collectArraysDeep(value[k],out,depth+1));
+    }
+  }
+  async function restoreOldStudentRecords(){
+    alert("تم تعطيل استعادة التسجيلات القديمة نهائيًا حتى لا ترجع بيانات الطلاب القديمة إلى RP.");
+    return;
+    const found=[];
+    const scanned=[];
+    const keyRe=/(rp_attempt_records|rp_student_attempts|reading|eq_reading|attempt|submission)/i;
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key || !keyRe.test(key)) continue;
+      scanned.push(key);
+      let parsed=null;
+      try{ parsed=JSON.parse(localStorage.getItem(key)||"null"); }catch(e){ continue; }
+      const arrays=[];
+      collectArraysDeep(parsed, arrays, 0);
+      arrays.forEach(arr=>arr.forEach(item=>{ if(item && typeof item==="object" && isTargetOldStudentRecord(item)) found.push({key,item}); }));
+    }
+    const current=records();
+    const map={};
+    current.forEach(r=>{ if(r&&r.id) map[r.id]=r; });
+    let added=0, updated=0;
+    const sources=[];
+    for(const f of found){
+      const rr=repairOldStudentRecord(f.item);
+      rr.restoreSourceKey=f.key;
+      sources.push(f.key);
+      if(map[rr.id]){ map[rr.id]={...map[rr.id],...rr}; updated++; }
+      else{ map[rr.id]=rr; added++; }
+    }
+    const merged=Object.values(map).sort((a,b)=>recordTime(a)-recordTime(b));
+    saveRecords(merged);
+    // Try to save restored records to cloud too, without blocking local restore.
+    await Promise.allSettled(Object.values(map).filter(r=>r&&r.restoredFromOldStorage).map(r=>cloudSaveRecord(r)));
+    await renderCards();
+    const uniqueSources=[...new Set(sources)];
+    alert("فحص التسجيلات القديمة انتهى.\n"+
+      "المفاتيح المفحوصة: "+scanned.length+"\n"+
+      "تسجيلات مطابقة لأحمد/حسن: "+found.length+"\n"+
+      "تمت الإضافة: "+added+"\n"+
+      "تم تحديث موجود: "+updated+"\n"+
+      (uniqueSources.length?"المصدر: "+uniqueSources.slice(0,5).join(", "):"لم أجد تسجيلات قديمة في هذا الجهاز."));
+  }
+
+  function rpStartRealtimeDrawerSync(){
+    try{
+      if(window.__rp117DrawerLiveStarted) return;
+      if(!(typeof db!=="undefined" && db && db.collection)) return;
+      window.__rp117DrawerLiveStarted=true;
+      db.collection("readingSubmissions").onSnapshot(function(snap){
+        try{
+          const remote=[];
+          snap.forEach(function(doc){ remote.push({id:doc.id, ...(doc.data?doc.data():{})}); });
+          if(typeof window.rpV11MergeCloudRecords==="function") window.rpV11MergeCloudRecords(remote);
+          if(typeof renderCards==="function") renderCards();
+          window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions"}}));
+        }catch(e){ console.warn("RP117 drawer live snapshot failed", e); }
+      }, function(err){ console.warn("RP117 drawer live unavailable", err&&err.message); window.__rp117DrawerLiveStarted=false; });
+    }catch(e){ window.__rp117DrawerLiveStarted=false; }
+  }
+
+    function teacherPanel(){
+    if(!isTeacher()||panelMade) return;
+    panelMade=true;
+    // RP158: start live sync before the drawer is opened so new submissions can update badge/Overview.
+    try{ rpStartRealtimeDrawerSync(); }catch(_e){}
+    try{ setTimeout(function(){ syncCloudIntoLocal().then(function(){ try{ if(typeof renderCards==="function") renderCards(); }catch(_e){} }); }, 600); }catch(_e){}
+    const panel=document.createElement("div");
+    panel.id="rp-v11-panel";
+    panel.style.cssText="position:fixed;top:0;right:0;width:min(92vw,430px);height:100vh;overflow:auto;padding:14px;border-left:3px solid #2563eb;background:#fff;box-shadow:-14px 0 35px rgba(15,23,42,.22);font-family:system-ui;direction:ltr;z-index:99998;display:none";
+    panel.innerHTML=`
+      <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div style="font-size:11px;color:#64748b;font-weight:800">RP203: tabs stay + display filters separated from admin delete tools</div></div>
+          <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
+          <button data-rp-tab="waiting" type="button" style="padding:9px 6px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;font-size:12px">منتظر</button>
+          <button data-rp-tab="previous" type="button" style="padding:9px 6px;border:0;border-radius:12px;background:#e2e8f0;color:#334155;font-weight:900;font-size:12px">السابق</button>
+          <button data-rp-tab="all" type="button" style="padding:9px 6px;border:0;border-radius:12px;background:#e2e8f0;color:#334155;font-weight:900;font-size:12px">الكل</button>
+        </div>
+      </div>
+      <div id="rp-v11-summary" style="margin:12px 0"></div>
+      <div style="margin-bottom:12px;padding:10px;border:1px solid #dbeafe;border-radius:14px;background:#f8fafc;direction:rtl">
+        <div style="font-size:13px;font-weight:1000;color:#1e293b;margin-bottom:8px">🔎 فلاتر عرض المحاولات فقط</div>
+        <div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:8px">التبويبات العلوية تبقى هي الأساس: منتظر / السابق / الكل. هذه الفلاتر تضيق النتائج المعروضة فقط ولا تحذف شيئًا.</div>
+        <div style="display:grid;grid-template-columns:1fr;gap:8px">
+          <select id="rp-v11-class" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع الفصول</option></select>
+          <select id="rp-v11-student" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع الطلاب</option></select>
+          <select id="rp-v11-status" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800">
+            <option value="">كل الحالات داخل التبويب</option>
+            <option value="needs_analysis">يحتاج تحليل</option>
+            <option value="analyzed">محلل ينتظر القبول</option>
+            <option value="pending">منتظر/مرسل</option>
+            <option value="accepted">مقبول</option>
+            <option value="rejected">مرفوض</option>
+            <option value="retake">إعادة مسموحة</option>
+          </select>
+          <input id="rp-v11-search" type="text" placeholder="بحث سريع: اسم الطالب أو رقمه" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:0">
+          <select id="rp-v11-task" style="padding:10px;border:1px solid #2563eb;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800"><option value="">جميع المهام / الاختبارات</option></select>
+          <select id="rp-v11-sort" style="padding:10px;border:1px solid #cbd5e1;border-radius:10px;min-width:0;background:#fff;color:#1e293b;font-weight:800">
+            <option value="newest">الأحدث أولاً</option>
+            <option value="oldest">الأقدم أولاً</option>
+            <option value="name">اسم الطالب</option>
+            <option value="score_high">الأعلى درجة</option>
+            <option value="score_low">الأقل درجة</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;direction:rtl">
+          <button id="rp-v11-clear-filters" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#64748b;color:white;font-weight:800">مسح فلاتر العرض</button>
+          <button id="rp-v11-refresh" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:800">تحديث</button>
+        </div>
+      </div>
+      <div style="margin-bottom:12px;padding:10px;border:1px solid #e9d5ff;border-radius:14px;background:#faf5ff;direction:rtl">
+        <div style="font-size:13px;font-weight:1000;color:#581c87;margin-bottom:8px">⚙️ إجراءات على النتائج الظاهرة فقط</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;direction:rtl">
+          <button id="rp-v11-analyze-class" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">تحليل المنتظر الظاهر</button>
+          <button id="rp-v11-accept-visible" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#16a34a;color:white;font-weight:900">قبول كل المنتظر المحلل الظاهر</button>
+        </div>
+      </div>
+      <details id="rp-v11-admin-tools" style="margin-bottom:12px;border:1px solid #fecaca;border-radius:14px;background:#fff7f7;direction:rtl">
+        <summary style="padding:10px;cursor:pointer;font-weight:1000;color:#991b1b">⚠️ أدوات إدارية / حذف — افتحها فقط عند الحاجة</summary>
+        <div style="padding:0 10px 10px;color:#7f1d1d;font-size:12px;font-weight:800;line-height:1.6">هذه الأدوات منفصلة عن التصفح اليومي. الحذف حسب الطالب/الصف/المهمة يستخدم فلاتر العرض الحالية بعد تأكيدك فقط.</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;padding:0 10px 10px;direction:rtl">
+          <button id="rp-v11-target-delete" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#ea580c;color:white;font-weight:1000">🎯 حذف حسب الفلاتر الحالية</button>
+          <button id="rp-v11-hard-purge-all" type="button" style="padding:9px 10px;border:0;border-radius:10px;background:#7f1d1d;color:white;font-weight:1000">🛡️ تنظيف RP القديم مع حماية حسين الفايز</button>
+        </div>
+      </details>
+      <div id="rp-v11-cards" style="display:grid;gap:12px"></div><div id="rp-v11-more-wrap" style="margin-top:10px"></div>`;
+    (document.getElementById("root")||document.body).appendChild(panel);
+    const fab=document.createElement("button");
+    fab.id="rp-floating-button-20260605";
+    fab.type="button";
+    fab.innerHTML='RP <span id="rp-floating-count" style="position:absolute;top:-7px;right:-7px;background:#dc2626;color:white;border-radius:999px;min-width:20px;height:20px;padding:0 5px;font-size:11px;line-height:20px;display:none">0</span>';
+    fab.style.cssText="position:fixed;right:14px;bottom:18px;z-index:99999;width:54px;height:54px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:1000;font-size:15px;box-shadow:0 10px 28px rgba(37,99,235,.35);letter-spacing:.3px";
+    fab.onclick=async()=>{panel.style.display="block";await renderCards();};
+    // v288: Sections > RP opens this real recordings/Pending drawer.
+    window.eqOpenRPDrawer=async function(){
+      panel.style.display="block";
+      await renderCards();
+    };
+    window.eqGetRPPendingCount=async function(){
+      try{
+        rpRefreshRosters(false);
+        let rows=recordsFastWithBackgroundSync();
+        try{ if(Date.now()-__rpLastCloudSyncAt>5000) rows=await syncCloudIntoLocal(); }catch(_e){}
+        return (rows||[]).filter(r=>rpRecordVisible(r)&&isWaitingForTeacher(r)).length;
+      }catch(_e){ return 0; }
+    };
+    // v283: RP is available from الأقسام only; no floating RP button.
+    try{ fab.remove(); }catch(_e){}
+
+    panel.addEventListener("click",async e=>{
+      const id=e.target.id;
+      const tab=e.target.getAttribute("data-rp-tab");
+      if(tab){rpActiveTab=tab;renderCards();return;}
+      if(id==="rp-v11-hide"){panel.style.display="none";return;}
+      if(id==="rp-v11-hard-purge"||id==="rp-v11-hard-purge-all"){ await rpHardPurgeAllExceptHusseinFayez(); return; }
+      if(id==="rp-v11-target-delete"){ await rpHardDeleteByCurrentFilters(); return; }
+      if(id==="rp-v11-show-more"){ rpDrawerVisibleLimit += 10; renderCards(); return; }
+      if(id==="rp-v11-refresh"){e.target.textContent="Updating..."; syncCloudIntoLocal().then(()=>renderCards()).finally(()=>{e.target.textContent="تحديث";}); return;}
+      if(id==="rp-v11-restore-old"){
+        alert("تم تعطيل استعادة التسجيلات القديمة حتى لا ترجع بيانات أحمد/حسن القديمة إلى RP.");
+        return;
+      }
+      if(id==="rp-v11-clear-filters"){
+        document.getElementById("rp-v11-class").value="";
+        document.getElementById("rp-v11-student").value="";
+        const stSel=document.getElementById("rp-v11-status"); if(stSel) stSel.value="";
+        const srch=document.getElementById("rp-v11-search"); if(srch) srch.value="";
+        document.getElementById("rp-v11-task").value="";
+        const sortSel=document.getElementById("rp-v11-sort"); if(sortSel) sortSel.value="newest";
+        rpDrawerVisibleLimit=10;
+        renderCards();
+        return;
+      }
+      if(id==="rp-v11-analyze-class"){
+        const arr=await currentVisibleRecords();
+        const withAudio=arr.filter(hasAudioRecord);
+        const ids=withAudio.filter(needsAnalysisRecord).map(r=>r.id);
+        if(!ids.length){
+          const done=withAudio.filter(isAnalyzedRecord).length;
+          const accepted=arr.filter(r=>r.status==="accepted"||r.status==="approved").length;
+          return alert("لا توجد تسجيلات ظاهرة تحتاج تحليلًا.\nالمطابق للفلاتر: "+arr.length+"\nفيه صوت: "+withAudio.length+"\nمحلل فعلًا: "+done+"\nمقبول سابقًا: "+accepted);
+        }
+        if(!confirm("تحليل "+ids.length+" تسجيل ظاهر فقط؟")) return;
+        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
+        (async()=>{
+          const batch=ids.slice(0,3);
+          for(const x of batch){ try{ await analyzeOne(x,true); }catch(_e){} }
+          if(ids.length>batch.length) alert("تم تحليل "+batch.length+" فقط لحماية المنصة. بقي "+(ids.length-batch.length)+"؛ اضغط الزر مرة أخرى.");
+        })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        return;
+      }
+      if(id==="rp-v11-accept-visible"){
+        const arr=await currentVisibleRecords();
+        const ready=arr.filter(canAcceptRecord);
+        if(!ready.length)return alert("لا توجد تسجيلات محللة جاهزة للقبول في هذا العرض.");
+        if(!confirm("قبول "+ready.length+" تسجيل محلل ظاهر؟"))return;
+        const old=e.target.textContent; e.target.textContent="جاري القبول..."; e.target.disabled=true;
+        Promise.allSettled(ready.map(function(r){return acceptRecordFull(r.id);})).then(async function(res){
+          const ok=res.filter(function(x){return x.status==="fulfilled";}).length;
+          const bad=res.length-ok;
+          if(bad) alert("تم قبول "+ok+" محاولة، وفشل قبول "+bad+" محاولة. جرّب تحديث RP ثم أعد القبول.");
+          try{ await syncCloudIntoLocal(); }catch(_e){}
+          return renderCards();
+        }).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        return;
+      }
+      const playId=e.target.getAttribute("data-rp-play");
+      if(playId){ await rpPlayTeacherRecording(playId); return; }
+      const del=e.target.getAttribute("data-delete");
+      if(del){
+        if(!confirm("حذف هذه المحاولة من لوحة التقييم والحسابات؟")) return;
+        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
+        (async function(){ const rec=recordsLive().find(x=>x.id===del) || records().find(x=>x.id===del) || {id:del}; await rpDeleteAttemptPermanent(rec); })().then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+        return;
+      }
+      const reV2=e.target.getAttribute("data-reanalyze-v2");
+      if(reV2){
+        const old=e.target.textContent; e.target.textContent="Re-analyzing…"; e.target.disabled=true;
+        try{
+          const r=recordsLive().find(x=>x.id===reV2) || records().find(x=>x.id===reV2);
+          if(!r) throw new Error("Submission not found.");
+          if(!hasAudioRecord(r)) throw new Error("The original audio is no longer available.");
+          const evidence=await rpDetailedAudioEvidence(r,{openaiKey:getKey()});
+          const secs=(evidence&&evidence.duration)||await rpResolveAnalyzeSeconds(r);
+          const v2=rpAnalyzeV2(refText(r),evidence.text||r.transcript||"",secs||0,r.level||"",evidence,"normal");
+          const previous={analysis:r.analysis||{accuracy:rpMetricValue(r,"accuracy"),wcpm:rpMetricValue(r,"wcpm"),fluency:rpMetricValue(r,"fluency"),mistakes:rpMetricValue(r,"mistakes"),correctWords:rpMetricValue(r,"correctWords"),totalWords:rpMetricValue(r,"totalWords")},transcript:r.transcript||"",savedAt:new Date().toISOString()};
+          await updateRecord(reV2,{...v2,analysis:{...v2,seconds:secs,readingSeconds:v2.readingSeconds||secs,actualReadingSeconds:v2.readingSeconds||secs,effectiveReadingSeconds:v2.readingSeconds||secs},transcript:evidence.text||r.transcript||"",analysisVersion:2,previousAnalysis:previous,analysisStatus:"Completed",updatedAt:new Date().toISOString()});
+          await renderCards();
+        }catch(err){ alert("Re-analysis failed. The old result was kept unchanged: "+String(err&&err.message||err||"")); }
+        finally{e.target.textContent=old;e.target.disabled=false;}
+        return;
+      }
+      const an=e.target.getAttribute("data-analyze"); if(an){const old=e.target.textContent;e.target.textContent="Updating...";e.target.disabled=true;analyzeOne(an,false).then(()=>renderCards()).finally(()=>{e.target.textContent=old;e.target.disabled=false;});return;}
+      const rid=e.target.getAttribute("data-id"), st=e.target.getAttribute("data-status"); if(rid&&st){
+        const rec=recordsLive().find(x=>x.id===rid) || records().find(x=>x.id===rid);
+        if(st==="accepted" && !(canAcceptRecord(rec) || (rpAttemptState(rec)==="accepted" && rpHasAcceptableResult(rec)))) return alert("حلّل التسجيل أولًا قبل القبول.");
+        if(st==="retake_allowed"&&!confirm("السماح للطالب بالتسجيل مرة أخرى؟"))return;
+        if(st==="submitted"&&!confirm("إرجاع هذا التسجيل إلى قائمة المنتظر للتقييم؟"))return;
+        const old=e.target.textContent; e.target.textContent="Updating..."; e.target.disabled=true;
+        let action;
+        if(st==="accepted"){
+          const scoreEl=panel.querySelector('[data-score="'+CSS.escape(rid)+'"]');
+          const notesEl=panel.querySelector('[data-notes="'+CSS.escape(rid)+'"]');
+          const raw=scoreEl?String(scoreEl.value||'').trim():'';
+          const manual=(raw!==''&&Number.isFinite(Number(raw)))?Math.max(0,Math.min(100,Math.round(Number(raw)))):null;
+          action=(async function(){
+            if(manual!==null){
+              const now=new Date().toISOString();
+              await updateRecord(rid,{teacherScore:manual,finalScore:manual,score:manual,teacherNotes:notesEl?notesEl.value:(rec&&rec.teacherNotes)||'',teacherOverride:true,teacherOverrideAt:now,status:'accepted',reviewStatus:'accepted',teacherReview:'accepted',teacherReviewStatus:'accepted',studentStatus:'accepted',analysisStatus:'completed',accepted:true,approved:true,teacherAccepted:true,teacherApproved:true,pending:false,visibleToStudent:true,scoreVisible:true,acceptedAt:(rec&&rec.acceptedAt)||now,approvedAt:(rec&&rec.approvedAt)||now,updatedAt:now});
+              await rpApplyFinalDecisionToStudentTask({...rec,id:rid,teacherScore:manual,finalScore:manual,score:manual,status:'accepted',visibleToStudent:true,scoreVisible:true},'accepted','');
+            }else await acceptRecordFull(rid);
+          })();
+        }
+        else if(st==="rejected"){
+          const reason=window.prompt("سبب الرفض (اختياري):","")||"";
+          const upd=rpBuildRejectedSubmission(rec||{id:rid},reason);
+          action=(async function(){ await updateRecord(rid,upd); await rpApplyFinalDecisionToStudentTask({...upd,id:rid},"rejected",reason); })();
+        } else action=updateRecord(rid,{status:st,deleted:false});
+        action.then(async()=>{
+          if(st==="accepted") rpTeacherDrafts.delete(String(rid));
+          try{ await syncCloudIntoLocal(); }catch(_e){} return renderCards();
+        }).finally(()=>{e.target.textContent=old;e.target.disabled=false;});
+      }
+    });
+    panel.addEventListener("input",e=>{
+      const sid=e.target.getAttribute("data-score"), nid=e.target.getAttribute("data-notes");
+      if(!sid&&!nid)return;
+      // V333: score/notes stay as an on-screen draft until Accept is pressed.
+      // No status mutation and no cloud write while the teacher is typing.
+      e.target.dataset.rpDirty="1";
+      const id=sid||nid, d=rpTeacherDrafts.get(String(id))||{};
+      if(sid) d.score=e.target.value; if(nid) d.notes=e.target.value;
+      rpTeacherDrafts.set(String(id),d);
+    });
+    panel.addEventListener("input",e=>{if(e.target.id==="rp-v11-search"){rpDrawerVisibleLimit=10;renderCards();}});
+    panel.addEventListener("change",e=>{
+      if(e.target.id==="rp-v11-class"){
+        const stu=document.getElementById("rp-v11-student"); if(stu) stu.value="";
+        rpDrawerVisibleLimit=10; renderCards(); return;
+      }
+      if(e.target.id==="rp-v11-student"||e.target.id==="rp-v11-task"||e.target.id==="rp-v11-status"||e.target.id==="rp-v11-sort"){
+        rpDrawerVisibleLimit=10; renderCards();
+      }
+    });
+    renderCards();
+  }
+
+  function searchText(v){ return String(v||"").trim().toLowerCase(); }
+  function includesText(v,q){ return !q || String(v||"").toLowerCase().includes(q); }
+  function rpNorm(v){ return String(v||"").trim().toLowerCase().replace(/[أإآ]/g,"ا").replace(/ة/g,"ه").replace(/ى/g,"ي").replace(/\s+/g," "); }
+  function rpEsc(v){ return String(v==null?"":v).replace(/[&<>\"']/g,function(ch){return {"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;","'":"&#39;"}[ch]||ch;}); }
+  // RP157: do not revive old/manual students in RP.
+  // The RP drawer must use the current real roster only; old أحمد/حسن restore rows are no longer injected.
+  const RP_MANUAL_STUDENTS = [];
+
+  // RP_REAL_CLEAN_AUTO_ANALYZE_20260630
+  // The floating RP drawer must not use the old hard-coded roster after a class/student is deleted.
+  // It now loads the live users/classes from Firebase, respects deleted class ids, and hides orphan Auth users.
+  let RP_ACTIVE_CLASSES_CACHE=[];
+  let RP_ACTIVE_STUDENTS_CACHE=[];
+  let RP_LAST_ROSTER_LOAD=0;
+  function rpDeletedClassSet(){
+    try{ if(typeof adminDeletedClassSet==="function") return adminDeletedClassSet(); }catch(e){}
+    const set=new Set();
+    try{ (JSON.parse(localStorage.getItem("eq_deleted_class_ids")||"[]")||[]).forEach(x=>{ if(x) set.add(String(x)); }); }catch(e){}
+    return set;
+  }
+  function rpIsDeletedClass(v){
+    const raw=String(v||"").trim();
+    if(!raw) return false;
+    const canon=(typeof canonicalClassId==="function")?canonicalClassId(raw):raw;
+    const set=rpDeletedClassSet();
+    return set.has(raw) || set.has(canon);
+  }
+  function rpCleanClassRow(c){
+    if(!c || c.deleted===true || c.hidden===true || c.archived===true) return null;
+    const id=String(c.id||c._id||c.classId||c.name||"").trim();
+    const name=String(c.name||c.grade||c.className||id||"").trim();
+    if(!id || rpIsDeletedClass(id) || rpIsDeletedClass(name)) return null;
+    return {id:id, name:name};
+  }
+  function rpCleanStudentRow(u){
+    if(!u || u.deleted===true || u.hidden===true || u.hiddenDuplicate===true || String(u.role||"student").toLowerCase()!=="student") return null;
+    const studentId=String(u.studentId||u.studentNumber||u.number||u.password||"").trim();
+    const id=String(u.id||u.uid||studentId||"").trim();
+    const name=String(u.name||u.fullName||u.shortName||"").trim();
+    const classId=String(u.classId||u.className||"").trim();
+    if(!id && !studentId) return null;
+    // Hide anonymous/Auth-only rows such as Student — mpo... — Unassigned.
+    if(!studentId && (/^mpo/i.test(id) || /^student$/i.test(name) || !name)) return null;
+    if(classId && rpIsDeletedClass(classId)) return null;
+    return {...u,id:id||("student_"+studentId),studentId:studentId||id,name:name||("Student "+(studentId||id)),classId:classId};
+  }
+  async function rpRefreshRosters(force){
+    if(!force && Date.now()-RP_LAST_ROSTER_LOAD<5000 && (RP_ACTIVE_CLASSES_CACHE.length||RP_ACTIVE_STUDENTS_CACHE.length)) return;
+    RP_LAST_ROSTER_LOAD=Date.now();
+    try{
+      let cls=[], users=[];
+      if(typeof fsAll==="function"){
+        const res=await Promise.all([fsAll("classes"),fsAll("users")]);
+        cls=res[0]||[]; users=res[1]||[];
+      }
+      const preCls=(typeof PRELOADED_CLASSES!=="undefined" && Array.isArray(PRELOADED_CLASSES))?PRELOADED_CLASSES:[];
+      const preUsers=(typeof PRELOADED_USERS!=="undefined" && Array.isArray(PRELOADED_USERS))?PRELOADED_USERS:[];
+      const cMap=new Map();
+      [...preCls,...cls].forEach(c=>{ const cc=rpCleanClassRow(c); if(cc) cMap.set(cc.id,cc); });
+      RP_ACTIVE_CLASSES_CACHE=Array.from(cMap.values());
+      const sMap=new Map();
+      [...preUsers,...users].forEach(u=>{ const su=rpCleanStudentRow(u); if(su) sMap.set(String(su.studentId||su.id),su); });
+      for(const m of RP_MANUAL_STUDENTS){ const su=rpCleanStudentRow(m); if(su && !sMap.has(String(su.studentId||su.id))) sMap.set(String(su.studentId||su.id),su); }
+      RP_ACTIVE_STUDENTS_CACHE=Array.from(sMap.values());
+    }catch(e){
+      // Keep the old cache if Firebase is temporarily unavailable.
+      console.warn("RP roster refresh failed", e);
+    }
+  }
+  function rpClassesBase(){
+    const src=RP_ACTIVE_CLASSES_CACHE.length?RP_ACTIVE_CLASSES_CACHE:[];
+    return src.filter(c=>c && !rpIsDeletedClass(c.id) && !rpIsDeletedClass(c.name)).map(c=>({id:String(c.id||""), name:c.name||c.grade||c.id||""})).filter(c=>c.id);
+  }
+  function rpClassName(id){ const raw=String(id||"").trim(); const c=rpClassesBase().find(x=>String(x.id)===raw || String(x.name)===raw || ((typeof canonicalClassId==="function")&&canonicalClassId(x.id)===canonicalClassId(raw))); return c ? c.name : raw; }
+  function rpRosterBase(){
+    const base=RP_ACTIVE_STUDENTS_CACHE.length?RP_ACTIVE_STUDENTS_CACHE:[];
+    const out=[...base];
+    return out.filter(Boolean);
+  }
+  function rpFindStudent(v){ const raw=String(v||"").trim(); if(!raw) return null; const n=rpNorm(raw); return rpRosterBase().find(u=>String(u.id)===raw || String(u.studentId)===raw || rpNorm(u.name)===n || rpNorm(u.shortName)===n) || null; }
+  function rpStudentForRecord(r){
+    if(!r) return null;
+    const fields=[r.studentId,r.studentUserId,r.userId,r.studentUid,r.uid,r.id,r.studentName,r.name];
+    for(const f of fields){ const u=rpFindStudent(f); if(u) return u; }
+    const rn=rpNorm(r.studentName||r.name||"");
+    if(rn){ const manual=RP_MANUAL_STUDENTS.find(u=>rn.includes(rpNorm(u.name)) || rpNorm(u.name).includes(rn)); if(manual) return manual; }
+    return null;
+  }
+  function rpRecInfo(r){
+    const u=rpStudentForRecord(r);
+    const sid=(u&&u.studentId) || r.studentNumber || r.studentNo || r.studentId || r.studentUserId || "";
+    const name=(u&&u.name) || r.studentName || r.name || "Student";
+    const classId=(u&&u.classId) || r.classId || "";
+    const className=rpClassName(classId || r.className || "");
+    return {u:u,sid:String(sid||""),name:name,classId:String(classId||""),className:className};
+  }
+  function rpRecordVisible(r){ if(r&&r.source==="rp_audio_chunk") return false;
+    if(!r || isDeleted(r)) return false;
+    // RP157: never show records restored from old local storage or old repair buttons.
+    if(r.restoredFromOldStorage || r.restoreSourceKey || String(r.id||"").indexOf("restored_")===0) return false;
+    const info=rpRecInfo(r);
+    const sid=String(info.sid||"").trim();
+    const name=String(info.name||"").trim();
+    const classId=String(info.classId||r.classId||r.className||"").trim();
+    if(classId && rpIsDeletedClass(classId)) return false;
+    if(info.className && rpIsDeletedClass(info.className)) return false;
+    // RP158: do not hide real Firebase submissions just because the Classes cache is stale.
+    // Old restored records are already blocked above; valid new audio must stay visible to the teacher.
+    // Class filters still work inside currentVisibleRecords(), but visibility itself must not depend on roster cache.
+    // Hide orphan Auth rows and old unassigned records unless they match a real current roster student.
+    if(!info.u){
+      const hasRealSubmission = !!(r.audioId||r.audioDataUrl||r.audioUrl||r.audioChunked||r.transcript||r.analysis||r.status||r.submittedAt||r.createdAt);
+      // RP119: do not hide real Firebase submissions just because the roster cache has not loaded yet.
+      // This was the reason RP/RB appeared disconnected while the main Reading Progress list had records.
+      if(!hasRealSubmission){
+        if(!sid || /^mpo/i.test(sid) || /^student$/i.test(name) || /unassigned/i.test(String(info.className||r.className||""))) return false;
+        if(RP_ACTIVE_STUDENTS_CACHE.length && !rpRosterBase().some(u=>String(u.studentId)===sid || String(u.id)===sid || rpNorm(u.name)===rpNorm(name))) return false;
+      }
+    }
+    return true;
+  }
+  const RP_TASK_TITLE_CACHE = new Map();
+  const RP_TASK_META_CACHE = [];
+  function rpTaskTextOf(t){ return String((t&&(t.text||t.referenceText||t.taskText||t.passage||t.content||t.readingText))||"").trim(); }
+  function rpTaskIdOf(t){ return String((t&&(t.id||t.taskId||t.taskKey||t.assignmentId))||"").trim(); }
+  function rpTaskTitleOf(t){ return String((t&&(t.title||t.taskTitle||t.name||t.taskName||t.assignmentTitle||t.assignment))||"").trim(); }
+  async function rpLoadReadingTasks(){
+    const out=[];
+    RP_TASK_META_CACHE.length=0;
+    function add(t){
+      const id=rpTaskIdOf(t);
+      const title=rpTaskTitleOf(t) || id;
+      const text=rpTaskTextOf(t);
+      if(!id || !title) return;
+      if(!out.some(x=>x.id===id)) out.push({id,title,text});
+      RP_TASK_TITLE_CACHE.set(id,title);
+      const textNorm=rpLongNorm(text);
+      const titleNorm=rpNorm(title);
+      if(!RP_TASK_META_CACHE.some(x=>x.id===id)) RP_TASK_META_CACHE.push({id,title,text,textNorm,titleNorm});
+    }
+    try{
+      if(typeof fsAll==="function"){
+        const tasks=await fsAll("readingTasks");
+        (tasks||[]).filter(t=>t && t.status!=="deleted" && t.deleted!==true).forEach(add);
+      }
+    }catch(e){ console.warn("RP task list read failed", e); }
+    try{
+      const raw=localStorage.getItem("readingTasks")||localStorage.getItem("eq_readingTasks")||localStorage.getItem("eq_reading_tasks")||"";
+      if(raw){ const arr=JSON.parse(raw); (Array.isArray(arr)?arr:Object.values(arr||{})).forEach(add); }
+    }catch(e){}
+    return out;
+  }
+  function rpTaskLabelFromCache(id){ id=String(id||"").trim(); return (id&&RP_TASK_TITLE_CACHE.get(id)) || ""; }
+  function rpLongNorm(v){ return String(v||"").toLowerCase().replace(/[ـ]/g,"").replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[^؀-ۿa-z0-9]+/g," ").replace(/\s+/g," ").trim(); }
+  function rpIsGenericTaskTitle(v){ v=rpNorm(v); return !v || v==="reading progress task" || v==="reading task" || v==="task 1" || v==="reading progress task 1" || v==="reading-progress-task-1"; }
+  function rpRecordTextForTask(r){ return String((r&&(r.referenceText||r.taskText||r.text||r.passage||r.content||r.readingText))||"").trim(); }
+  function rpInferRealTask(r){
+    if(!r) return null;
+    const explicit=String(r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||"").trim();
+    if(explicit && !rpIsGenericTaskTitle(explicit)){
+      const byTitle=RP_TASK_META_CACHE.find(t=>t.titleNorm===rpNorm(explicit));
+      return byTitle || {id:String(r.taskId||""),title:explicit,textNorm:"",titleNorm:rpNorm(explicit)};
+    }
+    const id=String(r.taskId||r.taskKey||r.assignmentId||"").trim();
+    const byId=id ? RP_TASK_META_CACHE.find(t=>t.id===id) : null;
+    if(byId && !rpIsGenericTaskTitle(byId.title)) return byId;
+    const recNorm=rpLongNorm(rpRecordTextForTask(r));
+    if(recNorm){
+      let best=null, bestScore=0;
+      for(const t of RP_TASK_META_CACHE){
+        if(!t.textNorm || t.textNorm.length<10) continue;
+        let score=0;
+        if(recNorm===t.textNorm) score=1000;
+        else if(recNorm.includes(t.textNorm) || t.textNorm.includes(recNorm)) score=Math.min(recNorm.length,t.textNorm.length);
+        else {
+          const a=new Set(recNorm.split(" ").filter(w=>w.length>2));
+          const b=t.textNorm.split(" ").filter(w=>w.length>2);
+          let hit=0; b.forEach(w=>{ if(a.has(w)) hit++; });
+          score=hit;
+        }
+        if(score>bestScore){best=t;bestScore=score;}
+      }
+      if(best && bestScore>=3) return best;
+    }
+    return byId || null;
+  }
+  function rpSetOptions(sel, opts, firstLabel){
+    if(!sel) return;
+    const old=sel.value;
+    let html='<option value="">'+rpEsc(firstLabel)+'</option>'+opts.map(o=>'<option value="'+rpEsc(o.value)+'">'+rpEsc(o.label)+'</option>').join('');
+    if(sel.innerHTML!==html) sel.innerHTML=html;
+    if(Array.from(sel.options).some(o=>o.value===old)) sel.value=old;
+  }
+  function rpPopulateFilterOptions(all,tasks){
+    const classSel=document.getElementById("rp-v11-class"), stuSel=document.getElementById("rp-v11-student"), taskSel=document.getElementById("rp-v11-task");
+    const clsVal=classSel?classSel.value:"";
+    // RP182: these menus must come from platform data, not only from currently visible RP cards.
+    // This lets the teacher choose a class/student/task even when the current Pending tab is empty.
+    const classMap=new Map();
+    rpClassesBase().forEach(c=>{ if(c&&c.id) classMap.set(String(c.id),{value:String(c.id),label:c.name||c.id}); });
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      const cid=String(info.classId||r.classId||"").trim();
+      const cname=String(info.className||r.className||"").trim();
+      if(cid && !classMap.has(cid)) classMap.set(cid,{value:cid,label:cname||cid});
+    });
+    const classOpts=Array.from(classMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    rpSetOptions(classSel,classOpts,"اختر الصف / جميع الفصول");
+
+    const attemptCountByStudent=new Map();
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      if(clsVal && String(info.classId||r.classId||"")!==String(clsVal)) return;
+      const keys=[info.sid, info.u&&info.u.id, r.studentId, r.studentUserId, r.userId, info.name].filter(Boolean).map(String);
+      keys.forEach(k=>attemptCountByStudent.set(k,(attemptCountByStudent.get(k)||0)+1));
+    });
+    const roster=rpRosterBase().filter(u=>!clsVal || String(u.classId||"")===String(clsVal));
+    const seen=new Set();
+    const stuOpts=[];
+    roster.forEach(u=>{
+      const key=String(u.studentId||u.id||u.name||"").trim();
+      if(!key||seen.has(key)) return;
+      seen.add(key);
+      const cnt=attemptCountByStudent.get(String(u.studentId||"")) || attemptCountByStudent.get(String(u.id||"")) || attemptCountByStudent.get(String(u.name||"")) || 0;
+      stuOpts.push({value:key,label:(u.name||u.shortName||u.id)+" — "+(u.studentId||u.id)+(u.classId?" — "+rpClassName(u.classId):"")+(cnt?" — "+cnt+" محاولة":"")});
+    });
+    (all||[]).forEach(r=>{
+      const info=rpRecInfo(r);
+      if(clsVal && String(info.classId||r.classId||"")!==String(clsVal)) return;
+      const key=String(info.sid||r.studentNumber||r.studentId||r.studentUserId||info.name||"").trim();
+      if(key&&!seen.has(key)){
+        seen.add(key);
+        const cnt=attemptCountByStudent.get(String(key)) || 0;
+        stuOpts.push({value:key,label:info.name+(info.sid?" — "+info.sid:"")+(info.className?" — "+info.className:"")+(cnt?" — "+cnt+" محاولة":"")});
+      }
+    });
+    stuOpts.sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    rpSetOptions(stuSel,stuOpts,"اختر الطالب / جميع الطلاب");
+
+    const taskLabelMap=new Map();
+    function addTaskOption(label){
+      label=String(label||"").trim();
+      if(!label) return;
+      if(label==="reading-progress-task-1") label="Reading Progress Task";
+      const key=rpNorm(label);
+      if(!key) return;
+      if(!taskLabelMap.has(key)) taskLabelMap.set(key,{value:"label::"+key,label:label});
+    }
+    (tasks||[]).forEach(t=>addTaskOption(t.title||t.name||t.taskTitle||t.taskName));
+    (all||[]).forEach(r=>addTaskOption(taskLabel(r)||r.taskTitle||r.title||r.taskName));
+    const taskOpts=Array.from(taskLabelMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
+    rpSetOptions(taskSel,taskOpts,"اختر المهمة / جميع المهام");
+  }
+  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl||(r.audioChunked&&r.audioChunkCount))); }
+  function rpAnalysisState(r){ return String((r&&r.analysisStatus)||"").trim().toLowerCase(); }
+  function isPendingAnalysisRecord(r){ const st=rpAnalysisState(r); return !st || st==="pending" || st.includes("analyzing") || st.includes("failed"); }
+  function isAnalyzedRecord(r){
+    if(!r) return false;
+    const st=rpAnalysisState(r);
+    if(st==="completed") return true;
+    if(st==="pending" || st.includes("analyzing") || st.includes("failed")) return false;
+    if(r.transcript || r.analyzedAt) return true;
+    const manual=Number(r.teacherScore);
+    if(Number.isFinite(manual)&&manual>0) return true;
+    return false;
+  }
+  function needsAnalysisRecord(r){ return !!(r && !isDeleted(r) && hasAudioRecord(r) && rpIsPendingReviewSubmission(r) && !isAnalyzedRecord(r)); }
+  function rpHasAcceptableResult(r){
+    if(!r) return false;
+    if(isAnalyzedRecord(r)) return true;
+    if(r.analysis && typeof r.analysis === "object") return true;
+    const vals=[r.teacherScore,r.finalScore,r.aiScore,r.score,r.accuracy,r.wcpm,r.fluency,r.analysis&&r.analysis.finalScore,r.analysis&&r.analysis.score,r.analysis&&r.analysis.accuracy];
+    return vals.some(function(v){ const n=Number(v); return Number.isFinite(n) && n>=0; });
+  }
+  function canAcceptRecord(r){ return !!(r && !isDeleted(r) && rpIsPendingReviewSubmission(r) && rpHasAcceptableResult(r)); }
+  async function acceptRecordFull(id){
+    const rec=recordsLive().find(function(x){return x && x.id===id;}) || records().find(function(x){return x && x.id===id;});
+    if(!rec) return null;
+    if(!canAcceptRecord(rec)) throw new Error("حلّل التسجيل أولًا قبل القبول.");
+    const accepted=rpBuildAcceptedSubmission(rec,{status:"accepted",deleted:false});
+    const local=records();
+    const i=local.findIndex(function(x){return x && x.id===id;});
+    if(i>=0) local[i]={...local[i],...accepted}; else local.push(accepted);
+    saveRecords(local);
+    await cloudSaveRecord(accepted);
+    // RP166: accepting one visible record must close stale duplicate Pending records for the same student + task,
+    // otherwise the student page may still pick a duplicated pending copy as the latest status.
+    try{ await rpApplyFinalDecisionToStudentTask(accepted,"accepted",""); }catch(e){ console.warn("RP183 exact accept sync failed", e&&e.message); }
+    try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:id,status:"accepted"}})); }catch(_e){}
+    return accepted;
+  }
+  let rpTeacherObjectUrl = "";
+  function rpEnsureTeacherAudioPlayer(){
+    let box=document.getElementById("rp-teacher-audio-player-157");
+    if(box) return box;
+    box=document.createElement("div");
+    box.id="rp-teacher-audio-player-157";
+    box.style.cssText="position:fixed;left:12px;right:12px;bottom:10px;z-index:100000;background:#fff;border:2px solid #2563eb;border-radius:16px;box-shadow:0 12px 32px rgba(15,23,42,.30);padding:8px;display:none;direction:ltr";
+    box.innerHTML='<div style="display:flex;gap:8px;align-items:center"><audio id="rp-teacher-audio-el-157" controls preload="auto" style="width:100%;height:42px"></audio><button id="rp-teacher-audio-close-157" type="button" style="width:38px;height:38px;border:0;border-radius:10px;background:#475569;color:white;font-weight:900;font-size:18px">×</button></div><div id="rp-teacher-audio-title-157" style="font-size:11px;color:#475569;font-weight:800;margin-top:4px;text-align:center"></div>';
+    document.body.appendChild(box);
+    const audio=box.querySelector("#rp-teacher-audio-el-157");
+    const close=box.querySelector("#rp-teacher-audio-close-157");
+    function hide(){
+      try{ audio.pause(); }catch(e){}
+      box.style.display="none";
+      if(rpTeacherObjectUrl){ try{ URL.revokeObjectURL(rpTeacherObjectUrl); }catch(e){} rpTeacherObjectUrl=""; }
+    }
+    close.onclick=hide;
+    audio.addEventListener("ended", function(){ setTimeout(hide, 650); });
+    return box;
+  }
+  async function rpResolveTeacherAudioUrl(r){
+    if(!r) throw new Error("Recording not found.");
+    if(r.audioId && typeof getAudio==="function"){
+      try{
+        const item=await getAudio(r.audioId);
+        if(item && item.blob){
+          if(rpTeacherObjectUrl){ try{ URL.revokeObjectURL(rpTeacherObjectUrl); }catch(e){} rpTeacherObjectUrl=""; }
+          rpTeacherObjectUrl=URL.createObjectURL(item.blob);
+          return rpTeacherObjectUrl;
+        }
+      }catch(e){}
+    }
+    if(r.audioDataUrl) return r.audioDataUrl;
+    if(r.audioChunked && r.audioChunkCount && typeof rpResolveAudioDataUrl==="function"){
+      try{ const u=await rpResolveAudioDataUrl(r); if(u) return u; }catch(e){}
+    }
+    if(r.audioUrl) return r.audioUrl;
+    throw new Error("No playable audio found.");
+  }
+  async function rpPlayTeacherRecording(id){
+    const r=recordsLive().find(x=>x&&x.id===id) || records().find(x=>x&&x.id===id);
+    if(!r) return alert("Recording not found.");
+    try{
+      const box=rpEnsureTeacherAudioPlayer();
+      const audio=box.querySelector("#rp-teacher-audio-el-157");
+      const title=box.querySelector("#rp-teacher-audio-title-157");
+      title.textContent="Loading full recording...";
+      box.style.display="block";
+      const src=await rpResolveTeacherAudioUrl(r);
+      audio.src=src;
+      title.textContent=(rpRecInfo(r).name||"Student")+" — "+(taskLabel(r)||"Reading");
+      await audio.play();
+    }catch(e){ alert("Audio playback failed: "+(e.message||e)); }
+  }
+
+  function isWaitingForTeacher(r){ return !!(r && !isDeleted(r) && rpIsPendingReviewSubmission(r)); }
+  function isPreviousRp(r){ return !!(r && !isDeleted(r) && rpIsPreviousReviewSubmission(r)); }
+  function taskKey(r){
+    const inferred=rpInferRealTask(r);
+    if(inferred && inferred.id) return inferred.id;
+    return String((r&&(r.taskId||r.taskKey||r.assignmentId))||"").trim() || rpNorm(taskLabelRaw(r));
+  }
+  function taskLabelRaw(r){ return (r&&(r.taskTitle||r.title||r.taskName||r.assignmentTitle||r.assignment||r.taskId))||"Reading Task"; }
+  function taskLabel(r){
+    const inferred=rpInferRealTask(r);
+    if(inferred && inferred.title) return inferred.title;
+    const id=String((r&&r.taskId)||"").trim();
+    const cached=rpTaskLabelFromCache(id);
+    if(cached && !rpIsGenericTaskTitle(cached)) return cached;
+    const raw=String(taskLabelRaw(r)||"").trim();
+    if(id==="reading-progress-task-1") return "Reading Progress Task";
+    if(raw==="reading-progress-task-1") return "Reading Progress Task";
+    return raw || "Reading Task";
+  }
+  function studentLabel(r){
+    return `${r.studentName||"Student"}${r.studentId?` · ${r.studentId}`:""}${r.className?` · ${r.className}`:""}`;
+  }
+  async function currentVisibleRecords(){
+    rpRefreshRosters(false);
+    const arr=recordsLive().filter(rpRecordVisible);
+    const clsVal=String(document.getElementById("rp-v11-class")?.value||"");
+    const stuVal=String(document.getElementById("rp-v11-student")?.value||"");
+    const statusVal=String(document.getElementById("rp-v11-status")?.value||"");
+    const searchQ=rpNorm(document.getElementById("rp-v11-search")?.value||"");
+    const taskVal=String(document.getElementById("rp-v11-task")?.value||"");
+    const sortVal=String(document.getElementById("rp-v11-sort")?.value||"newest");
+    const filtered=arr.filter(r=>{
+      if(!rpRecordVisible(r)) return false;
+      if(isDeleted(r)) return false;
+      const info=rpRecInfo(r);
+      const recTaskVal=taskKey(r);
+      const labelNorm=rpNorm(taskLabel(r));
+      const taskText=rpNorm(taskLabel(r)+" "+(r.taskId||"")+" "+taskLabelRaw(r));
+      const stuText=rpNorm([info.name,info.sid,info.u&&info.u.id,r.studentName,r.studentId,r.studentUserId,r.userId,studentLabel(r),info.className].join(" "));
+      const okClass=!clsVal || info.classId===clsVal || String(r.classId||"")===clsVal;
+      const okStu=!stuVal || String(info.sid)===stuVal || String(info.u&&info.u.id)===stuVal || rpNorm(info.name)===rpNorm(stuVal) || stuText.includes(rpNorm(stuVal));
+      const okSearch=!searchQ || stuText.includes(searchQ);
+      const okTask=!taskVal || (String(taskVal).startsWith("label::") ? labelNorm===String(taskVal).slice(7) : (recTaskVal===taskVal || taskText.includes(rpNorm(taskVal))));
+      const state=rpAttemptState(r);
+      const okStatus=!statusVal ||
+        (statusVal==="needs_analysis" && needsAnalysisRecord(r)) ||
+        (statusVal==="analyzed" && state==="pending" && isAnalyzedRecord(r)) ||
+        (statusVal==="pending" && state==="pending") ||
+        (statusVal==="accepted" && state==="accepted") ||
+        (statusVal==="rejected" && state==="rejected") ||
+        (statusVal==="retake" && state==="retake");
+      const okTab=(rpActiveTab==="all" || (rpActiveTab==="previous" ? isPreviousRp(r) : isWaitingForTeacher(r)));
+      return okClass && okStu && okSearch && okTask && okStatus && okTab;
+    });
+    filtered.sort((a,b)=>{
+      if(sortVal==="oldest") return recordTime(a)-recordTime(b);
+      if(sortVal==="name") return String(rpRecInfo(a).name||"").localeCompare(String(rpRecInfo(b).name||""),'ar');
+      if(sortVal==="score_high") return Number(finalScore(b)||-1)-Number(finalScore(a)||-1);
+      if(sortVal==="score_low") return Number(finalScore(a)||999)-Number(finalScore(b)||999);
+      return recordTime(b)-recordTime(a);
+    });
+    return filtered;
+  }
+
+  const rpTeacherDrafts=new Map();
+  function rpCaptureTeacherDrafts(panel){
+    if(!panel) return;
+    panel.querySelectorAll('[data-score],[data-notes]').forEach(function(el){
+      const id=el.getAttribute('data-score')||el.getAttribute('data-notes'); if(!id)return;
+      const d=rpTeacherDrafts.get(id)||{};
+      if(el.hasAttribute('data-score')) d.score=el.value; else d.notes=el.value;
+      rpTeacherDrafts.set(id,d);
+    });
+  }
+  async function renderCards(){
+    const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
+    // V334: preserve teacher typing even if another safe RP refresh occurs.
+    rpCaptureTeacherDrafts(panel);
+    try{ if(typeof window.rpRunTeacherAutoNowSilent==="function" && (!window.__rpAutoLastRun || Date.now()-window.__rpAutoLastRun>8000)){ window.__rpAutoLastRun=Date.now(); setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},80); } }catch(_e){}
+    try{ await rpRefreshRosters(true); }catch(_e){ try{ rpRefreshRosters(false); }catch(__e){} }
+    let allLocalRaw=recordsFastWithBackgroundSync();
+    try{ if(Date.now()-__rpLastCloudSyncAt>5000) allLocalRaw=await syncCloudIntoLocal(); }catch(_syncErr){ console.warn("RP119 initial cloud sync failed", _syncErr); }
+    const allLocal=allLocalRaw.filter(rpRecordVisible);
+    const rpTasks=await rpLoadReadingTasks();
+    rpPopulateFilterOptions(allLocal,rpTasks);
+    const waitingAll=allLocal.filter(isWaitingForTeacher).length;
+    const badge=document.getElementById("rp-floating-count");
+    if(badge){badge.textContent=String(waitingAll);badge.style.display=waitingAll?"block":"none";}
+    panel.querySelectorAll('[data-rp-tab]').forEach(b=>{const on=b.getAttribute('data-rp-tab')===rpActiveTab;b.style.background=on?'#2563eb':'#e2e8f0';b.style.color=on?'#fff':'#334155';});
+    const shownAll=await currentVisibleRecords();
+    const shown=shownAll.slice(0, rpDrawerVisibleLimit);
+    const completed=shownAll.filter(isAnalyzedRecord);
+    const counted=shownAll.filter(isCountableAttempt);
+    const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)),0)/counted.length):"-";
+    const label=rpActiveTab==="waiting"?"المنتظر للتقييم":rpActiveTab==="previous"?"التسجيلات السابقة":"كل التسجيلات";
+    document.getElementById("rp-v11-summary").innerHTML=`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px"><div style="padding:9px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:900;font-size:12px">${label}: ${shownAll.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:900;font-size:12px">منتظر الكل: ${waitingAll}</div><div style="padding:9px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:900;font-size:12px">محلل: ${completed.length}</div><div style="padding:9px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:900;font-size:12px">متوسط المقبول: ${avg}${avg==="-"?"":"%"}</div><div style="padding:9px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:900;font-size:12px">المعروض الآن: ${shown.length} / ${shownAll.length}</div></div>`;
+    const cards=document.getElementById("rp-v11-cards");
+    const moreWrap=document.getElementById("rp-v11-more-wrap");
+    if(moreWrap){ moreWrap.innerHTML = shownAll.length>shown.length ? `<button id="rp-v11-show-more" type="button" style="width:100%;padding:12px;border:0;border-radius:12px;background:#0f172a;color:white;font-weight:900">عرض 10 محاولات أخرى (${shown.length} / ${shownAll.length})</button>` : (shownAll.length?`<div style="text-align:center;color:#64748b;font-size:12px;font-weight:800;padding:8px">تم عرض كل النتائج المطابقة للفلاتر.</div>`:""); }
+    if(!shown.length){cards.innerHTML=`<div style="padding:14px;background:#f8fafc;border-radius:12px;color:#64748b;text-align:center;font-weight:800">لا توجد تسجيلات في هذا التبويب أو حسب الفلاتر الحالية.</div>`;return;}
+    // v322: preserve expanded class/student accordions across the frequent RB refresh.
+    const openClassKeys=new Set(Array.from(cards.querySelectorAll('details[data-rp-class][open]')).map(x=>x.getAttribute('data-rp-class')));
+    const openStudentKeys=new Set(Array.from(cards.querySelectorAll('details[data-rp-student][open]')).map(x=>x.getAttribute('data-rp-student')));
+    let out="";
+    const shownByClass=shown.slice().sort((a,b)=>{const ac=String(rpRecInfo(a).className||"بدون فصل"),bc=String(rpRecInfo(b).className||"بدون فصل");const cc=ac.localeCompare(bc,'ar');if(cc)return cc;return String(rpRecInfo(a).name||"").localeCompare(String(rpRecInfo(b).name||""),'ar')||recordTime(b)-recordTime(a);});
+    const classBuckets={};
+    shownByClass.forEach(function(r){const k=String(rpRecInfo(r).className||"بدون فصل");(classBuckets[k]||(classBuckets[k]=[])).push(r);});
+    for(const [rpClassName,classItems] of Object.entries(classBuckets)){
+      const classKey="class:"+rpClassName;
+      out+=`<details data-rp-class="${rpHtmlEscape(classKey)}" ${openClassKeys.has(classKey)?"open":""} style="border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff;overflow:hidden"><summary style="padding:12px;cursor:pointer;font-weight:1000;color:#1e3a8a;direction:rtl">🏫 ${rpHtmlEscape(rpClassName)} <span style="color:#64748b;font-size:11px">(${classItems.length})</span></summary><div style="display:grid;gap:8px;padding:10px;background:#f8fafc">`;
+      const studentBuckets={};
+      classItems.forEach(function(r){const info=rpRecInfo(r);const key=String(info.sid||info.name||"طالب");(studentBuckets[key]||(studentBuckets[key]=[])).push(r);});
+      for(const [studentKey,studentItemsRaw] of Object.entries(studentBuckets)){
+        const studentItems=studentItemsRaw.slice().sort((a,b)=>recordTime(b)-recordTime(a));
+        const info=rpRecInfo(studentItems[0]);
+        const latest=studentItems[0];
+        const skey=classKey+"|student:"+studentKey;
+        out+=`<details data-rp-student="${rpHtmlEscape(skey)}" ${openStudentKeys.has(skey)?"open":""} style="border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden"><summary style="padding:11px;cursor:pointer;font-weight:900;color:#1e293b;display:flex;justify-content:space-between;gap:8px;align-items:center"><span>👤 ${rpHtmlEscape(info.name||"Student")} <span style="font-size:10px;color:#64748b;font-weight:700">${rpHtmlEscape(info.sid||"")} · ${studentItems.length} محاولة</span></span><span style="font-size:12px;color:#2563eb">الأحدث: ${finalScore(latest)===""?"-":finalScore(latest)+"%"}</span></summary><div style="display:grid;gap:10px;padding:10px;background:#f8fafc">`;
+        let studentHtml="";
+        for(const r of studentItems){
+      // V327: never hydrate IndexedDB blobs/chunked audio while rendering the ARB/RP list.
+      // Audio is resolved only after the teacher presses Play (rpPlayTeacherRecording).
+      const audioAvailable=hasAudioRecord(r);
+      const url=audioAvailable?"lazy://rp-audio":"";
+      const audioSize=r.audioSize||0;
+      const audioType=r.audioType||"audio/webm";
+      const alreadyAccepted=rpAttemptState(r)==="accepted";
+      // V334: an already accepted/analyzed recording may always be re-evaluated by the teacher.
+      const acceptReady=alreadyAccepted ? rpHasAcceptableResult(r) : canAcceptRecord(r);
+      const acceptBg=acceptReady?"#16a34a":"#94a3b8";
+      const acceptLabel=acceptReady?(alreadyAccepted?"Accept New Grade":"Accept"):"Analyze first";
+      const draft=rpTeacherDrafts.get(String(r.id))||{};
+      const scoreValue=(draft.score!==undefined)?draft.score:(r.teacherScore||"");
+      const notesValue=(draft.notes!==undefined)?draft.notes:(r.teacherNotes||"");
+      studentHtml+=`<div style="border:1px solid #e2e8f0;border-radius:16px;padding:12px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.06)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div><div style="font-size:18px;font-weight:900;color:#1e293b">${rpRecInfo(r).name}</div><div style="color:#64748b;font-size:13px">${rpRecInfo(r).sid||""} · ${rpRecInfo(r).className||""}</div></div><div style="font-size:22px;font-weight:900;color:#2563eb">${finalScore(r)===""?"-":finalScore(r)+"%"}</div></div><div style="display:grid;grid-template-columns:1fr;gap:8px"><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Task:</b> ${taskLabel(r)}<br><b>Status:</b> ${rpAttemptState(r)} · <b>Raw:</b> ${r.status||"submitted"} · <b>Analysis:</b> ${r.analysisStatus||"Pending"}</div><div style="padding:9px;border-radius:12px;background:#f8fafc"><b>Audio Recording:</b> <span style="color:${url?"#166534":"#dc2626"};font-weight:800">${url?fmt(audioSize)+" · "+(audioType||"audio"):"No audio attached"}</span>${url?`<button type="button" data-rp-play="${r.id}" style="margin-top:8px;padding:10px 14px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:900;font-size:13px">▶️ Play full recording</button>`:`<div style="color:#dc2626;font-weight:800;margin-top:6px">No audio attached</div>`}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><div style="padding:8px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;font-weight:800">Acc: ${rpMetricValue(r,"accuracy")===""?"-":rpMetricValue(r,"accuracy")}</div><div style="padding:8px 10px;border-radius:12px;background:#ecfdf5;color:#166534;font-weight:800">WCPM: ${rpMetricValue(r,"wcpm")===""?"-":rpMetricValue(r,"wcpm")}</div><div style="padding:8px 10px;border-radius:12px;background:#fff7ed;color:#9a3412;font-weight:800">Fluency: ${rpMetricValue(r,"fluency")===""?"-":rpMetricValue(r,"fluency")}</div><div style="padding:8px 10px;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:800">Mistakes: ${rpMetricValue(r,"mistakes")===""?"-":rpMetricValue(r,"mistakes")}</div><div style="padding:8px 10px;border-radius:12px;background:#f8fafc;color:#334155;font-weight:800">Words: ${rpMetricValue(r,"correctWords")===""?"-":rpMetricValue(r,"correctWords")}/${rpMetricValue(r,"totalWords")===""?"-":rpMetricValue(r,"totalWords")}</div></div>${r.referenceText?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Reference Text:</b><br>${r.referenceText}</div>`:""}${r.transcript?`<div style="padding:9px;border-radius:12px;background:#f8fafc;color:#334155"><b>Transcript:</b><br>${rpHtmlEscape(r.transcript)}</div>${rpColoredTranscriptHtml((r.referenceText||r.reference||r.text||""), r.transcript)}`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input data-score="${r.id}" value="${rpHtmlEscape(scoreValue)}" placeholder="Teacher score optional" style="flex:1;min-width:150px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"><input data-notes="${r.id}" value="${rpHtmlEscape(notesValue)}" placeholder="Notes optional" style="flex:2;min-width:180px;padding:10px;border:1px solid #cbd5e1;border-radius:10px"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-analyze="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800">Analyze Saved Recording</button><button type="button" data-id="${r.id}" data-status="accepted" ${acceptReady?"":"disabled"} style="padding:10px 12px;border:0;border-radius:10px;background:${acceptBg};color:white;font-weight:800;opacity:${acceptReady?1:.72};cursor:${acceptReady?"pointer":"not-allowed"}">${acceptLabel}</button><button type="button" data-id="${r.id}" data-status="retake_allowed" style="padding:10px 12px;border:0;border-radius:10px;background:#f59e0b;color:white;font-weight:800">Allow Retake</button><button type="button" data-id="${r.id}" data-status="rejected" style="padding:10px 12px;border:0;border-radius:10px;background:#dc2626;color:white;font-weight:800">Reject</button>${rpActiveTab!=="waiting"?`<button type="button" data-id="${r.id}" data-status="submitted" style="padding:10px 12px;border:0;border-radius:10px;background:#0ea5e9;color:white;font-weight:800">Return to Waiting</button>`:""}<button type="button" data-delete="${r.id}" style="padding:10px 12px;border:0;border-radius:10px;background:#475569;color:white;font-weight:800">Delete Attempt</button></div></div></div>`;
+
+        }
+        out+=studentHtml+`</div></details>`;
+      }
+      out+=`</div></details>`;
+    }
+    cards.innerHTML=out;
+  }
+
+  try{ window.rpV11RenderNow=renderCards; }catch(_e){}
+
+  async function studentStatus(){
+    const currentUserRole = String(user().role||"").toLowerCase();
+    if(currentUserRole.includes("teacher")) return;
+    // RP_STUDENT_UI_AUDIO_SAVE_FINAL: the student performance card now lives inside the Reading tab.
+    // Remove the old injected top-of-page card so login/student pages never split into two sections.
+    try{ const old=document.getElementById("rp-v11-student-status"); if(old) old.remove(); }catch(e){}
+    return;
+    if(!(document.body.innerText||"").includes("Reading Progress")) return;
+
+    let all=[];
+    try{ all=await syncCloudIntoLocal(); }catch(e){ all=records(); }
+
+    const u=user(), ok=canSubmit(u.id);
+    const mine=all.filter(r=>r && responseBelongsToStudent(r,u) && r.taskId===taskId() && !isDeleted(r));
+    const counted=mine.filter(isCountableAttempt);
+    const rejectedCount=mine.filter(isRejected).length;
+    const acceptedCount=mine.filter(r=>r.status==="accepted"||r.status==="approved").length;
+    const last=mine.length?mine.slice().sort((a,b)=>recordTime(a)-recordTime(b))[mine.length-1]:null;
+    const best=counted.length?Math.max(...counted.map(r=>Number(finalScore(r)||0))):"";
+    const avg=counted.length?Math.round(counted.reduce((s,r)=>s+Number(finalScore(r)||0),0)/counted.length):"";
+    const lastScore=last&&finalScore(last)!==""?finalScore(last):"";
+    const statusText=!last?"No submission yet":
+      rpIsAcceptedSubmission(last)?"Accepted":
+      last.status==="rejected"?"Rejected":
+      last.status==="retake_allowed"?"Retake allowed":
+      last.analysisStatus==="Completed"?"Analyzed / waiting for teacher":
+      String(last.analysisStatus||"").toLowerCase().includes("waiting for teacher")?"Auto analysis waiting for teacher dashboard":
+      String(last.analysisStatus||"").toLowerCase().includes("analyzing")?"Analyzing... / waiting for teacher":
+      "Submitted / waiting for teacher";
+
+    let box=document.getElementById("rp-v11-student-status");
+    if(!box){
+      box=document.createElement("div");
+      box.id="rp-v11-student-status";
+      box.style.cssText="margin:10px 24px;padding:12px;border-radius:16px;font-family:system-ui;font-weight:800;line-height:1.6;border:1px solid #dbeafe";
+      const host=(document.getElementById("root")||document.body);
+      if(host.firstChild) host.insertBefore(box, host.firstChild);
+      else host.appendChild(box);
+    }
+
+    box.innerHTML=`
+      <div style="font-size:16px;color:#1e293b;margin-bottom:8px">📊 Reading Progress Performance</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span style="padding:7px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8">Status: ${statusText}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#ecfdf5;color:#166534">Last: ${lastScore===""?"-":lastScore+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#fff7ed;color:#9a3412">Best: ${best===""?"-":best+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#f8fafc;color:#334155">Average: ${avg===""?"-":avg+"%"}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#f8fafc;color:#334155">Attempts: ${mine.length}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#ecfdf5;color:#166534">Accepted: ${acceptedCount}</span>
+        <span style="padding:7px 10px;border-radius:12px;background:#fef2f2;color:#991b1b">Rejected excluded: ${rejectedCount}</span>
+      </div>
+      ${last&&last.teacherNotes?`<div style="margin-top:8px;color:#475569">Teacher note: ${last.teacherNotes}</div>`:""}
+      <div style="margin-top:8px;color:#64748b;font-size:12px">Only teacher-accepted or manually scored attempts are counted. Submitted, retake-allowed, rejected, and deleted attempts are excluded from Average / Best.</div>
+    `;
+    box.style.background="#ffffff";
+    box.style.color="#334155";
+    // التسجيل والإرسال متاحان دائمًا للطالب.
+  }
+
+  setTimeout(()=>{teacherPanel();studentStatus();},1000);
+  // V333: do not rebuild the RP drawer every 4 seconds; this erased teacher-entered scores.
+  setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},30000);
+})();
+ // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
+</script>
+
+
+
+<!-- CLASS_LOGIN_IMPORT_FINAL_RECOVERY_V132_20260702 -->
+<!-- RP V12 old word-analysis add-on removed safely -->
+
+
+
+<!-- BUILD_ALLOW_STUDENT_RECORDING_NO_RESTRICTIONS -->
+
+<!-- BUILD_TEACHER_RECEIVES_STUDENT_RECORDINGS -->
+
+<!-- BUILD_FIX_ANALYZE_USES_ACTUAL_READING_TEXT -->
+
+<!-- BUILD_PERSIST_ANALYSIS_RESULT_TEACHER_STUDENT -->
+
+<!-- BUILD_FAIR_SCORING_PERSIST_RESULT -->
+
+<!-- BUILD_DELETE_ATTEMPT_STUDENT_PERFORMANCE_SAFE -->
+
+<!-- BUILD_COUNT_RETAKE_SCORE_SHOW_STUDENT_DASHBOARD -->
+
+<!-- BUILD_FIX_REFERENCE_TEXT_NOT_DASHBOARD_TEXT -->
+
+<!-- BUILD_STUDENT_DASHBOARD_APPROVED_ONLY_PERFECT_100 -->
+
+<!-- BUILD_TEXT_FILTERS_ACCEPT_VISIBLE_NO_ORANGE_SELECT -->
+
+<script>
+(function(){
+  function addReadingProgressShowButton(){ return; }
+  setInterval(addReadingProgressShowButton,1500);
+})();
+</script>
+
+
+<!-- BUILD_REMOVE_OLD_WORD_ANALYSIS_V12_SAFE -->
+
+<!-- BUILD_EDIT_TASKS_STUDENT_TARGETING_AI_IN_ORIGINAL_FORM -->
+
+<!-- BUILD_REMOVE_OLD_RECORDINGS_LINK_DASHBOARD_NEW_RESULTS -->
+<!-- BUILD_RESTORE_TOP_HIDE_NAME_FILTERS_ONLY -->
+
+
+<!-- removed floating navigation -->
+
+
+
+<!-- BUILD_TOP_BOTTOM_NAVIGATION_ARROWS -->
+<!-- BUILD_ROLLBACK_NO_PERFORMANCE_DASHBOARD -->
+
+<!-- BUILD_NO_RECORD_WHILE_AUDIO_RETAKE_LIMIT_SAFE -->
+
+<!-- BUILD_LINK_STUDENT_ATTEMPTS_RETAKE_ZERO_INLINE_SAFE -->
+
+<!-- BUILD_FINAL_ATTEMPTS_SMART_RECORDING_READING_REPORT -->
+
+<!-- BUILD_FINAL_FIX_ATTEMPTS_AND_SMART_STOP -->
+
+<!-- BUILD_FINAL_STRICT_RETAKE_GATE -->
+
+<!-- BUILD_FINAL_DUPLICATE_SUBMIT_PRO_READING_REPORT -->
+
+<!-- BUILD_FINAL_MOBILE_REPORT_DUPLICATE_SUBMIT_FIX -->
+<!-- BUILD_FINAL_CLEAN_CLASSES_FILTERS_HIDE_SHOW_NAV -->
+<!-- BUILD_EMERGENCY_RESTORE_EVALUATION_BUTTONS -->
+
+<style id="safe-smart-scroll-style">
+  .safe-smart-scroll-btn{
+    position:fixed;
+    left:50%;
+    right:auto;
+    bottom:136px;
+    width:52px;
+    height:52px;
+    border-radius:999px;
+    border:0;
+    background:#2563eb;
+    color:white;
+    font-size:26px;
+    font-weight:900;
+    box-shadow:0 10px 24px rgba(15,23,42,.25);
+    z-index:9999;
+    opacity:0;
+    pointer-events:none;
+    transform:translate(-50%,10px);
+    transition:opacity .2s ease, transform .2s ease;
+  }
+  .safe-smart-scroll-btn.show{
+    opacity:.94;
+    pointer-events:auto;
+    transform:translate(-50%,0);
+  }
+</style>
+<script id="safe-smart-scroll-only">
+(function(){
+  var btn=document.createElement("button");
+  btn.className="safe-smart-scroll-btn";
+  btn.type="button";
+  btn.textContent="↓";
+  document.body.appendChild(btn);
+  var hideTimer=null;
+  function maxScroll(){return Math.max(1, document.documentElement.scrollHeight-window.innerHeight);}
+  function showButton(){
+    var y=window.scrollY || document.documentElement.scrollTop || 0;
+    var nearBottom=y > maxScroll()*0.55;
+    btn.textContent=nearBottom ? "↑" : "↓";
+    btn.onclick=function(){
+      var now=window.scrollY || document.documentElement.scrollTop || 0;
+      if(now > maxScroll()*0.55){ window.scrollTo({top:0,behavior:"smooth"}); }
+      else { window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"}); }
+    };
+    btn.classList.add("show");
+    clearTimeout(hideTimer);
+    hideTimer=setTimeout(function(){btn.classList.remove("show");},2200);
+  }
+  window.addEventListener("scroll", showButton, {passive:true});
+  window.addEventListener("touchmove", showButton, {passive:true});
+  window.addEventListener("wheel", showButton, {passive:true});
+})();
+</script>
+
+
+<!-- BUILD_EMERGENCY_NO_WHITE_SAFE_RESTORE -->
+
+<!-- BUILD_FINAL_QUIZ_LISTENING_RULES_RETAKE_LIMIT -->
+
+<!-- BUILD_FINAL_TEACHER_RETAKE_CONTROL_REVIEW_AFTER_FINAL -->
+
+<!-- BUILD_FINAL_QUIZ_SHOW_ALL_CLASSES -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_COMPLETION_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_MOBILE_FALLBACK -->
+
+<!-- BUILD_FINAL_LISTENING_SUBMIT_PLAY_STARTED_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_STRICT_COMPLETE_HIDE_NATIVE_REVIEW_GATE -->
+
+<!-- BUILD_FINAL_LISTENING_ONE_PLAYER_COUNTER_SUBMIT_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_COVERAGE_SKIP_CONTROL_REVIEW_FIX -->
+
+<!-- BUILD_FINAL_LISTENING_PERSISTENT_AUDIO_NO_RESTART_FIX -->
+
+<!-- BUILD_BASE_WORKING_SUBMIT_PLUS_TEACHER_FIXES_ONLY -->
+
+<!-- BUILD_FINAL_RP_STUDENT_DRAFT_PREVIEW_RECORD_AGAIN_NO_SUBMIT_TOUCH -->
+<!-- BUILD_128_IMPORT_EXISTING_CLASS_MOVE_STUDENTS_NO_FAKE_LOGIN -->
+<!-- BUILD_FINAL_REMEMBER_LOGIN_RP_OPEN_SHARE_RETAKE5_NO_SUBMIT_TOUCH -->
+<!-- BUILD_FINAL_FULL_LOGIN_MEMORY_REMOVE_OLD_RP_PERFORMANCE -->
+
+<!-- BUILD_FINAL_GOOGLE_MICROSOFT_LINK_BY_STUDENT_ID_CLASS -->
+
+<!-- BUILD_FINAL_REACT_LOGIN_MEMORY_STABLE_WITH_GMAIL_LINK -->
+
+<script>
+// ===== RP DIRECT TEACHER AUTO CORRECTION FIX 20260611 =====
+// Independent worker: analyzes Firestore readingSubmissions while teacher dashboard is open.
+(function(){
+  if(window.__rpDirectTeacherAutoFix20260611) return;
+  window.__rpDirectTeacherAutoFix20260611 = true;
+  const KEY = 'rp_openai_api_key';
+  const LS = 'rp_attempt_records_v11';
+  let busy = false;
+  let lastRun = 0;
+
+  function isTeacherOpen(){
+    try{
+      const txt = document.body && document.body.innerText || '';
+      let sess = {};
+      try{ sess = JSON.parse(localStorage.getItem('eq_session')||'{}')||{}; }catch(e){}
+      const role = String(sess.role||sess.type||'').toLowerCase();
+      return role.includes('teacher') || txt.includes('TEACHER DASHBOARD') || txt.includes('SALEH AL HAMDAN') || txt.includes('+ Quiz');
+    }catch(e){ return false; }
+  }
+  function key(){ try{return String(localStorage.getItem(KEY)||localStorage.getItem('eq_aikey')||localStorage.getItem('openai_api_key')||localStorage.getItem('ai_key')||'').trim();}catch(e){return '';} }
+  function hasAudio(r){ return !!(r && (r.audioDataUrl || r.audioUrl || (r.audioChunked&&r.audioChunkCount))); }
+  function analyzed(r){
+    if(!r) return false;
+    const st=String(r.analysisStatus||'').toLowerCase();
+    if(st==='completed') return true;
+    if(r.transcript && (r.finalScore!==undefined || r.accuracy!==undefined || r.analysis)) return true;
+    return false;
+  }
+  function needs(r){
+    const st=String((r&&r.status)||'').toLowerCase();
+    if(!r || r.deleted===true) return false;
+    try{ if(typeof adminDeletedClassSet==='function'){ const set=adminDeletedClassSet(); const cid=(typeof canonicalClassId==='function'?canonicalClassId(r.classId||r.className||''):(r.classId||r.className||'')); if(set.has(String(r.classId||''))||set.has(String(r.className||''))||set.has(String(cid||''))) return false; } }catch(e){}
+    try{ if(typeof adminDeletedStudentSet==='function'){ const ds=adminDeletedStudentSet(); const sid=(typeof eqDigits==='function'?eqDigits(r.studentNumber||r.studentId||''):(r.studentNumber||r.studentId||'')); if(ds.has(String(r.studentId||''))||ds.has(String(r.studentNumber||''))||(sid&&(ds.has(String(sid))||ds.has('student_'+sid)))) return false; } }catch(e){}
+    return !!(r && hasAudio(r) && !analyzed(r) && !['accepted','approved','rejected','deleted','retake_allowed'].includes(st));
+  }
+  function clean(s){ return String(s||'').replace(/\s+/g,' ').trim(); }
+  function normalizeText(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9'\s]/g,' ').replace(/\s+/g,' ').trim(); }
+  async function blobFromRecord(r){
+    if(r.audioDataUrl){ return await (await fetch(r.audioDataUrl)).blob(); }
+    if(r.audioUrl){ return await (await fetch(r.audioUrl)).blob(); }
+    throw new Error('No audio file in submission');
+  }
+
+  async function audioElementDurationSeconds(blob){
+    return new Promise(resolve=>{
+      try{
+        if(!blob) return resolve(0);
+        const url=URL.createObjectURL(blob); const a=new Audio(); let done=false;
+        function finish(v){ if(done) return; done=true; try{URL.revokeObjectURL(url);}catch(_){} const n=Number(v); resolve(Number.isFinite(n)&&n>0?n:0); }
+        a.preload='metadata'; a.onloadedmetadata=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); else setTimeout(()=>finish(a.duration||0),500); };
+        a.ondurationchange=()=>{ if(Number.isFinite(a.duration)&&a.duration>0) finish(a.duration); };
+        a.onerror=()=>finish(0); setTimeout(()=>finish(a.duration||0),3000); a.src=url;
+      }catch(e){ resolve(0); }
+    });
+  }
+  async function trimmedAudioReadingSeconds(blob){
+    try{
+      const AudioCtx=window.AudioContext||window.webkitAudioContext; if(!blob||!AudioCtx) return 0;
+      const buf=await blob.arrayBuffer(); const ctx=new AudioCtx(); let audio;
+      try{ audio=await ctx.decodeAudioData(buf.slice(0)); }catch(e){ try{ctx.close&&ctx.close();}catch(_){} return 0; }
+      const sr=audio.sampleRate||44100, len=audio.length||0; if(!len){try{ctx.close&&ctx.close();}catch(_){} return 0;}
+      const ch=[]; for(let c=0;c<audio.numberOfChannels;c++) ch.push(audio.getChannelData(c));
+      const win=Math.max(256,Math.round(sr*.05)), rms=[];
+      for(let i=0;i<len;i+=win){let sum=0,count=0,end=Math.min(len,i+win);for(let j=i;j<end;j++){let v=0;for(let c=0;c<ch.length;c++)v+=ch[c][j]||0;v/=Math.max(1,ch.length);sum+=v*v;count++;}rms.push(Math.sqrt(sum/Math.max(1,count)));}
+      try{ctx.close&&ctx.close();}catch(_){} if(!rms.length) return 0;
+      const sorted=rms.slice().sort((a,b)=>a-b), noise=sorted[Math.floor(sorted.length*.25)]||0, peak=sorted[sorted.length-1]||0;
+      const threshold=Math.max(.010,noise*2.6,peak*.06); let first=-1,last=-1;
+      for(let i=0;i<rms.length;i++){if(rms[i]>=threshold){first=i;break;}} for(let i=rms.length-1;i>=0;i--){if(rms[i]>=threshold){last=i;break;}}
+      if(first<0||last<first) return 0; const full=audio.duration||len/sr; const start=Math.max(0,first*win/sr-.15); const end=Math.min(full,(last+1)*win/sr+.15);
+      const reading=end-start; return (!Number.isFinite(reading)||reading<=0)?0:Math.max(1,Math.round(reading));
+    }catch(e){ return 0; }
+  }
+  async function resolveAnalysisSeconds(r){
+    // RP173: audio duration must win over stale stored defaults such as 60 seconds.
+    let blob=null; try{ blob=await blobFromRecord(r); }catch(e){}
+    if(blob){ const trimmed=await trimmedAudioReadingSeconds(blob); if(trimmed>0) return trimmed; const dur=await audioElementDurationSeconds(blob); if(dur>0) return Math.round(dur); }
+    const explicit=[r&&r.actualReadingSeconds,r&&r.effectiveReadingSeconds,r&&r.readingSeconds,r&&r.analysis&&r.analysis.actualReadingSeconds,r&&r.analysis&&r.analysis.effectiveReadingSeconds,r&&r.analysis&&r.analysis.readingSeconds];
+    for(const v of explicit){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    const vals=[r&&r.seconds,r&&r.durationSeconds,r&&r.audioDuration,r&&r.recordingSeconds,r&&r.duration,r&&r.analysis&&r.analysis.seconds,r&&r.analysis&&r.analysis.durationSeconds,r&&r.analysis&&r.analysis.audioDuration];
+    for(const v of vals){ const n=Number(v); if(Number.isFinite(n)&&n>0) return Math.round(n); }
+    return 0;
+  }
+  async function transcribe(r){
+    const k=key();
+    if(!k) throw new Error('OpenAI key missing');
+    const blob = await blobFromRecord(r);
+    const file = new File([blob], 'reading-progress.webm', {type: blob.type || r.audioType || 'audio/webm'});
+    const form = new FormData();
+    form.append('file', file);
+    form.append('model', 'whisper-1');
+    form.append('language', 'en');
+    form.append('response_format', 'json');
+    const resp = await fetch('https://api.openai.com/v1/audio/transcriptions', {method:'POST', headers:{Authorization:'Bearer '+k}, body:form});
+    if(!resp.ok){ const t=await resp.text().catch(()=>''); throw new Error('OpenAI '+resp.status+': '+t.slice(0,180)); }
+    let data =await resp.json();
+    return clean(data.text||'');
+  }
+  function score(ref, spoken, seconds){
+    try{
+      if(typeof rpAnalyze==='function'){
+        const out=rpAnalyze(ref, spoken, seconds, 'beginner')||{};
+        const words=rpWords(ref);
+        const correct=Number(out.correctWords ?? out.correct ?? words.length);
+        const sec=Number(seconds)||0;
+        const realWcpm=sec>0?Math.round(correct/(sec/60)):out.wcpm;
+        const cappedScore=rpCapBySpeed((out.finalScore??out.score??out.aiScore), realWcpm, 'beginner', words.length);
+        const cappedFluency=rpFluencyCapBySpeed((out.fluency??out.fluencyScore), realWcpm, 'beginner', words.length);
+        return Object.assign({}, out, {wcpm:realWcpm, fluency:cappedFluency, finalScore:cappedScore, score:cappedScore, aiScore:cappedScore, seconds:sec, readingSeconds:sec, actualReadingSeconds:sec, effectiveReadingSeconds:sec, analysisStatus:'Completed'});
+      }
+    }catch(e){}
+    const a=normalizeText(ref).split(' ').filter(Boolean);
+    const b=normalizeText(spoken).split(' ').filter(Boolean);
+    const used=Array(b.length).fill(false);
+    let correct=0;
+    a.forEach(w=>{ const i=b.findIndex((x,j)=>!used[j] && x===w); if(i>=0){ used[i]=true; correct++; } });
+    const total=a.length||Math.max(1,b.length);
+    const missing=Math.max(0,a.length-correct);
+    const extra=Math.max(0,b.length-correct);
+    const repeated=b.filter((w,i)=>i>0 && b[i-1]===w).length;
+    const accuracy=Math.max(0,Math.min(100,Math.round(correct/Math.max(1,a.length||total)*100)));
+    const sec=Number(seconds)||0;
+    const wcpm=sec>0?Math.round(correct/(sec/60)):null;
+    const target=(a.length||total)<=30?60:((a.length||total)<=50?75:90);
+    const speedScore=wcpm==null?0:Math.max(0,Math.min(100,Math.round(wcpm/target*100)));
+    let fluency=Math.max(0,Math.min(100,Math.round(accuracy*0.55 + speedScore*0.35 + Math.min(10, wcpm/8) - repeated*2)));
+    let finalScore=Math.max(0,Math.min(100,Math.round(accuracy*0.55 + fluency*0.20 + speedScore*0.15 - Math.min(20,(missing*12+extra*4+repeated*3)*0.25))));
+    function cap(v){ const n=a.length||total; if(n<=30) return Math.min(v, wcpm<25?82:(wcpm<35?86:(wcpm<45?90:(wcpm<60?94:100)))); if(n<=50) return Math.min(v, wcpm<30?78:(wcpm<45?86:(wcpm<60?92:100))); if(wcpm<30)return Math.min(v,70); if(wcpm<45)return Math.min(v,80); if(wcpm<60)return Math.min(v,88); return v; }
+    function fcap(v){ const n=a.length||total; if(n<=30) return Math.min(v, wcpm<25?62:(wcpm<35?72:(wcpm<45?80:(wcpm<60?90:100)))); if(n<=50) return Math.min(v, wcpm<30?60:(wcpm<45?76:(wcpm<60?88:100))); if(wcpm<30)return Math.min(v,55); if(wcpm<45)return Math.min(v,70); if(wcpm<60)return Math.min(v,82); return v; }
+    fluency=Math.max(0,Math.min(100,Math.round(fcap(fluency))));
+    finalScore=Math.max(0,Math.min(100,Math.round(cap(finalScore))));
+    return {accuracy,rawAccuracy:accuracy,wcpm,fluency,speedScore,finalScore,score:finalScore,aiScore:finalScore,mistakeCount:missing+extra+repeated,mistakes:missing+extra+repeated,missing,extra,repeated,correctWords:correct,totalWords:a.length||total,analysisStatus:'Completed'};
+  }
+  async function getTaskText(db, r){
+    let ref=clean(r.referenceText || r.text || r.taskText || r.readingText || '');
+    if(ref) return ref;
+    const tid=String(r.taskId||r.assignmentId||'').trim();
+    if(tid){
+      try{
+        const d=await db.collection('readingTasks').doc(tid).get();
+        if(d.exists){ const t=d.data()||{}; ref=clean(t.text||t.referenceText||t.taskText||''); if(ref) return ref; }
+      }catch(e){}
+    }
+    return 'Reading every day helps students learn new words. Good readers practice carefully and try again when a sentence is difficult.';
+  }
+  function updateLocal(id, patch){
+    try{
+      const arr=JSON.parse(localStorage.getItem(LS)||'[]');
+      if(!Array.isArray(arr)) return;
+      const i=arr.findIndex(x=>String(x.id)===String(id));
+      if(i>=0){ arr[i]={...arr[i],...patch}; localStorage.setItem(LS, JSON.stringify(arr)); }
+    }catch(e){}
+  }
+  async function runOnce(limit=2){
+    if(busy) return {ok:0,fail:0,reason:'busy'};
+    if(Date.now()-lastRun<8000) return {ok:0,fail:0,reason:'cooldown'};
+    if(!isTeacherOpen()) return {ok:0,fail:0,reason:'not-teacher'};
+    if(!key()) return {ok:0,fail:0,reason:'missing-key'};
+    if(!(window.firebase && firebase.firestore)) return {ok:0,fail:0,reason:'no-firestore'};
+    busy=true; lastRun=Date.now();
+    let ok=0, fail=0, lastErr='';
+    try{
+      const db=firebase.firestore();
+      const snap=await db.collection('readingSubmissions').get();
+      const todo=[];
+      snap.forEach(doc=>{ const r={id:doc.id, ...(doc.data()||{})}; if(needs(r)) todo.push(r); });
+      todo.sort((a,b)=>String(a.submittedAt||a.createdAt||'').localeCompare(String(b.submittedAt||b.createdAt||'')));
+      for(const r of todo.slice(0, Math.max(1,Number(limit)||2))){
+        try{
+          const transcript=await transcribe(r);
+          const ref=await getTaskText(db,r);
+          const seconds=await resolveAnalysisSeconds(r);
+          if(!seconds || seconds<=0) throw new Error('Could not read recording duration. Ask student to submit again or enter a teacher score manually.');
+          const res=score(ref, transcript, seconds);
+          const now=new Date().toISOString();
+          const patch={...res, analysis:{...res,seconds:seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds}, transcript, status:'pending_review', seconds:seconds, durationSeconds:seconds, readingSeconds:seconds, actualReadingSeconds:seconds, effectiveReadingSeconds:seconds, analyzedAt:now, updatedAt:now, teacherAutoAnalyzed:true, teacherAutoVersion:'direct-20260703-rp173'};
+          await db.collection('readingSubmissions').doc(r.id).set(patch,{merge:true});
+          updateLocal(r.id, patch);
+          ok++;
+        }catch(e){
+          fail++; lastErr=e && e.message ? e.message : String(e);
+          try{ await db.collection('readingSubmissions').doc(r.id).set({analysisStatus:'Waiting for teacher retry: '+lastErr.slice(0,160), lastAnalysisError:lastErr.slice(0,200), updatedAt:new Date().toISOString()},{merge:true}); }catch(_e){}
+        }
+      }
+      window.__rpLastDirectAutoResult={ok,fail,lastErr,checked:todo.length,at:new Date().toISOString()};
+      return window.__rpLastDirectAutoResult;
+    }catch(e){
+      lastErr=e&&e.message?e.message:String(e); window.__rpLastDirectAutoResult={ok,fail:fail+1,lastErr,at:new Date().toISOString()}; return window.__rpLastDirectAutoResult;
+    }finally{ busy=false; }
+  }
+  window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
+  window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
+  setTimeout(()=>runOnce(2), 5000);
+  setInterval(()=>runOnce(2), 15000);
+})();
+</script>
+
+
+<!-- WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_TINY_SAFE_PATCH_20260627 -->
+<style>
+#w12p,*#w12p{box-sizing:border-box}#w12p{position:fixed;left:0;right:0;top:max(74px,calc(env(safe-area-inset-top,0px) + 64px));bottom:0;z-index:2147483000;background:rgba(15,23,42,.45);font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:flex-start;justify-content:center}#w12c{width:min(1060px,100%);height:100%;background:#f8fafc;border-radius:22px 22px 0 0;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 -18px 38px rgba(0,0,0,.25)}#w12h{background:#0f172a;color:white;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px}#w12b{flex:1;overflow:auto;padding:12px}.w12btn{border:1px solid #cbd5e1;border-radius:12px;background:white;color:#0f172a;font-weight:900;padding:10px 12px}.w12box{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:12px;margin-bottom:10px}.w12chip{display:inline-flex;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900;background:#e0f2fe;color:#075985}.w12grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:8px}.w12table{width:100%;border-collapse:collapse;font-size:13px}.w12table th,.w12table td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}.w12table th{background:#f1f5f9}
+</style>
+<script>
+(function(){
+if(window.__WRITING_V12_SYNC_DELETE_RETAKE__)return;window.__WRITING_V12_SYNC_DELETE_RETAKE__=true;
+const DOC="writing_independent_v12",LOCAL="eq_writing_independent_v12",EP="eqWritingAIWorkerEndpoint_v8";
+let DATA={students:[],tasks:[],submissions:[],retakeRequests:[],deletedSubmissionIds:[],settings:{aiEndpoint:""}};
+let LIVE_WRITING_USERS=[], LIVE_WRITING_CLASSES=[];
+const esc=v=>String(v==null?"":v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const uid=p=>(p||"id")+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
+const jget=(k,f)=>{try{return JSON.parse(localStorage.getItem(k)||"null")||f}catch(e){return f}};
+const jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+function uniq(a){return Array.from(new Set((a||[]).filter(Boolean).map(String)))}
+function mergeList(a,b){const del=new Set(uniq([...(a.deletedSubmissionIds||[]),...(b.deletedSubmissionIds||[])]));const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||x.studentId||uid("x"));if(del.has(id)||x.deleted)return; m.set(id,Object.assign({},m.get(id)||{},x,{id}))});return Array.from(m.values())}
+function mergeRequests(a,b){const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||((x.studentId||"")+"_"+(x.taskId||"")));const old=m.get(id)||{};const merged=Object.assign({},old,x,{id});if(old.cleared||x.cleared)merged.cleared=true;m.set(id,merged)});return Array.from(m.values()).filter(x=>!x.cleared)}
+function statusRank(s){s=String(s||"pending_review");if(s==="cancelled")return 5;if(s==="retake_requested")return 4;if(s==="accepted")return 3;if(s==="retaken")return 2;if(s==="pending_review")return 1;return 0}
+function mergeSubs(a,b,deleted,deletedTasks){const m=new Map();[].concat(a||[],b||[]).forEach(x=>{if(!x)return;const id=String(x.id||uid("sub"));if(deleted.includes(id)||deletedTasks.includes(String(x.taskId)))return;const old=m.get(id);if(!old){m.set(id,Object.assign({},x,{id}));return}let keep=Object.assign({},old,x,{id});if(statusRank(old.status)>statusRank(x.status)){keep.status=old.status;keep.finalScore=old.finalScore;keep.level=old.level}if(statusRank(x.status)>statusRank(old.status)){keep.status=x.status;keep.finalScore=x.finalScore;keep.level=x.level}if(old.status==="accepted"||x.status==="accepted"){keep.status="accepted";keep.finalScore=(x.finalScore!=null?x.finalScore:old.finalScore);keep.level=x.level||old.level}if(old.status==="cancelled"||x.status==="cancelled"){keep.status="cancelled";keep.finalScore=0}m.set(id,keep)});return Array.from(m.values())}
+function merge(a,b){const deleted=uniq([...(a.deletedSubmissionIds||[]),...(b.deletedSubmissionIds||[])]);const deletedTasks=uniq([...(a.deletedTaskIds||[]),...(b.deletedTaskIds||[])]);const base={deletedSubmissionIds:deleted,deletedTaskIds:deletedTasks};base.students=mergeList(a.students,b.students);base.tasks=mergeList(a.tasks,b.tasks).filter(t=>!deletedTasks.includes(String(t.id)));base.submissions=mergeSubs(a.submissions||[],b.submissions||[],deleted,deletedTasks);base.retakeRequests=mergeRequests(a.retakeRequests,b.retakeRequests).filter(r=>!deletedTasks.includes(String(r.taskId)));base.settings=Object.assign({},a.settings||{},b.settings||{});return base}
+async function load(){
+  let local=jget(LOCAL,{students:[],tasks:[],submissions:[],retakeRequests:[],deletedSubmissionIds:[],deletedTaskIds:[],settings:{}}),cloud=null;
+  // IMPORTANT: v12 is now the only Writing data source. Never merge v5-v11 again,
+  // because retired rosters/classes were being resurrected after cleanup.
+  try{
+    if(typeof fsAll==="function"){
+      const res=await Promise.all([fsAll("appSettings"),fsAll("users"),fsAll("classes")]);
+      const arr=res[0]||[]; LIVE_WRITING_USERS=res[1]||[]; LIVE_WRITING_CLASSES=res[2]||[];
+      cloud=(arr||[]).find(x=>x.id===DOC||x._id===DOC)||null;
+    }else if(typeof db!=="undefined"&&db){
+      const d=await db.collection("appSettings").doc(DOC).get();
+      cloud=d.exists?d.data():null;
+      try{
+        const ur=await db.collection("users").get(); LIVE_WRITING_USERS=ur.docs.map(x=>Object.assign({id:x.id},x.data()||{}));
+        const cr=await db.collection("classes").get(); LIVE_WRITING_CLASSES=cr.docs.map(x=>Object.assign({id:x.id},x.data()||{}));
+      }catch(_rosterErr){}
+    }
+  }catch(e){}
+  DATA=merge(cloud||{},local||{});
+  DATA.settings=DATA.settings||{};
+  DATA.settings.aiEndpoint=DATA.settings.aiEndpoint||localStorage.getItem(EP)||"";
+  // Legacy Writing caches are no longer authoritative. Remove them locally so a refresh cannot revive them.
+  try{["eq_writing_independent_v11","eq_writing_independent_v10","eq_writing_independent_v9","eq_writing_independent_v8","eq_writing_independent_v7","eq_writing_independent_v6","eq_writing_independent_v5","eqWritingStudentNumber_v11","eqWritingStudentNumber_v10","eqWritingStudentNumber_v8"].forEach(k=>localStorage.removeItem(k));}catch(_legacyClear){}
+  // Purge saved Writing selections that no longer belong to a live active student.
+  const liveIds=new Set((LIVE_WRITING_USERS||[]).filter(u=>u&&u.role==="student"&&u.deleted!==true&&u.status!=="deleted"&&!u.hidePreloaded&&!u.permanentDeleted).flatMap(u=>[String(u.id||""),String(u.studentId||""),String(u.studentNumber||"")]).filter(Boolean));
+  DATA.students=(DATA.students||[]).filter(x=>[x.id,x.studentId,x.studentNumber].filter(Boolean).map(String).some(v=>liveIds.has(v)));
+  jset(LOCAL,DATA);
+  return DATA
+}
+async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.deletedTaskIds=uniq(DATA.deletedTaskIds||[]);DATA.tasks=(DATA.tasks||[]).filter(t=>!DATA.deletedTaskIds.includes(String(t.id)));DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId)));DATA.retakeRequests=(DATA.retakeRequests||[]).filter(r=>!DATA.deletedTaskIds.includes(String(r.taskId))&&!r.cleared);jset(LOCAL,DATA);try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
+window.eqGetWritingPendingCount=async function(){
+  try{
+    await load();
+    return (DATA.submissions||[]).filter(s=>s&&!s.deleted&&!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId))&&String(s.status||"pending_review")==="pending_review").length;
+  }catch(_e){ return 0; }
+};
+function sess(){for(const k of["eq_session","currentUser","eduquizCurrentUser","session","user"]){try{const v=JSON.parse(localStorage.getItem(k)||"null");if(v&&(v.id||v.name||v.studentId||v.role||v.password))return v}catch(e){}}try{if(window.currentUser)return window.currentUser;if(window.user)return window.user}catch(e){}return{}}
+function hi(){const t=(document.body&&document.body.innerText)||"",m=t.match(/Hi,\s*([^!\n\r]+)!/i);return m?m[1].trim():""}
+function teacher(){const u=sess(),r=String(u.role||u.type||"").toLowerCase(),t=(document.body&&document.body.innerText)||"";return r.includes("teacher")||t.includes("TEACHER DASHBOARD")||t.includes("Teacher Dashboard")}
+function student(){const u=sess(),r=String(u.role||u.type||"").toLowerCase();return r.includes("student")||(!teacher()&&(u.studentId||u.password||u.id||hi()))}
+function classes(){
+  const m=new Map();
+  (LIVE_WRITING_CLASSES||[]).forEach(c=>{
+    if(!c||c.deleted===true||c.status==="deleted"||c.hidePreloaded||c.permanentDeleted)return;
+    if(typeof eqIsTeacherRealClassDoc==="function"&&!eqIsTeacherRealClassDoc(c))return;
+    const clean=(typeof eqCleanClassRow==="function"?eqCleanClassRow(c):c)||c;
+    const id=String(clean.id||clean.classId||clean.name||""); if(!id)return;
+    if(!m.has(id))m.set(id,Object.assign({},clean,{id}));
+  });
+  return Array.from(m.values());
+}
+function users(){
+  const liveClassIds=new Set(classes().map(c=>String(c.id)));
+  const m=new Map();
+  (LIVE_WRITING_USERS||[]).forEach(u=>{
+    if(!u||u.role!=="student"||u.deleted===true||u.status==="deleted"||u.hidePreloaded||u.permanentDeleted)return;
+    const cid=(typeof canonicalClassId==="function"?canonicalClassId(u.classId||u.className||u.class||""):String(u.classId||""));
+    if(!cid||!liveClassIds.has(String(cid)))return;
+    const id=String(u.id||("student_"+(u.studentId||u.password||u.name)));
+    if(!m.has(id))m.set(id,Object.assign({},u,{id,classId:cid}));
+  });
+  return Array.from(m.values());
+}
+const name=u=>String(u.name||u.fullName||u.shortName||u.studentName||u.id||"Student"), num=u=>String(u.studentId||u.studentNo||u.studentNumber||u.password||u.id||"");
+function cname(id){const c=classes().find(x=>String(x.id)===String(id));return c?String(c.name||c.grade||c.id):""}
+function aliases(u){const set=new Set(),saved=localStorage.getItem("eqWritingStudentNumber_v12")||"";if(saved){set.add(saved);if(/^\d+$/.test(saved))set.add("student_"+saved)}[u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{set.add(x);if(/^\d+$/.test(x))set.add("student_"+x);const m=x.match(/student_(\d+)/);if(m)set.add(m[1])});const g=hi();if(g)set.add("name:"+g);if(u.name)set.add("name:"+String(u.name).trim());return set}
+function strictStudentAliases(u){const set=new Set();u=u||{};[u.id,u.uid,u.studentId,u.studentNo,u.studentNumber,u.password,u.code].filter(Boolean).map(String).forEach(x=>{set.add(x);if(/^\d+$/.test(x))set.add("student_"+x);const m=x.match(/student_(\d+)/);if(m)set.add(m[1])});if(u.name)set.add("name:"+String(u.name).trim());return set}
+function strictStudentSelected(u){const al=strictStudentAliases(u),nm=String((u&&u.name)||"").trim();return(DATA.students||[]).some(st=>{const vals=[st.id,st.studentId,st.studentNumber,st.password].filter(Boolean).map(String);for(const v of vals){if(al.has(v))return true;const m=v.match(/student_(\d+)/);if(m&&al.has(m[1]))return true;if(/^\d+$/.test(v)&&al.has("student_"+v))return true}return !!(nm&&st.name&&String(st.name).trim()===nm)})}
+function strictStudentSid(u,al){u=u||{};const raw=u.studentNumber||u.studentNo||u.studentId||u.id||"";if(raw){const x=String(raw);return /^\d+$/.test(x)?"student_"+x:x}return Array.from(al||[]).find(x=>/^student_\d+$/.test(x))||Array.from(al||[])[0]||"student"}
+function selected(u){const al=aliases(u),g=hi();return(DATA.students||[]).some(s=>{const vals=[s.id,s.studentId,s.studentNumber,s.password].filter(Boolean).map(String);for(const v of vals){if(al.has(v))return true;const m=v.match(/student_(\d+)/);if(m&&al.has(m[1]))return true;if(/^\d+$/.test(v)&&al.has("student_"+v))return true}return !!(g&&s.name&&String(s.name).includes(g))})}
+function subStudentIds(s){const arr=[s.studentId,s.studentNumber,s.id].filter(Boolean).map(String);arr.forEach(x=>{const m=String(x).match(/student_(\d+)/);if(m)arr.push(m[1]);if(/^\d+$/.test(String(x)))arr.push("student_"+x)});return uniq(arr)}
+function requestMatches(req,al,taskId){if(String(req.taskId)!==String(taskId))return false;const vals=[req.studentId,req.studentNumber,req.studentName].filter(Boolean).map(String);for(const v of vals){if(al.has(v))return true;const m=v.match(/student_(\d+)/);if(m&&al.has(m[1]))return true;if(/^\d+$/.test(v)&&al.has("student_"+v))return true}return false}
+const norm=s=>String(s||"").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g," ").trim(), wc=t=>(String(t||"").match(/\b[\w']+\b/g)||[]).length;
+function sent(t){let a=String(t||"").trim().split(/(?<=[.!?])\s+|\n+/).map(x=>x.trim()).filter(Boolean);return a.length?a.length:(String(t||"").trim()?1:0)}
+function lvl(score){score=Number(score)||0;if(score>=9.8)return{badge:"🏆 مبدع — Creative"};if(score>=9)return{badge:"⭐ ممتاز — Excellent"};if(score>=8)return{badge:"🌟 جيد جدًا — Very Good"};if(score>=6.5)return{badge:"👍 جيد — Good"};if(score>=5)return{badge:"🟡 مقبول — Fair"};return{badge:"🔴 يحتاج تحسين — Needs Improvement"}}
+function sim(a,b){const A=new Set(norm(a).split(" ").filter(x=>x.length>2)),B=new Set(norm(b).split(" ").filter(x=>x.length>2));if(!A.size||!B.size)return 0;let n=0;A.forEach(x=>{if(B.has(x))n++});return Math.round((n/Math.min(A.size,B.size))*100)}
+function visibleSubs(){const del=new Set(DATA.deletedSubmissionIds||[]);return(DATA.submissions||[]).filter(s=>!del.has(String(s.id)))}
+function tooShortWriting(text){const raw=String(text||'').trim();const letters=(raw.match(/[A-Za-z]/g)||[]).length;const words=(raw.match(/\b[A-Za-z']+\b/g)||[]).length;return raw.length<8||letters<6||words<2}
+function localMark(text,task,similarity){const s=sent(text),w=wc(text),min=Number(task.minSentences||6),total=Number(task.totalMarks||10);if(tooShortWriting(text))return{source:'local',score:0,total,level:lvl(0),wordCount:w,sentenceCount:0,issues:[{msg:'Too short to assess.',type:'warning'}],feedback:'Write complete sentences.',studentFeedback:'Write complete sentences.',aiSuspicion:'Low',similarity:similarity||0,teacherNote:'One or two letters/words are not assessable.'};let cap=10;if(s<min){cap={0:0,1:2,2:3,3:4.5,4:6.5,5:8}[Math.min(5,Math.max(0,s))]||8}let base=Math.min(cap,Math.round(((s/min)*4+(w>45?2:w>25?1.5:1)+(String(text).match(/[.!?]/)?1:0)+(String(text).match(/\b(because|although|when|while|which|also)\b/i)?1:0)+2)*10)/10);base=Math.max(0,Math.min(total,base));let fb=s<min?"Write more sentences and check spelling.":(base>=8?"Good work. Add stronger details.":"Good work. Add more details and linking words.");return{source:"local",score:base,total,level:lvl(base),wordCount:w,sentenceCount:s,issues:[],feedback:fb,studentFeedback:fb,aiSuspicion:"Low",similarity:similarity||0,teacherNote:"Local scoring used."}}
+async function aiMark(text,task,studentName,similarity){const local=localMark(text,task,similarity),url=(DATA.settings&&DATA.settings.aiEndpoint)||localStorage.getItem(EP)||"";if(tooShortWriting(text))return local;if(!url)return local;try{const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,studentName,task:{title:task.title,instructions:task.instructions,minSentences:task.minSentences,totalMarks:task.totalMarks},similarity:similarity||0})});if(!res.ok)throw new Error("worker");const ai=await res.json();const score=Math.max(0,Math.min(Number(task.totalMarks||10),Math.round(Number(ai.score||local.score)*10)/10));return Object.assign({},local,ai,{source:"worker-ai",score,total:Number(task.totalMarks||10),level:lvl(score),wordCount:local.wordCount,sentenceCount:local.sentenceCount,studentFeedback:String(ai.studentFeedback||ai.feedback||local.studentFeedback).slice(0,120),feedback:String(ai.feedback||ai.studentFeedback||local.feedback).slice(0,160),similarity:Math.max(Number(ai.similarity||0),similarity||0),aiSuspicion:ai.aiSuspicion||local.aiSuspicion})}catch(e){return local}}
+function box(a,stu){a=a||{};return'<div class="w12box" style="background:#f8fafc"><div class="w12grid"><div><b>Score</b><br><span style="font-size:24px;font-weight:900">'+esc(a.score!=null?a.score:"-")+' / '+esc(a.total||10)+'</span></div><div><b>Level / الوسام</b><br><span class="w12chip">'+esc(lvl(a.score).badge)+'</span></div><div><b>Sentences</b><br>'+esc(a.sentenceCount||0)+' / 6</div><div><b>Words</b><br>'+esc(a.wordCount||0)+'</div></div><div style="margin-top:10px"><b>Feedback:</b><br>'+esc(stu?(a.studentFeedback||a.feedback||""):(a.feedback||a.studentFeedback||""))+'</div>'+(!stu?'<div class="w12grid" style="margin-top:10px"><div><b>AI suspicion</b><br>'+esc(a.aiSuspicion||"Low")+'</div><div><b>Similarity</b><br>'+esc(a.similarity||0)+'%</div><div><b>Source</b><br>'+esc(a.source||"local")+'</div></div><div style="font-size:12px;color:#64748b;margin-top:8px">'+esc(a.teacherNote||"")+'</div>':'')+'</div>'}
+function panel(title){const old=document.getElementById("w12p");if(old)old.remove();const w=document.createElement("div");w.id="w12p";w.innerHTML='<div id="w12c"><div id="w12h"><div><b>'+esc(title)+'</b><div style="font-size:11px;color:#cbd5e1">Independent Writing — Sync Delete + Retake</div></div><button id="w12close" style="border:0;border-radius:10px;background:#475569;color:white;font-weight:900;padding:8px 11px">Close</button></div><div id="w12b"></div></div>';document.body.appendChild(w);w.querySelector("#w12close").onclick=()=>w.remove();return w.querySelector("#w12b")}
+async function open(){if(teacher())return teacherPanel();if(student())return studentPanel();alert("Login first.")}
+function w12ShouldHideFab(){try{let sess=null;try{sess=JSON.parse(localStorage.getItem("eq_session")||"null")}catch(_e){};const txt=(document.getElementById("root")?.innerText||document.body.innerText||"");return !sess||txt.includes("EduQuiz")&&txt.includes("دخول")&&txt.includes("اختر فصلك")||/Question\s+\d+\s+of\s+\d+/i.test(txt)||txt.includes("Reading timer:")||txt.includes("Submit Quiz")||txt.includes("Create Quiz")||txt.includes("Take Quiz")||txt.includes("Listening Audio");}catch(e){return false}}
+try{window.eqOpenWriting=open;}catch(_e){}
+try{window.eqOpenWritingForStudent=function(u){return studentPanel(u,true);};}catch(_e){}
+function fab(){const ex=document.getElementById("w12fab");if(ex)ex.remove();return;}
+async function teacherPanel(){const body=panel("✍️ Writing — Teacher");body.innerHTML='<div class="w12box">Loading...</div>';await load();body.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="w12btn" data-t="students">Advanced Students</button><button class="w12btn" data-t="tasks">Writing Tasks</button><button class="w12btn" data-t="subs">Submissions</button><button class="w12btn" data-t="eval">Writing Evaluation</button><button class="w12btn" data-t="scores">Writing Scores</button><button class="w12btn" data-t="ai">AI Settings</button></div><div id="w12content"></div>';body.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>draw(b.dataset.t));draw("eval")}
+function draw(t){const el=document.getElementById("w12content");try{if(t==="students")return tabStudents(el);if(t==="tasks")return tabTasks(el);if(t==="subs")return tabSubs(el);if(t==="eval")return tabEval(el);if(t==="scores")return tabScores(el);if(t==="ai")return tabAI(el)}catch(e){el.innerHTML='<div class="w12box" style="color:#dc2626"><b>Tab error:</b><br>'+esc(e.message||e)+'</div>'}}
+function tabAI(el){el.innerHTML='<div class="w12box"><b>AI Settings</b><input id="w12ep" placeholder="https://your-worker.workers.dev" value="'+esc(DATA.settings.aiEndpoint||"")+'" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="w12saveep" class="w12btn" style="margin-top:8px;background:#2563eb;color:white">Save Worker Link</button></div>';el.querySelector("#w12saveep").onclick=async()=>{DATA.settings.aiEndpoint=el.querySelector("#w12ep").value.trim();await save();alert("Saved")}}
+function tabStudents(el){
+  const us=users(),ids=new Set(DATA.students.flatMap(x=>[String(x.id||""),String(x.studentId||""),String(x.studentNumber||"")]));
+  const classes=[...new Map(us.map(u=>[String(u.classId||""),{id:String(u.classId||""),name:cname(u.classId)}])).values()].filter(x=>x.id||x.name);
+  el.innerHTML='<div class="w12box"><b>Advanced Writing Students</b>'+
+    '<div id="w12selbar" style="margin-top:9px;padding:9px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:12px"></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px">'+
+      '<input id="w12q" placeholder="Search by name / number" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px">'+
+      '<select id="w12class" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Classes</option>'+classes.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join("")+'</select>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'+
+      '<button id="w12viewsel" class="w12btn">View Selected</button>'+
+      '<button id="w12selclass" class="w12btn" style="background:#2563eb;color:white">Select All in This Class</button>'+
+      '<button id="w12clear" class="w12btn" style="background:#64748b;color:white">Clear Selection</button>'+
+    '</div></div><div id="w12list"></div>';
+  const q=el.querySelector("#w12q"),cl=el.querySelector("#w12class"),list=el.querySelector("#w12list"),bar=el.querySelector("#w12selbar"),view=el.querySelector("#w12viewsel");
+  let selectedOnly=false;
+  const isSelected=u=>Array.from(aliases(u)).some(a=>ids.has(String(a)));
+  function syncIds(){ids.clear();DATA.students.forEach(x=>[x.id,x.studentId,x.studentNumber].forEach(a=>{if(a!=null&&String(a))ids.add(String(a))}))}
+  function red(){
+    syncIds();
+    const n=norm(q.value),cid=String(cl.value||"");
+    const selected=us.filter(isSelected);
+    bar.innerHTML='<b>Selected Students: '+selected.length+'</b>'+(selected.length?'<div style="font-size:11px;color:#475569;margin-top:3px">'+esc(selected.slice(0,4).map(name).join(" • "))+(selected.length>4?' • +'+(selected.length-4)+' more':'')+'</div>':'');
+    view.textContent=selectedOnly?"Show All Students":"View Selected ("+selected.length+")";
+    const rows=us.filter(u=>(!cid||String(u.classId||"")===cid)&&(!n||norm(name(u)+" "+num(u)).includes(n))&&(!selectedOnly||isSelected(u)));
+    list.innerHTML=rows.map(u=>{const checked=isSelected(u);return'<label class="w12box" style="display:flex;gap:10px;align-items:center;border:'+(checked?'2px solid #2563eb':'1px solid #e2e8f0')+';background:'+(checked?'#eff6ff':'#fff')+'"><input type="checkbox" data-id="'+esc(u.id)+'" '+(checked?"checked":"")+'><div style="flex:1"><div style="display:flex;justify-content:space-between;gap:6px;align-items:center"><b>'+esc(name(u))+'</b>'+(checked?'<span style="font-size:10px;background:#2563eb;color:white;border-radius:999px;padding:2px 7px">Selected</span>':'')+'</div><div style="font-size:12px;color:#64748b">'+esc(num(u))+' — '+esc(cname(u.classId))+'</div></div></label>'}).join("")||'<div class="w12box" style="color:#64748b">No students found.</div>';
+  }
+  q.oninput=red;cl.onchange=red;
+  view.onclick=()=>{selectedOnly=!selectedOnly;red()};
+  el.querySelector("#w12clear").onclick=async()=>{if(!DATA.students.length)return;DATA.students=[];await save();red()};
+  el.querySelector("#w12selclass").onclick=async()=>{
+    const cid=String(cl.value||"");if(!cid){alert("Choose a class first.");return}
+    const add=us.filter(u=>String(u.classId||"")===cid);
+    add.forEach(u=>{if(!isSelected(u))DATA.students.push({id:u.id,studentId:u.id,studentNumber:num(u),name:name(u),classId:u.classId||""})});
+    await save();red()
+  };
+  list.onclick=async e=>{
+    const ch=e.target.closest("input");if(!ch)return;
+    const u=us.find(x=>String(x.id)===String(ch.dataset.id));if(!u)return;
+    const ua=new Set(Array.from(aliases(u)).map(String));
+    DATA.students=DATA.students.filter(x=>![x.id,x.studentId,x.studentNumber].some(a=>ua.has(String(a||""))));
+    if(ch.checked)DATA.students.push({id:u.id,studentId:u.id,studentNumber:num(u),name:name(u),classId:u.classId||""});
+    await save();red()
+  };
+  red()
+}
+function tabTasks(el){el.innerHTML='<div class="w12box"><b>Create Writing Task</b><input id="w12title" placeholder="Title" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><textarea id="w12inst" style="width:100%;min-height:70px;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:12px">Write a paragraph about yourself. No less than 6 sentences.</textarea><select id="w12mode" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><option value="ai_teacher">AI + Teacher</option><option value="ai">AI</option><option value="teacher">Teacher</option></select><button id="w12create" class="w12btn" style="background:#2563eb;color:white;margin-top:8px">Create</button></div>'+DATA.tasks.map(t=>'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div><div style="font-size:12px;color:#64748b;margin-top:6px">Correction: <b>'+esc(t.mode||"ai_teacher")+'</b></div><button data-del="'+esc(t.id)+'" class="w12btn" style="background:#dc2626;color:white;margin-top:8px">Delete</button></div>').join("");el.querySelector("#w12create").onclick=async()=>{DATA.tasks.push({id:uid("task"),title:el.querySelector("#w12title").value.trim()||"Writing Task",instructions:el.querySelector("#w12inst").value.trim(),minSentences:6,totalMarks:10,mode:el.querySelector("#w12mode").value,createdAt:new Date().toISOString()});await save();tabTasks(el)};el.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(!confirm("Delete this writing task permanently?"))return;const tid=String(b.dataset.del);DATA.deletedTaskIds=uniq([...(DATA.deletedTaskIds||[]),tid]);DATA.tasks=DATA.tasks.filter(t=>String(t.id)!==tid);DATA.submissions=(DATA.submissions||[]).filter(s=>String(s.taskId)!==tid);DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>String(r.taskId)===tid?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString(),clearedReason:"task_deleted"}):r);await save();tabTasks(el)})}
+function createRetake(s){const vals=subStudentIds(s);DATA.retakeRequests=DATA.retakeRequests||[];DATA.retakeRequests.push({id:uid("retake"),taskId:s.taskId,studentId:vals[0]||s.studentId,studentNumber:vals.find(x=>/^\d+$/.test(x))||"",studentName:s.studentName||"",requestedAt:new Date().toISOString(),sourceSubmissionId:s.id});s.status="retake_requested"}
+function deleteAttempt(id){const sub=(DATA.submissions||[]).find(x=>String(x.id)===String(id));DATA.deletedSubmissionIds=uniq([...(DATA.deletedSubmissionIds||[]),String(id)]);if(sub){const ids=subStudentIds(sub),nm=String(sub.studentName||"").trim();DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>{const sameSource=String(r.sourceSubmissionId||"")===String(id);const sameTask=String(r.taskId)===String(sub.taskId);const sameStudent=ids.some(x=>String(r.studentId)===String(x)||String(r.studentNumber)===String(x));const sameName=nm&&String(r.studentName||"").trim()===nm;return(sameSource||(sameTask&&(sameStudent||sameName)))?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString(),clearedReason:"submission_deleted"}):r})}DATA.submissions=(DATA.submissions||[]).filter(x=>String(x.id)!==String(id))}
+function actionButtons(s){return'<button data-ok="'+esc(s.id)+'" class="w12btn" style="background:#16a34a;color:white;margin-top:8px">Accept</button><button data-zero="'+esc(s.id)+'" class="w12btn" style="background:#dc2626;color:white;margin-top:8px;margin-left:6px">0</button><button data-edit="'+esc(s.id)+'" class="w12btn" style="background:#2563eb;color:white;margin-top:8px;margin-left:6px">Edit Score</button><button data-re="'+esc(s.id)+'" class="w12btn" style="margin-top:8px;margin-left:6px">Re-score AI</button><button data-ret="'+esc(s.id)+'" class="w12btn" style="background:#f59e0b;color:white;margin-top:8px;margin-left:6px">Request Retake</button><button data-delatt="'+esc(s.id)+'" class="w12btn" style="background:#7f1d1d;color:white;margin-top:8px;margin-left:6px">Delete Attempt</button>'}
+function bindActions(el,refresh){async function retake(ids){if(!ids.length)return alert("حدد طالبًا أو أكثر");visibleSubs().forEach(s=>{if(ids.includes(String(s.id)))createRetake(s)});await save();refresh()}el.querySelectorAll("[data-ret]").forEach(b=>b.onclick=()=>retake([String(b.dataset.ret)]));el.querySelectorAll("[data-delatt]").forEach(b=>b.onclick=async()=>{if(!confirm("Delete this writing attempt?"))return;deleteAttempt(String(b.dataset.delatt));await save();refresh()});el.querySelectorAll("[data-ok]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.ok));s.status="accepted";s.finalScore=(s.auto&&s.auto.score)||0;await save();refresh()});el.querySelectorAll("[data-edit]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.edit));if(!s)return;const old=(s.finalScore!=null?s.finalScore:((s.auto&&s.auto.score)!=null?s.auto.score:""));const val=prompt("Enter score from 0 to 10",old);if(val===null)return;let n=Number(val);if(!Number.isFinite(n)||n<0||n>10){alert("اكتب درجة صحيحة من 0 إلى 10");return}n=Math.round(n*10)/10;s.teacherScore=n;s.finalScore=n;s.status="accepted";s.teacherOverride=true;s.teacherOverrideAt=new Date().toISOString();s.level=lvl(n);s.auto=Object.assign({},s.auto||{total:10}, {score:n,total:10,level:lvl(n),source:"teacher-override",feedback:(s.auto&&s.auto.feedback)||"Teacher score updated.",studentFeedback:(s.auto&&s.auto.studentFeedback)||"Teacher score updated."});await save();refresh()});el.querySelectorAll("[data-zero]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.zero));s.status="cancelled";s.finalScore=0;await save();refresh()});el.querySelectorAll("[data-re]").forEach(b=>b.onclick=async()=>{const s=DATA.submissions.find(x=>String(x.id)===String(b.dataset.re)),t=DATA.tasks.find(x=>String(x.id)===String(s.taskId))||{};const mx=Math.max(0,...visibleSubs().filter(x=>x.id!==s.id&&String(x.taskId)===String(s.taskId)).map(x=>sim(s.text,x.text)));s.auto=await aiMark(s.text||"",t,s.studentName,mx);await save();refresh()})}
+function attemptCard(s){const t=DATA.tasks.find(x=>String(x.id)===String(s.taskId))||{},a=Object.assign({},s.auto||localMark(s.text||"",t,0));if(s.finalScore!=null){a.score=s.finalScore;a.total=a.total||10;a.level=lvl(s.finalScore);a.source=s.teacherOverride?"teacher-override":(a.source||"final")}return'<div class="w12box"><b>'+esc(s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(t.title||s.taskTitle||"Writing")+' — Status: <b>'+esc(s.status||"pending_review")+'</b></div>'+box(a,false)+'<div style="margin-top:10px;background:#f8fafc;border-radius:12px;padding:10px;line-height:1.8">'+esc(s.text||"").replace(/\n/g,"<br>")+'</div>'+actionButtons(s)+'</div>'}
+function tabSubs(el){const subs=visibleSubs().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));el.innerHTML='<div class="w12box"><b>Submissions</b><div style="font-size:12px;color:#64748b">حدد الطلاب ثم اطلب إعادة محاولة. الحذف يتزامن مع الطالب.</div><button id="retSel" class="w12btn" style="background:#f59e0b;color:white;margin-top:8px">Request Retake for Selected</button></div>'+(subs.map(s=>'<label class="w12box" style="display:flex;gap:8px;align-items:center"><input type="checkbox" class="subcheck" value="'+esc(s.id)+'"><span>'+esc(s.studentName||"Student")+' — '+esc(s.status||"pending_review")+'</span></label>'+attemptCard(s)).join("")||'<div class="w12box">No submissions yet.</div>');el.querySelector("#retSel").onclick=async()=>{const ids=Array.from(el.querySelectorAll(".subcheck:checked")).map(x=>x.value);if(!ids.length)return alert("حدد طالبًا أو أكثر");visibleSubs().forEach(s=>{if(ids.includes(String(s.id)))createRetake(s)});await save();tabSubs(el)};bindActions(el,()=>tabSubs(el))}
+function studentForSub(s){return users().find(u=>{const al=aliases(u);return al.has(String(s.studentId))||subStudentIds(s).some(x=>al.has(x))||String(s.studentName||"").includes(name(u))})||{name:s.studentName||"Student",studentId:s.studentId||"",id:s.studentId||"",classId:""}}
+function tabEval(el){const cs=classes(),tasks=DATA.tasks||[],subs=visibleSubs().slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">حسب الطالب أو الفصل. الافتراضي آخر 10 تقييمات فقط.</div><div class="w12grid" style="margin-top:10px"><select id="evClass" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Classes</option>'+cs.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name||c.grade||c.id)+'</option>').join("")+'</select><input id="evStudent" placeholder="Student name / number" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><select id="evTask" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Tasks</option>'+tasks.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title||"Writing Task")+'</option>').join("")+'</select><select id="evStatus" style="padding:10px;border:1px solid #cbd5e1;border-radius:12px"><option value="">All Status</option><option value="pending_review">pending_review</option><option value="accepted">accepted</option><option value="retake_requested">retake_requested</option><option value="retaken">retaken</option><option value="cancelled">cancelled</option></select><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="w12btn evLim" data-lim="10">Latest 10</button><button class="w12btn evLim" data-lim="20">Latest 20</button><button class="w12btn evLim" data-lim="all">All</button></div></div></div><div id="evSummary"></div><div id="evList"></div>';let limit="10";const cls=el.querySelector("#evClass"),stu=el.querySelector("#evStudent"),tsk=el.querySelector("#evTask"),st=el.querySelector("#evStatus"),sum=el.querySelector("#evSummary"),list=el.querySelector("#evList");function red(){let arr=subs.map(s=>Object.assign({},s,{_u:studentForSub(s)}));const q=norm(stu.value);if(cls.value)arr=arr.filter(s=>String(s._u.classId)===String(cls.value));if(q)arr=arr.filter(s=>norm((s.studentName||"")+" "+(s.studentId||"")+" "+name(s._u)+" "+num(s._u)).includes(q));if(tsk.value)arr=arr.filter(s=>String(s.taskId)===String(tsk.value));if(st.value)arr=arr.filter(s=>String(s.status||"pending_review")===String(st.value));const total=arr.length,reviewed=arr.filter(s=>s.status==="accepted").length,retakes=(DATA.retakeRequests||[]).filter(r=>!r.cleared).length,scores=arr.map(x=>Number((x.finalScore!=null?x.finalScore:(x.auto&&x.auto.score))||0)).filter(x=>isFinite(x)),avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10):0;let top='<div class="w12grid"><div class="w12box"><b>Total Attempts</b><br><span style="font-size:26px;font-weight:900">'+total+'</span></div><div class="w12box"><b>Reviewed</b><br><span style="font-size:26px;font-weight:900">'+reviewed+'</span></div><div class="w12box"><b>Average %</b><br><span style="font-size:26px;font-weight:900">'+avg+'%</span></div><div class="w12box"><b>Retake Requests</b><br><span style="font-size:26px;font-weight:900">'+retakes+'</span></div></div>';const groups=new Map();arr.forEach(s=>{const k=String(s.studentId||s.studentName||"student");if(!groups.has(k))groups.set(k,[]);groups.get(k).push(s)});sum.innerHTML=top+Array.from(groups.values()).map(ss=>{const s=ss[0],u=s._u,sc=ss.map(x=>Number((x.finalScore!=null?x.finalScore:(x.auto&&x.auto.score))||0)).filter(x=>isFinite(x)),av=sc.length?Math.round(sc.reduce((a,b)=>a+b,0)/sc.length*10):0,best=sc.length?Math.round(Math.max(...sc)*10):0,latest=sc.length?Math.round(sc[0]*10):0;return'<div class="w12box"><b>'+esc(name(u)||s.studentName||"Student")+'</b><div style="font-size:12px;color:#64748b">'+esc(num(u)||s.studentId||"")+' — '+esc(cname(u.classId)||"")+'</div><div class="w12grid" style="margin-top:10px"><div><b>Attempts</b><br>'+ss.length+'</div><div><b>Average %</b><br>'+av+'%</div><div><b>Best %</b><br>'+best+'%</div><div><b>Latest %</b><br>'+latest+'%</div></div><div style="margin-top:8px"><span class="w12chip">'+esc(lvl(latest/10).badge)+'</span> <span class="w12chip">'+esc(s.status||"pending_review")+'</span></div></div>'}).join("");let shown=limit==="all"?arr:arr.slice(0,Number(limit||10));list.innerHTML='<div class="w12box"><b>Attempts</b><div style="font-size:12px;color:#64748b">Showing '+shown.length+' of '+arr.length+'</div></div>'+shown.map(attemptCard).join("");bindActions(list,()=>tabEval(el))} [cls,stu,tsk,st].forEach(x=>x.oninput=red);el.querySelectorAll(".evLim").forEach(b=>b.onclick=()=>{limit=b.dataset.lim;red()});red()}
+function tabScores(el){const us=users().filter(u=>selected(u));el.innerHTML='<div class="w12box"><b>Writing Scores</b><table class="w12table"><thead><tr><th>Student</th><th>No.</th><th>Score</th><th>Level</th><th>Status</th></tr></thead><tbody>'+us.map(u=>{const al=aliases(u),ss=visibleSubs().filter(s=>subStudentIds(s).some(x=>al.has(x))),s=ss[0],score=s?(s.finalScore!=null?s.finalScore:(s.auto&&s.auto.score)||"-"):"-";return'<tr><td>'+esc(name(u))+'</td><td>'+esc(num(u))+'</td><td><b>'+esc(score)+'</b></td><td>'+esc(s?lvl(score).badge:"-")+'</td><td>'+esc(s?s.status||"pending_review":"No submission")+'</td></tr>'}).join("")+'</tbody></table></div>'}
+async function studentPanel(forcedStudent,strictMode){const body=panel("✍️ Writing — Student");body.innerHTML='<div class="w12box">Loading...</div>';await load();const u=(forcedStudent&&typeof forcedStudent==="object")?forcedStudent:sess();const isStrict=!!(strictMode&&forcedStudent);if(!(isStrict?strictStudentSelected(u):selected(u))){body.innerHTML='<div class="w12box"><b>تأكيد رقم الطالب</b><input id="snum" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="show" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button></div>';body.querySelector("#show").onclick=async()=>{const v=body.querySelector("#snum").value.trim();if(!v)return;["eqWritingStudentNumber_v12","eqWritingStudentNumber_v11","eqWritingStudentNumber_v10","eqWritingStudentNumber_v8"].forEach(k=>localStorage.setItem(k,v));await load();studentPanel()};return}const al=isStrict?strictStudentAliases(u):aliases(u);body.innerHTML=DATA.tasks.map(t=>{const mine=visibleSubs().filter(s=>String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));const req=(DATA.retakeRequests||[]).find(r=>requestMatches(r,al,t.id)&&!r.cleared);const old=mine[0],can=!!req||(old&&old.status==="retake_requested");if(old&&!can){const a=Object.assign({},old.auto||localMark(old.text,t,0));if(old.finalScore!=null){a.score=old.finalScore;a.total=a.total||10;a.level=lvl(old.finalScore);a.source=old.teacherOverride?"teacher-override":(a.source||"final")}return'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div>'+box(a,true)+'<div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Status: <b>'+esc(old.status||"pending_review")+'</b></div></div>'}return'<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div>'+(can?'<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;padding:10px;margin-top:8px;font-weight:900">Retake requested — أعد المحاولة واكتب من جديد.</div>':'')+'<textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">'+(can?"Submit Retake":"Submit Writing")+'</button></div>'}).join("")||'<div class="w12box">لا توجد مهام كتابة.</div>';body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{const t=DATA.tasks.find(x=>x.id===btn.dataset.submit),text=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]').value.trim();if(!text)return alert("Write your paragraph first.");btn.disabled=true;btn.textContent="Scoring...";const saved=isStrict?"":(localStorage.getItem("eqWritingStudentNumber_v12")||localStorage.getItem("eqWritingStudentNumber_v11")||localStorage.getItem("eqWritingStudentNumber_v10")||localStorage.getItem("eqWritingStudentNumber_v8")||""),sid=isStrict?strictStudentSid(u,al):(saved?(/^\d+$/.test(saved)?"student_"+saved:saved):(Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al)[0]||"student"));DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>requestMatches(r,al,t.id)?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString()}):r);visibleSubs().forEach(s=>{if(String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))&&s.status==="retake_requested")s.status="retaken"});const mx=Math.max(0,...visibleSubs().filter(s=>String(s.taskId)===String(t.id)).map(s=>sim(text,s.text)));const a=await aiMark(text,t,u.name||hi()||"Student",mx);const mode=String(t.mode||"ai_teacher");const st=mode==="ai"?"accepted":"pending_review";DATA.submissions.push({id:uid("sub"),taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||hi()||"Student",text,auto:a,status:st,finalScore:mode==="ai"?a.score:null,createdAt:new Date().toISOString()});await save();alert("Writing submitted and scored.");studentPanel(u,isStrict)})}
+setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
+})();
+</script>
+<!-- END_WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_20260627 -->
+
+
+
+
+
+
+
+<!-- BUILD_READING_MODE_CHOICE_NORMAL_DEFAULT_20260629 -->
+<!-- BUILD_PROJECTS_V1_20260629 -->
+<!-- FOLLOWUP223_PROJECTS_PERIOD_MANUAL_ARABIC_STUDENT_20260708 -->
+<!-- INDEX255_WRITING_LIVE_ROSTER_ONLY_20260919 -->
+<!-- QUIZ_RESULTS_ASSIGNMENT_SCOPE_FIX_20260919 -->
+<!-- CLEANUP_RED_FLOATING_BUTTON_REMOVED_20260919 -->
+<!-- STUDENT_LOGIN_LIVE_CLASSES_ROSTER_FALLBACK_267_20260919 -->
+</body>
+</html>
+
+<!-- PATCH_NO_STICKY_SECTION_CARDS_GB_HEATMAP_20260611_SAFE -->
+<script id="patch-no-sticky-section-cards-gb-heatmap-safe">
+(function(){
+  function textHas(el, needle){ return el && (el.textContent||'').indexOf(needle) !== -1; }
+  function unstickSectionCard(needle){
+    var all = document.querySelectorAll('div,section,article');
+    for(var i=0;i<all.length;i++){
+      var el = all[i];
+      if(!textHas(el, needle)) continue;
+      // Only target the small section header/filter block, not the whole app/root.
+      var p = el;
+      for(var depth=0; depth<4 && p && p.id !== 'root' && p !== document.body; depth++, p=p.parentElement){
+        var st = getComputedStyle(p);
+        if(st.position === 'sticky' || st.position === 'fixed'){
+          p.style.position = 'relative';
+          p.style.top = 'auto';
+          p.style.zIndex = '1';
+          p.style.transform = 'none';
+        }
+      }
+    }
+  }
+  function protectMainBars(){
+    var root = document.getElementById('root');
+    if(!root) return;
+    var app = root.firstElementChild;
+    if(!app) return;
+    var header = app.children && app.children[0];
+    var tabs = app.children && app.children[1];
+    if(header){ header.style.position='relative'; header.style.zIndex='300'; }
+    if(tabs){ tabs.style.position='relative'; tabs.style.zIndex='250'; }
+  }
+  function apply(){
+    unstickSectionCard('📒 Gradebook');
+    unstickSectionCard('Student Heatmap');
+    protectMainBars();
+  }
+  apply();
+  var tries=0;
+  var timer=setInterval(function(){ apply(); if(++tries>40) clearInterval(timer); }, 500);
+  document.addEventListener('click', function(){ setTimeout(apply, 80); }, true);
+})();
+</script>
+
+
+<script>
+(function(){
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});}
+  function num(v){var n=Number(v); return Number.isFinite(n)?(Math.round(n*100)/100).toString():'0';}
+  window.eduNoorReportOpen=function(payload){
+    try{
+      payload=payload||{}; var rows=Array.isArray(payload.rows)?payload.rows:[]; var meta=payload.meta||{};
+      var w=window.open('', '_blank');
+      if(!w){ alert('اسمح بفتح النوافذ المنبثقة حتى يظهر كشف نور.'); return; }
+      var bodyRows=rows.map(function(r,i){
+        var notes=Array.isArray(r.notes)?r.notes.filter(Boolean):[];
+        var status=notes.length?'⚠️ نواقص محددة':'✅ مكتمل';
+        return '<tr>'+
+          '<td>'+(i+1)+'</td><td>'+esc(r.studentId)+'</td><td class="name">'+esc(r.name)+'</td><td>'+esc(r.className)+'</td>'+ 
+          '<td>'+num(r.participation)+'</td><td>'+num(r.homework)+'</td><td>'+num(r.projects)+'</td><td>'+num(r.shortQuiz)+'</td><td class="total">'+num(r.total40)+'</td>'+ 
+          '<td>'+num(r.oral)+'</td><td>'+num(r.written)+'</td><td class="total">'+num(r.total20)+'</td><td class="grand">'+num(r.total60)+'</td>'+ 
+          '<td class="status '+(notes.length?'warn':'ok')+'">'+status+'</td><td class="notes">'+esc(notes.join(' | '))+'</td></tr>';
+      }).join('');
+      var html='<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>كشف الاستحقاقات قبل نور</title><style>'+ 
+        'body{font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;background:#f8fafc;color:#0f172a;margin:18px}'+
+        '.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}.card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(15,23,42,.08)}'+
+        'h1{font-size:22px;margin:0 0 6px}.muted{color:#64748b;font-size:12px;font-weight:700}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:0;border-radius:10px;padding:10px 12px;font-weight:900;cursor:pointer;background:#2563eb;color:white}.print{background:#16a34a}.close{background:#64748b}'+
+        'table{border-collapse:separate;border-spacing:0;width:100%;min-width:1200px;background:white;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden}th,td{border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;padding:8px 9px;font-size:12px;text-align:center;vertical-align:top}th{background:#0f172a;color:white;position:sticky;top:0;z-index:2}.name{text-align:right;font-weight:900}.total{font-weight:900;color:#2563eb}.grand{font-weight:900;color:#7c3aed}.ok{color:#166534;background:#ecfdf5}.warn{color:#92400e;background:#fffbeb}.notes{text-align:right;min-width:260px;color:#475569}.wrap{overflow:auto;max-height:72vh;border-radius:14px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.summary div{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:10px;font-weight:900}.ltr{direction:ltr;display:inline-block}@media print{button,.actions{display:none}.wrap{max-height:none;overflow:visible}body{background:white;margin:8px}th{position:static}}'+
+        '</style></head><body><div class="top"><div><h1>📊 كشف الاستحقاقات قبل نور</h1><div class="muted">'+esc(meta.term||'')+' · '+esc(meta.period||'')+' · '+esc(meta.className||'')+' · التاريخ: <span class="ltr">'+esc(meta.date||'')+'</span></div></div><div class="actions"><button class="print" onclick="window.print()">🖨️ طباعة / PDF</button><button onclick="location.reload()">🔄 تحديث النافذة</button><button class="close" onclick="window.close()">إغلاق</button></div></div>'+ 
+        '<div class="summary"><div>عدد الطلاب: '+rows.length+'</div><div>مكتمل: '+rows.filter(function(r){return !(r.notes||[]).length}).length+'</div><div>لديهم نواقص محددة: '+rows.filter(function(r){return (r.notes||[]).length}).length+'</div></div>'+ 
+        '<div class="wrap"><table><thead><tr><th>#</th><th>ID</th><th>الطالب</th><th>الفصل</th><th>المشاركة /10</th><th>الواجبات /10</th><th>المشاريع /10</th><th>المهام الأدائية /10</th><th>أعمال الفترة /40</th><th>الشفوي /10</th><th>التحريري /10</th><th>الاختبارات /20</th><th>الإجمالي /60</th><th>الحالة</th><th>النواقص المحددة</th></tr></thead><tbody>'+bodyRows+'</tbody></table></div></body></html>';
+      w.document.open(); w.document.write(html); w.document.close();
+    }catch(e){ console.error(e); alert('تعذر فتح كشف نور.'); }
+  };
+})();
+</script>
+
+<!-- OLD_RESULTS_1448_HARD_PURGE_KEEP_HUSSEIN_RP_20260919 -->
+<script>
+(function(){
+  const CUT_TEXT='2026-08-01';
+  const CUT=Date.parse(CUT_TEXT+'T00:00:00');
+  const KEEP_SID='3209';
+  const KEEP_NAME='حسين بن محمد بن حسين الفايز';
+  const STATE={preview:null,busy:false};
+  function digits(v){return String(v==null?'':v).replace(/\D/g,'');}
+  function norm(v){return String(v||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').replace(/ـ/g,'').replace(/\bبن\b/g,' ').replace(/\bابن\b/g,' ').replace(/[^\u0600-\u06FFa-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+  function timeMs(r){
+    if(!r)return 0;
+    const vals=[r.updatedAt,r.reviewedAt,r.acceptedAt,r.approvedAt,r.analyzedAt,r.submittedAt,r.completedAt,r.importedAt,r.createdAt,r.date,r.timestamp,r.ts,r.recordedAt,r.uploadedAt];
+    for(const v of vals){
+      if(v===undefined||v===null||v==='')continue;
+      if(typeof v==='number'&&Number.isFinite(v))return v<100000000000?v*1000:v;
+      const n=Number(v);if(Number.isFinite(n)&&String(v).trim()!=='')return n<100000000000?n*1000:n;
+      const t=Date.parse(String(v));if(Number.isFinite(t))return t;
+    }
+    return 0;
+  }
+  function sidOf(r){return digits(r&&(r.studentNumber||r.studentId||r.student_id||r.userId||r.uid||r.ownerId||r.student&&r.student.studentId||''));}
+  function rname(r){return String(r&&(r.studentName||r.name||r.restoredFromName||'')||'').trim();}
+  function isChunk(r){return !!(r&&(String(r.source||'')==='rp_audio_chunk'||String(r.id||r._id||'').includes('__rp_audio_chunk__')||String(r.id||r._id||'').includes('_chunk_')));}
+  function isHussein(r){
+    const sid=sidOf(r); if(sid===KEEP_SID)return true;
+    const n=norm(rname(r)); return !!(n&&n===norm(KEEP_NAME));
+  }
+  function teacher(){try{const s=JSON.parse(localStorage.getItem('eq_session')||'{}');return s&&s.role==='teacher';}catch(e){return false;}}
+  async function all(name){try{return (typeof fsAll==='function')?(await fsAll(name)||[]):[];}catch(e){return [];}}
+  async function delRows(col,rows){
+    let ok=0,fail=0;
+    for(const r of (rows||[])){
+      const id=r&&(r.id||r._id);if(!id)continue;
+      try{if(typeof fsDel==='function')await fsDel(col,String(id));else if(typeof db!=='undefined'&&db&&db.collection)await db.collection(col).doc(String(id)).delete();ok++;}catch(e){fail++;}
+    }
+    return {ok,fail};
+  }
+  function currentRoster(users){
+    const m=new Map();
+    (users||[]).forEach(u=>{
+      if(!u||String(u.role||'')!=='student'||u.deleted===true||String(u.status||'').toLowerCase()==='deleted')return;
+      const sid=digits(u.studentId||u.studentNumber||u.id||'');if(!sid)return;
+      m.set(sid,u);
+    });
+    return m;
+  }
+  function clearlyNotCurrentStudent(r,roster){
+    const sid=sidOf(r);if(!sid)return false;
+    const cur=roster.get(sid);if(!cur)return true;
+    const rn=rname(r);if(rn&&cur.name&&norm(rn)!==norm(cur.name))return true;
+    return false;
+  }
+  function oldOrOrphanResult(r,roster,related){
+    const t=timeMs(r)||timeMs(related);
+    if(t)return t<CUT;
+    if(clearlyNotCurrentStudent(r,roster))return true;
+    const sid=sidOf(r);
+    if(sid&&!roster.has(sid))return true;
+    // Undated result with no current related activity is legacy; current 1448 saves all carry timestamps.
+    if(!t&&!related)return true;
+    return false;
+  }
+  async function scan(){
+    if(STATE.busy)return;STATE.busy=true;setStatus('🔎 جاري فحص النتائج القديمة…');
+    try{
+      const names=['users','responses','gradebook','projectSubmissions','projects','readingTheoryResponses','readingTheoryItems','readingSubmissions','readingAttemptResets','notes','dailyFollowup','followupHomeworkScores','followupReferrals','appSettings','quizzes'];
+      const vals=await Promise.all(names.map(all));
+      const D=Object.fromEntries(names.map((n,i)=>[n,vals[i]||[]]));
+      const roster=currentRoster(D.users);
+      const qmap=new Map((D.quizzes||[]).map(x=>[String(x.id||x._id||''),x]));
+      const pmap=new Map((D.projects||[]).map(x=>[String(x.id||x._id||''),x]));
+      const imap=new Map((D.readingTheoryItems||[]).map(x=>[String(x.id||x._id||''),x]));
+      const rows={};
+      rows.responses=(D.responses||[]).filter(r=>oldOrOrphanResult(r,roster,qmap.get(String(r.quizId||''))));
+      rows.gradebook=(D.gradebook||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.projectSubmissions=(D.projectSubmissions||[]).filter(r=>oldOrOrphanResult(r,roster,pmap.get(String(r.projectId||''))));
+      rows.readingTheoryResponses=(D.readingTheoryResponses||[]).filter(r=>oldOrOrphanResult(r,roster,imap.get(String(r.itemId||r.readingId||r.taskId||''))));
+      rows.readingAttemptResets=(D.readingAttemptResets||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT);});
+      // Preserve every Hussein RP record. Also preserve ALL rp_audio_chunk rows for now so orphan audio recovery remains possible.
+      rows.readingSubmissions=(D.readingSubmissions||[]).filter(r=>!isChunk(r)&&!isHussein(r)&&oldOrOrphanResult(r,roster,null));
+      rows.notes=(D.notes||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.dailyFollowup=(D.dailyFollowup||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT)||clearlyNotCurrentStudent(r,roster);});
+      rows.followupHomeworkScores=(D.followupHomeworkScores||[]).filter(r=>oldOrOrphanResult(r,roster,null));
+      rows.followupReferrals=(D.followupReferrals||[]).filter(r=>{const t=timeMs(r);return !!(t&&t<CUT)||clearlyNotCurrentStudent(r,roster);});
+      const w12=(D.appSettings||[]).find(x=>String(x.id||x._id||'')==='writing_independent_v12')||null;
+      let oldWritingSubs=[];
+      if(w12){oldWritingSubs=(w12.submissions||[]).filter(r=>oldOrOrphanResult(r,roster,null));}
+      const counts={};Object.keys(rows).forEach(k=>counts[k]=(rows[k]||[]).length);counts.writingSubmissions=oldWritingSubs.length;
+      const total=Object.values(counts).reduce((a,b)=>a+Number(b||0),0);
+      STATE.preview={D,rows,w12,oldWritingSubs,counts,total};
+      renderCounts(counts,total);
+      setStatus('✅ الفحص انتهى. النتائج القديمة المرشحة للحذف: '+total+' · تسجيلات حسين RP محمية بالكامل.');
+    }catch(e){setStatus('❌ تعذر الفحص: '+(e.message||e));}
+    STATE.busy=false;
+  }
+  async function purge(){
+    if(STATE.busy)return;
+    if(!STATE.preview){await scan();if(!STATE.preview)return;}
+    const p=STATE.preview;
+    if(!p.total){setStatus('✅ لا توجد نتائج قديمة متبقية للحذف.');return;}
+    const phrase=prompt('سيتم حذف النتائج القديمة فقط قبل '+CUT_TEXT+' والنتائج اليتيمة القديمة.\nلن تُحذف وظائف المنصة أو الطلاب الحاليون.\nReading Progress لحسين #3209 محمي، وأجزاء الصوت rp_audio_chunk لن تُمس.\n\nاكتب بالضبط: تصفية النتائج القديمة');
+    if(String(phrase||'').trim()!=='تصفية النتائج القديمة')return;
+    STATE.busy=true;setStatus('🧹 جاري حذف النتائج القديمة من Firebase… لا تغلق الصفحة.');
+    const out={};
+    try{
+      for(const col of ['responses','gradebook','projectSubmissions','readingTheoryResponses','readingAttemptResets','readingSubmissions','notes','dailyFollowup','followupHomeworkScores','followupReferrals']){
+        const z=await delRows(col,p.rows[col]||[]);out[col]=z.ok;if(z.fail)out[col+'_fail']=z.fail;
+      }
+      if(p.w12&&p.oldWritingSubs.length){
+        const clone=JSON.parse(JSON.stringify(p.w12));
+        const ids=new Set(p.oldWritingSubs.map(x=>String(x.id||x._id||'')));
+        clone.submissions=(clone.submissions||[]).filter(x=>!ids.has(String(x.id||x._id||'')));
+        clone.updatedAt=new Date().toISOString();clone.cleanupLastUpdatedAt=new Date().toISOString();
+        await fsSet('appSettings','writing_independent_v12',clone);out.writingSubmissions=p.oldWritingSubs.length;
+      }
+      try{
+        Object.keys(localStorage).forEach(k=>{if(/^eq_fast_data_cache/i.test(k)||/^eduquiz_active_login_classes/i.test(k)||/^eq_response/i.test(k))localStorage.removeItem(k);});
+        if(typeof __eqRespStudentMemo!=='undefined'&&__eqRespStudentMemo&&__eqRespStudentMemo.clear)__eqRespStudentMemo.clear();
+        if(typeof responsesForStudent!=='undefined'&&responsesForStudent.__cache)responsesForStudent.__cache.clear();
+      }catch(_e){}
+      const logId='old_results_purge_1448_'+Date.now();
+      try{await fsSet('cleanupLogs',logId,{id:logId,type:'old_results_1448_purge',cutoff:CUT_TEXT,protectedStudentId:KEEP_SID,protectedStudentName:KEEP_NAME,deleted:out,createdAt:new Date().toISOString()});}catch(_e){}
+      STATE.preview=null;renderCounts({},0);
+      setStatus('✅ تمت تصفية النتائج القديمة من المصدر. المحذوف: '+Object.entries(out).filter(x=>!x[0].endsWith('_fail')).map(x=>x[0]+': '+x[1]).join(' · '));
+      setTimeout(()=>{try{location.reload();}catch(e){}},1200);
+    }catch(e){setStatus('❌ توقف الحذف: '+(e.message||e));}
+    STATE.busy=false;
+  }
+  function setStatus(t){const e=document.getElementById('eq263-status');if(e)e.textContent=t;}
+  function renderCounts(c,total){const e=document.getElementById('eq263-counts');if(!e)return;const xs=Object.entries(c||{}).filter(x=>x[1]);e.innerHTML=xs.length?('<b>المجموع: '+total+'</b><br>'+xs.map(x=>x[0]+': '+x[1]).join(' · ')):'لا توجد نتائج في المعاينة.';}
+  function open(){const p=document.getElementById('eq263-panel');if(p)p.style.display='block';}
+  function close(){const p=document.getElementById('eq263-panel');if(p)p.style.display='none';}
+  function build(){
+    // CLEAN_UI_266: old-results cleanup is available only from the Cleanup tab; no floating red button.
+    return;
+    const b=document.createElement('button');b.id='eq263-fab';b.textContent='🧹 تصفية النتائج القديمة';b.style.cssText='position:fixed;left:14px;bottom:74px;z-index:100020;border:0;border-radius:999px;background:#dc2626;color:#fff;padding:11px 14px;font-weight:1000;box-shadow:0 8px 24px rgba(15,23,42,.25);font-size:12px';b.onclick=open;document.body.appendChild(b);
+    const p=document.createElement('div');p.id='eq263-panel';p.dir='rtl';p.style.cssText='display:none;position:fixed;inset:18px;z-index:100021;background:#f8fafc;border:1px solid #cbd5e1;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.35);overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Tahoma,sans-serif;color:#0f172a';
+    p.innerHTML='<div style="position:sticky;top:0;background:#0f172a;color:white;padding:14px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:1000">🧹 تصفية شاملة للنتائج القديمة</div><div style="font-size:11px;color:#cbd5e1;margin-top:3px">العام الحالي يبدأ من '+CUT_TEXT+' · حسين #3209 Reading Progress محمي</div></div><button id="eq263-close" style="border:0;border-radius:10px;padding:9px 12px;background:#475569;color:white;font-weight:900">إغلاق</button></div><div style="padding:14px;max-width:760px;margin:auto"><div style="background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:11px;line-height:1.8;font-size:12px;color:#9a3412"><b>ماذا سيُحذف؟</b> نتائج الاختبارات القديمة وZipGrade/Gradebook ونتائج المشاريع وReading Theory وWriting والمتابعة القديمة. لا تُحذف أكواد المزايا ولا الطلاب الحاليون. تسجيلات حسين في Reading Progress وأجزاء الصوت المتبقية لا تُمس.</div><button id="eq263-scan" style="width:100%;margin-top:10px;border:0;border-radius:12px;padding:13px;background:#2563eb;color:white;font-weight:1000">🔎 فحص النتائج القديمة</button><div id="eq263-status" style="margin-top:9px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:12px;font-weight:900">جاهز.</div><div id="eq263-counts" style="margin-top:7px;background:white;border:1px solid #e2e8f0;border-radius:10px;padding:10px;font-size:11px;line-height:1.8;color:#475569">لا توجد نتائج في المعاينة.</div><button id="eq263-purge" style="width:100%;margin:10px 0 22px;border:0;border-radius:12px;padding:13px;background:#dc2626;color:white;font-weight:1000">🗑️ حذف النتائج القديمة من المصدر</button></div>';
+    document.body.appendChild(p);document.getElementById('eq263-close').onclick=close;document.getElementById('eq263-scan').onclick=scan;document.getElementById('eq263-purge').onclick=purge;
+  }
+  setTimeout(build,1200);setTimeout(build,3500);document.addEventListener('click',()=>setTimeout(build,50),true);
+  window.EQ263_OldResultsCleanup={scan,purge,open};
+})();
+</script>
+
+<!-- QUIZ_CREATE_USES_LIVE_MYCLASSES_FIX_20260919 -->
+</body>
+</html>
