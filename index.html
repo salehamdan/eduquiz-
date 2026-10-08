@@ -16715,34 +16715,39 @@ function studentForSub(s){return users().find(u=>{const al=aliases(u);return al.
 function tabEval(el){
   const tasks=DATA.tasks||[];
   let openId="";
-  el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">اختر المهمة، ثم اضغط اسم الطالب لفتح استجابته وتقييمه. بعد Accept يختفي الطالب من Pending ويبقى محفوظًا في Writing Results.</div><select id="evTask" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px;margin-top:10px"><option value="">Select Writing Task</option>'+tasks.map((t,i)=>'<option value="'+esc(t.id)+'">'+esc(t.title||('Writing Task '+(i+1)))+'</option>').join("")+'</select></div><div id="evSummary"></div><div id="evList"></div>';
-  const tsk=el.querySelector('#evTask'),sum=el.querySelector('#evSummary'),list=el.querySelector('#evList');
-  function latestPerStudent(arr){
+  el.innerHTML='<div class="w12box"><b>Writing Evaluation</b><div style="font-size:12px;color:#64748b">اختر المهمة أو كل المهمات، ثم اختر Pending أو Evaluated. اضغط الطالب لفتح استجابته.</div><div class="w12grid" style="margin-top:10px"><select id="evTask" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px"><option value="__all__">All Writing Tasks</option>'+tasks.map((t,i)=>'<option value="'+esc(t.id)+'">'+esc(t.title||('Writing Task '+(i+1)))+'</option>').join("")+'</select><select id="evStatus" style="width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:12px"><option value="pending">Pending</option><option value="evaluated">Evaluated</option><option value="all">All</option></select></div></div><div id="evSummary"></div><div id="evList"></div>';
+  const tsk=el.querySelector('#evTask'),sts=el.querySelector('#evStatus'),sum=el.querySelector('#evSummary'),list=el.querySelector('#evList');
+  function latestPerStudentTask(arr){
     const m=new Map();
     arr.slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||""))).forEach(s=>{
       const u=studentForSub(s),al=Array.from(aliases(u));
-      const k=String((u&&u.id)||al.find(x=>/^student_/.test(String(x)))||s.studentId||s.studentName||s.id);
+      const studentKey=String((u&&u.id)||al.find(x=>/^student_/.test(String(x)))||s.studentId||s.studentName||s.id);
+      const k=String(s.taskId||'')+'::'+studentKey;
       if(!m.has(k))m.set(k,s);
     });
     return Array.from(m.values());
   }
   function isPending(s){return !['accepted','cancelled','deleted','retaken'].includes(String(s.status||'pending_review'));}
+  function isEvaluated(s){return String(s.status||'')==='accepted';}
+  function taskTitle(s){const t=tasks.find(x=>String(x.id)===String(s.taskId));return (t&&t.title)||s.taskTitle||'Writing Task';}
   function render(){
-    const tid=String(tsk.value||'');
-    if(!tid){sum.innerHTML='';list.innerHTML='<div class="w12box" style="color:#64748b">Select a Writing Task to show submitted students.</div>';return;}
-    const all=latestPerStudent(visibleSubs().filter(s=>String(s.taskId)===tid));
-    const pending=all.filter(isPending);
-    const accepted=all.filter(s=>String(s.status||'')==='accepted');
-    sum.innerHTML='<div class="w12grid"><div class="w12box"><b>Submitted</b><br><span style="font-size:26px;font-weight:900">'+all.length+'</span></div><div class="w12box"><b>Pending Evaluation</b><br><span style="font-size:26px;font-weight:900;color:#d97706">'+pending.length+'</span></div><div class="w12box"><b>Accepted</b><br><span style="font-size:26px;font-weight:900;color:#16a34a">'+accepted.length+'</span></div></div>';
-    if(!pending.length){list.innerHTML='<div class="w12box" style="text-align:center;color:#16a34a;font-weight:900">✅ No pending writing evaluations for this task.</div>';return;}
-    list.innerHTML=pending.map(s=>{
-      const u=studentForSub(s),nm=name(u)||s.studentName||'Student',no=num(u)||s.studentId||'',isOpen=String(openId)===String(s.id);
-      return '<div class="w12box" style="padding:0;overflow:hidden"><button type="button" data-open="'+esc(s.id)+'" style="width:100%;border:0;background:white;padding:13px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;font-family:inherit"><span><b>'+esc(nm)+'</b><span style="display:block;font-size:11px;color:#64748b;margin-top:2px">'+esc(no)+(cname(u.classId)?' · '+esc(cname(u.classId)):'')+'</span></span><span style="font-size:12px;font-weight:900;color:#d97706">Pending '+(isOpen?'▲':'▼')+'</span></button><div data-body="'+esc(s.id)+'" style="display:'+(isOpen?'block':'none')+';padding:0 10px 10px">'+(isOpen?attemptCard(s):'')+'</div></div>';
+    const tid=String(tsk.value||'__all__'),mode=String(sts.value||'pending');
+    const scoped=visibleSubs().filter(s=>tid==='__all__'||String(s.taskId)===tid);
+    const all=latestPerStudentTask(scoped);
+    const pending=all.filter(isPending),evaluated=all.filter(isEvaluated);
+    const shown=mode==='pending'?pending:(mode==='evaluated'?evaluated:all.filter(s=>isPending(s)||isEvaluated(s)));
+    sum.innerHTML='<div class="w12grid"><div class="w12box"><b>Submitted</b><br><span style="font-size:26px;font-weight:900">'+all.length+'</span></div><div class="w12box"><b>Pending</b><br><span style="font-size:26px;font-weight:900;color:#d97706">'+pending.length+'</span></div><div class="w12box"><b>Evaluated</b><br><span style="font-size:26px;font-weight:900;color:#16a34a">'+evaluated.length+'</span></div></div>';
+    if(!shown.length){list.innerHTML='<div class="w12box" style="text-align:center;color:#64748b;font-weight:900">No '+(mode==='evaluated'?'evaluated':'pending')+' writing responses for this selection.</div>';return;}
+    list.innerHTML=shown.map(s=>{
+      const u=studentForSub(s),nm=name(u)||s.studentName||'Student',no=num(u)||s.studentId||'',isOpen=String(openId)===String(s.id),done=isEvaluated(s),showTask=tid==='__all__';
+      const tag=done?'Evaluated':'Pending',tagColor=done?'#16a34a':'#d97706';
+      return '<div class="w12box" style="padding:0;overflow:hidden"><button type="button" data-open="'+esc(s.id)+'" style="width:100%;border:0;background:white;padding:13px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;font-family:inherit"><span><b>'+esc(nm)+'</b><span style="display:block;font-size:11px;color:#64748b;margin-top:2px">'+esc(no)+(cname(u.classId)?' · '+esc(cname(u.classId)):'')+(showTask?' · '+esc(taskTitle(s)):'')+'</span></span><span style="font-size:12px;font-weight:900;color:'+tagColor+'">'+tag+' '+(isOpen?'▲':'▼')+'</span></button><div data-body="'+esc(s.id)+'" style="display:'+(isOpen?'block':'none')+';padding:0 10px 10px">'+(isOpen?attemptCard(s):'')+'</div></div>';
     }).join('');
     list.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{openId=String(openId)===String(b.dataset.open)?'':String(b.dataset.open);render()});
     bindActions(list,()=>{openId='';render()});
   }
   tsk.onchange=()=>{openId='';render()};
+  sts.onchange=()=>{openId='';render()};
   render();
 }
 function tabScores(el){
@@ -16764,7 +16769,7 @@ async function studentPanel(forcedStudent,strictMode){const body=panel("✍️ W
 setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
 })();
 </script>
-<!-- V343_WRITING_RESULTS_SUBMISSIONS_FIX_20261008 -->
+<!-- V344_WRITING_EVALUATION_TASK_STATUS_FILTERS_20261008 -->
 <!-- END_WRITING_INDEPENDENT_FULL_V12_SYNC_DELETE_RETAKE_20260627 -->
 
 
