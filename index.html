@@ -208,7 +208,7 @@ try{
 <!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
-<!-- V348_PROJECT_SUBMIT_DIAGNOSTIC_20261009 -->
+<!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 </head>
 <body>
@@ -5397,45 +5397,35 @@ function projectFileChunkId(submissionId,idx){return "__project_file_chunk__"+St
 async function projectSaveFileChunks(submissionId,dataUrl){
   const raw=String(dataUrl||""); if(!raw) throw new Error("Empty project file.");
   const chunkSize=420000,total=Math.ceil(raw.length/chunkSize);
-  if(total>30) throw new Error("File is too large for the safe fallback. Please upload a smaller PDF/Word file.");
+  if(total>30) throw new Error("File is too large. Please upload a smaller PDF/Word file.");
   for(let i=0;i<total;i++){
     const row={id:projectFileChunkId(submissionId,i),source:"project_file_chunk",submissionId:String(submissionId),part:i,total,data:raw.slice(i*chunkSize,(i+1)*chunkSize),createdAt:new Date().toISOString()};
-    if(FIREBASE_OK&&db&&db.collection) await db.collection("projectFileChunks").doc(row.id).set(row); else await fsSet("projectFileChunks",row.id,row);
+    if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection) await db.collection("projectSubmissions").doc(row.id).set(row);
+    else await fsSet("projectSubmissions",row.id,row);
   }
   return total;
 }
 async function projectLoadFileChunks(submissionId,count){
   const n=Math.max(0,Math.min(30,Number(count)||0)),parts=[];
   for(let i=0;i<n;i++){
-    let row=null,id=projectFileChunkId(submissionId,i);
-    if(FIREBASE_OK&&db&&db.collection){const d=await db.collection("projectFileChunks").doc(id).get();if(d&&d.exists)row=d.data();}
-    else {const a=await fsAll("projectFileChunks");row=(a||[]).find(x=>x&&x.id===id);}
+    const id=projectFileChunkId(submissionId,i); let row=null;
+    if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){const d=await db.collection("projectSubmissions").doc(id).get();if(d&&d.exists)row=d.data();}
+    else {const a=await fsAll("projectSubmissions");row=(a||[]).find(x=>x&&x.id===id);}
     if(!row||!row.data) throw new Error("Project file part missing: "+(i+1)+"/"+n); parts.push(String(row.data));
   }
   return parts.join("");
 }
 async function projectOpenChunkedFile(sub){
-  try{
-    const dataUrl=await projectLoadFileChunks(sub.id,sub.fileChunkCount); if(!dataUrl) throw new Error("File data unavailable.");
-    const a=document.createElement("a");a.href=dataUrl;a.download=sub.fileName||"project-file";a.target="_blank";document.body.appendChild(a);a.click();a.remove();
-  }catch(e){alert("Could not open project file: "+((e&&e.message)||e));}
+  try{const dataUrl=await projectLoadFileChunks(sub.id,sub.fileChunkCount);if(!dataUrl)throw new Error("File data unavailable.");const a=document.createElement("a");a.href=dataUrl;a.download=sub.fileName||"project-file";document.body.appendChild(a);a.click();a.remove();}
+  catch(e){alert("Could not open project file: "+((e&&e.message)||e));}
 }
 async function projectUploadFile(file, projectId, studentId, submissionId){
   if(!file) throw new Error("No file selected.");
   const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream",url:"",path:"",chunked:false,chunkCount:0};
-  const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
-  const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
-  // First use Firebase Storage briefly. If Storage is blocked/stalled, use the same Firestore-chunk strategy proven by RP.
-  if(FIREBASE_OK&&storage&&storage.ref){
-    try{
-      const ref=storage.ref().child(path),task=ref.put(file,{contentType:meta.type});
-      await Promise.race([task,new Promise((_,reject)=>setTimeout(()=>{try{task.cancel();}catch(_){} reject(new Error("storage timeout"));},12000))]);
-      meta.url=await Promise.race([ref.getDownloadURL(),new Promise((_,reject)=>setTimeout(()=>reject(new Error("download URL timeout")),8000))]);
-      if(meta.url){meta.path=path;return meta;}
-    }catch(e){console.warn("Project Storage upload unavailable; using Firestore chunk fallback.",e);}
-  }
+  // v350: do NOT use Firebase Storage. Save through the already-working projectSubmissions Firestore path in safe chunks.
   const dataUrl=await projectFileToDataUrl(file);
-  meta.chunkCount=await projectSaveFileChunks(submissionId,dataUrl); meta.chunked=true; meta.path="firestore-chunks:"+submissionId;
+  meta.chunkCount=await projectSaveFileChunks(submissionId,dataUrl);
+  meta.chunked=true; meta.path="firestore-projectSubmissions-chunks:"+submissionId;
   return meta;
 }
 
@@ -5610,13 +5600,13 @@ function StudentProjects({user,data,reload}){
       const fresh=await fsAll("projectSubmissions");
       const prior=projectSubmissionsForStudent(fresh,p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
-      const id=uid();
       if(submitMode==="file"&&file){
-        setMsg("⏳ Saving project file...");
+        setMsg("⏳ Uploading project file...");
         fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
       const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
+      const id=uid();
       await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
@@ -5678,6 +5668,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     if(!window.confirm("Delete ONLY this project attempt?\nStudent: "+(s.studentName||"")+"\nProject: "+p.title+"\nAttempt: "+(s.attempt||1)+"\nThis cannot be undone.")) return;
     try{
       if(s.gradebookResponseId) await fsDel("responses",s.gradebookResponseId);
+      if(s.fileChunked&&s.fileChunkCount){for(let i=0;i<Number(s.fileChunkCount||0);i++) await fsDel("projectSubmissions",projectFileChunkId(s.id,i));}
       await fsDel("projectSubmissions",s.id);
       setMsg("✅ Attempt deleted. Other submissions were preserved.");
       await reload();
@@ -13266,7 +13257,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v348 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v350 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
