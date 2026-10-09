@@ -5390,22 +5390,53 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
   if(best && best.score>=70) return {...best,blocked:false,checkedAt:new Date().toISOString()};
   return null;
 }
-async function projectUploadFile(file, projectId, studentId){
+async function projectFileToDataUrl(file){
+  return await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(r.error||new Error("Could not read file."));r.readAsDataURL(file);});
+}
+function projectFileChunkId(submissionId,idx){return "__project_file_chunk__"+String(submissionId)+"__"+String(idx);}
+async function projectSaveFileChunks(submissionId,dataUrl){
+  const raw=String(dataUrl||""); if(!raw) throw new Error("Empty project file.");
+  const chunkSize=420000,total=Math.ceil(raw.length/chunkSize);
+  if(total>30) throw new Error("File is too large for the safe fallback. Please upload a smaller PDF/Word file.");
+  for(let i=0;i<total;i++){
+    const row={id:projectFileChunkId(submissionId,i),source:"project_file_chunk",submissionId:String(submissionId),part:i,total,data:raw.slice(i*chunkSize,(i+1)*chunkSize),createdAt:new Date().toISOString()};
+    if(FIREBASE_OK&&db&&db.collection) await db.collection("projectFileChunks").doc(row.id).set(row); else await fsSet("projectFileChunks",row.id,row);
+  }
+  return total;
+}
+async function projectLoadFileChunks(submissionId,count){
+  const n=Math.max(0,Math.min(30,Number(count)||0)),parts=[];
+  for(let i=0;i<n;i++){
+    let row=null,id=projectFileChunkId(submissionId,i);
+    if(FIREBASE_OK&&db&&db.collection){const d=await db.collection("projectFileChunks").doc(id).get();if(d&&d.exists)row=d.data();}
+    else {const a=await fsAll("projectFileChunks");row=(a||[]).find(x=>x&&x.id===id);}
+    if(!row||!row.data) throw new Error("Project file part missing: "+(i+1)+"/"+n); parts.push(String(row.data));
+  }
+  return parts.join("");
+}
+async function projectOpenChunkedFile(sub){
+  try{
+    const dataUrl=await projectLoadFileChunks(sub.id,sub.fileChunkCount); if(!dataUrl) throw new Error("File data unavailable.");
+    const a=document.createElement("a");a.href=dataUrl;a.download=sub.fileName||"project-file";a.target="_blank";document.body.appendChild(a);a.click();a.remove();
+  }catch(e){alert("Could not open project file: "+((e&&e.message)||e));}
+}
+async function projectUploadFile(file, projectId, studentId, submissionId){
   if(!file) throw new Error("No file selected.");
-  const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream"};
-  if(!(FIREBASE_OK && storage && storage.ref)) throw new Error("Firebase Storage unavailable. Check storage configuration.");
+  const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream",url:"",path:"",chunked:false,chunkCount:0};
   const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
   const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
-  const ref=storage.ref().child(path);
-  const task=ref.put(file,{contentType:meta.type});
-  let timer;
-  try{
-    await Promise.race([task,new Promise((_,reject)=>{timer=setTimeout(()=>{try{task.cancel();}catch(e){} reject(new Error("File upload timed out after 45 seconds. Check Firebase Storage rules/network."));},45000);})]);
-    meta.url=await Promise.race([ref.getDownloadURL(),new Promise((_,reject)=>setTimeout(()=>reject(new Error("Could not obtain file download link.")),15000))]);
-    meta.path=path;
-    if(!meta.url) throw new Error("No download link returned.");
-    return meta;
-  }finally{clearTimeout(timer);}
+  // First use Firebase Storage briefly. If Storage is blocked/stalled, use the same Firestore-chunk strategy proven by RP.
+  if(FIREBASE_OK&&storage&&storage.ref){
+    try{
+      const ref=storage.ref().child(path),task=ref.put(file,{contentType:meta.type});
+      await Promise.race([task,new Promise((_,reject)=>setTimeout(()=>{try{task.cancel();}catch(_){} reject(new Error("storage timeout"));},12000))]);
+      meta.url=await Promise.race([ref.getDownloadURL(),new Promise((_,reject)=>setTimeout(()=>reject(new Error("download URL timeout")),8000))]);
+      if(meta.url){meta.path=path;return meta;}
+    }catch(e){console.warn("Project Storage upload unavailable; using Firestore chunk fallback.",e);}
+  }
+  const dataUrl=await projectFileToDataUrl(file);
+  meta.chunkCount=await projectSaveFileChunks(submissionId,dataUrl); meta.chunked=true; meta.path="firestore-chunks:"+submissionId;
+  return meta;
 }
 
 function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
@@ -5579,14 +5610,14 @@ function StudentProjects({user,data,reload}){
       const fresh=await fsAll("projectSubmissions");
       const prior=projectSubmissionsForStudent(fresh,p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+      const id=uid();
       if(submitMode==="file"&&file){
-        setMsg("⏳ Uploading project file...");
-        fileMeta=await projectUploadFile(file,p.id,user.id);
+        setMsg("⏳ Saving project file...");
+        fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
       const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
-      const id=uid();
-      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
@@ -5672,7 +5703,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
     {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
   </div>;
 }
 
