@@ -208,6 +208,7 @@ try{
 <!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
+<!-- V346_PROJECT_FILE_SUBMIT_FIX_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 </head>
 <body>
@@ -3451,7 +3452,11 @@ async function extractFileText(file) {
     wb.SheetNames.forEach(sn => { txt += XLSX.utils.sheet_to_csv(wb.Sheets[sn]) + "\n"; });
     return txt;
   }
-  // For docx/pdf: read as text (best effort) — recommend paste for these
+  // PDF/DOC/DOCX are binary containers. Do NOT read them with file.text():
+  // binary bytes can look like random Latin/Arabic text and wrongly block submission.
+  // The original file is uploaded for teacher review; text-based checks run only
+  // when we can extract reliable text in-browser.
+  if (name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx")) return "";
   try { return await file.text(); } catch(e){ return ""; }
 }
 
@@ -5374,14 +5379,16 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
 async function projectUploadFile(file, projectId, studentId){
   if(!file) return {url:"",name:"",size:0,type:""};
   const meta={name:file.name,size:file.size,type:file.type||""};
-  if(FIREBASE_OK && storage && storage.ref){
-    const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
-    const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
-    const ref=storage.ref().child(path);
-    await ref.put(file,{contentType:file.type||"application/octet-stream"});
-    meta.url=await ref.getDownloadURL();
-    meta.path=path;
+  if(!(FIREBASE_OK && storage && storage.ref)){
+    throw new Error("Cloud file storage is not available. The project was not submitted.");
   }
+  const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
+  const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
+  const ref=storage.ref().child(path);
+  await ref.put(file,{contentType:file.type||"application/octet-stream"});
+  meta.url=await ref.getDownloadURL();
+  meta.path=path;
+  if(!meta.url) throw new Error("The file upload did not return a download link.");
   return meta;
 }
 function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
@@ -5521,10 +5528,12 @@ function StudentProjects({user,data,reload}){
   const [text,setText]=useState("");
   const [file,setFile]=useState(null);
   const [msg,setMsg]=useState("");
+  const [submitting,setSubmitting]=useState(false);
   const projects=(data.projects||[]).filter(p=>projectAssignedToStudent(p,user)).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const submissions=data.projectSubmissions||[];
   const input={width:"100%",padding:"10px 12px",borderRadius:"9px",border:"1px solid "+C.br,fontSize:"13px",fontFamily:F,boxSizing:"border-box",background:"#fff",color:C.tx};
   async function submitProject(p){
+    if(submitting) return;
     setMsg("");
     const dstat=projectDateStatus(p);
     if(dstat==="not_started"){setMsg("Project submission has not started yet.");return;}
@@ -5546,14 +5555,23 @@ function StudentProjects({user,data,reload}){
       setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
       return;
     }
-    if(submitMode==="file"&&file){
-      try{ fileMeta=await projectUploadFile(file,p.id,user.id); }catch(e){ fileMeta={name:file.name,size:file.size,type:file.type||"",uploadError:e.message||String(e)}; }
+    setSubmitting(true);
+    try{
+      if(submitMode==="file"&&file){
+        setMsg("⏳ Uploading project file...");
+        fileMeta=await projectUploadFile(file,p.id,user.id);
+      }
+      const old=projectSubmissionsForStudent(submissions,p.id,user);
+      const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
+      const id=uid();
+      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+      setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
+    }catch(e){
+      console.error("Project submission failed:",e);
+      setMsg("تعذر إرسال المشروع: "+((e&&e.message)||String(e))+" حاول مرة أخرى.");
+    }finally{
+      setSubmitting(false);
     }
-    const old=projectSubmissionsForStudent(submissions,p.id,user);
-    const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
-    const id=uid();
-    await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
-    setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
   }
   if(openProject){
     const p=openProject; const dstat=projectDateStatus(p); const mine=projectSubmissionsForStudent(submissions,p.id,user); const latest=mine[0]; const canResubmit=projectAllowedToResubmit(p,user,submissions); const disabled=(dstat!=="open"&&!canResubmit);
@@ -5566,9 +5584,9 @@ function StudentProjects({user,data,reload}){
       {latest&&<Card style={{marginBottom:"10px",background:latest.status==="approved"?"#f0fdf4":"#f8fafc",border:"1px solid "+(latest.status==="approved"?"#86efac":C.br),direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>حالة آخر تسليم</b><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>المحاولة {latest.attempt} · {projectStatusArabic(latest.status)} · {latest.submittedAt}</div>{latest.finalScore!=null&&<div style={{fontSize:"16px",fontWeight:"900",color:gc(latest.finalScore*10),fontFamily:F}}>الدرجة النهائية: {latest.finalScore}/10</div>}{latest.teacherFeedback&&<div style={{fontSize:"12px",color:C.tx,marginTop:"5px",fontFamily:F}}>ملاحظة المعلم: {latest.teacherFeedback}</div>}</Card>}
       {!disabled&&(!latest||canResubmit)&&<Card>
         {p.submissionType==="bothChoice"&&<><Label text="اختر طريقة التسليم"/><div style={{display:"flex",gap:"8px",marginBottom:"10px"}}><button onClick={()=>setMode("text")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="text"?C.p:C.br),background:mode==="text"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>كتابة النص</button><button onClick={()=>setMode("file")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="file"?C.p:C.br),background:mode==="file"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>رفع ملف</button></div></>}
-        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" onChange={e=>setFile(e.target.files&&e.target.files[0])} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>يفضل رفع ملف نصي واضح. بعض ملفات PDF/Word قد تحتاج مراجعة المعلم إذا لم يستطع النظام قراءة النص.</div></>}
+        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" accept=".pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>{setFile(e.target.files&&e.target.files[0]);setMsg("");}} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>يفضل رفع ملف نصي واضح. بعض ملفات PDF/Word قد تحتاج مراجعة المعلم إذا لم يستطع النظام قراءة النص.</div></>}
         {msg&&<div style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d,fontWeight:"800",margin:"8px 0",fontFamily:F}}>{msg}</div>}
-        <Btn color={C.p} onClick={()=>submitProject(p)} style={{width:"100%",marginTop:"10px"}}>تسليم المشروع</Btn>
+        <Btn color={C.p} onClick={()=>submitProject(p)} disabled={submitting} style={{width:"100%",marginTop:"10px",opacity:submitting ? 0.65 : 1}}>{submitting?"جارٍ رفع وإرسال المشروع...":"تسليم المشروع"}</Btn>
       </Card>}
     </div>;
   }
@@ -13173,7 +13191,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v343 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v346 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
