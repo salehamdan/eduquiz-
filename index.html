@@ -5314,7 +5314,7 @@ function projectDateStatus(p){
   return "open";
 }
 function projectSubmissionMatchesStudent(sub, st){ return sub && st && (String(sub.studentId||"")===String(st.id)||String(sub.studentNumber||"")===String(st.studentId||"")); }
-function projectSubmissionsForStudent(list, projectId, st){ return (list||[]).filter(s=>String(s.projectId)===String(projectId)&&projectSubmissionMatchesStudent(s,st)).sort((a,b)=>(b.attempt||0)-(a.attempt||0)||String(b.submittedAt||"").localeCompare(String(a.submittedAt||""))); }
+function projectSubmissionsForStudent(list, projectId, st){ return (list||[]).filter(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(projectId)&&projectSubmissionMatchesStudent(s,st)).sort((a,b)=>(b.attempt||0)-(a.attempt||0)||String(b.submittedAt||"").localeCompare(String(a.submittedAt||""))); }
 function projectAllowedToResubmit(p, st, subs){
   const latest=projectSubmissionsForStudent(subs,p.id,st)[0];
   if(!latest) return false;
@@ -5422,7 +5422,7 @@ async function projectOpenChunkedFile(sub){
 async function projectUploadFile(file, projectId, studentId, submissionId){
   if(!file) throw new Error("No file selected.");
   const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream",url:"",path:"",chunked:false,chunkCount:0};
-  // v350: do NOT use Firebase Storage. Save through the already-working projectSubmissions Firestore path in safe chunks.
+  // v351: do NOT use Firebase Storage. Save through the already-working projectSubmissions Firestore path in safe chunks.
   const dataUrl=await projectFileToDataUrl(file);
   meta.chunkCount=await projectSaveFileChunks(submissionId,dataUrl);
   meta.chunked=true; meta.path="firestore-projectSubmissions-chunks:"+submissionId;
@@ -5600,13 +5600,14 @@ function StudentProjects({user,data,reload}){
       const fresh=await fsAll("projectSubmissions");
       const prior=projectSubmissionsForStudent(fresh,p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+      const old=prior;
+      const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
+      // v351: create the submission id BEFORE any file chunk uses it.
+      const id=uid();
       if(submitMode==="file"&&file){
         setMsg("⏳ Uploading project file...");
         fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
-      const old=prior;
-      const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
-      const id=uid();
       await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
@@ -5649,7 +5650,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const [projectOpenaiKey,setProjectOpenaiKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
   const [projectKeyVisible,setProjectKeyVisible]=useState(false);
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
-  const subs=(data.projectSubmissions||[]).filter(s=>projects.some(p=>p.id===s.projectId));
+  const subs=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&projects.some(p=>p.id===s.projectId));
   const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
   async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; await fsSet("projects",p.id,{...p,status:"deleted",updatedAt:today()}); await reload(); }
   async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); await fsSet("projectSubmissions",s.id,{...s,aiReview:review,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg("✅ AI correction ready. Review and approve."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
@@ -13257,7 +13258,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v350 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v351 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
