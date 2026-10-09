@@ -160,6 +160,7 @@ try{
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <!-- SheetJS for Excel import -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <!-- React + Babel -->
 <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
@@ -2550,7 +2551,7 @@ async function rpSaveAudioChunks(submissionId, dataUrl){
   return {ok:true,count:total};
 }
 async function rpLoadAudioChunks(submissionId, count){
-  const n=Math.max(0,Math.min(30,Number(count)||0));
+  const n=Math.max(0,Math.min(36,Number(count)||0));
   if(!n) return "";
   const parts=[];
   for(let i=0;i<n;i++){
@@ -5397,7 +5398,7 @@ function projectFileChunkId(submissionId,idx){return "__project_file_chunk__"+St
 async function projectSaveFileChunks(submissionId,dataUrl){
   const raw=String(dataUrl||""); if(!raw) throw new Error("Empty project file.");
   const chunkSize=420000,total=Math.ceil(raw.length/chunkSize);
-  if(total>30) throw new Error("File is too large. Please upload a smaller PDF/Word file.");
+  if(total>36) throw new Error("Project file exceeds the 10 MB limit.");
   for(let i=0;i<total;i++){
     const row={id:projectFileChunkId(submissionId,i),source:"project_file_chunk",submissionId:String(submissionId),part:i,total,data:raw.slice(i*chunkSize,(i+1)*chunkSize),createdAt:new Date().toISOString()};
     if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection) await db.collection("projectSubmissions").doc(row.id).set(row);
@@ -5415,12 +5416,39 @@ async function projectLoadFileChunks(submissionId,count){
   }
   return parts.join("");
 }
+const PROJECT_MAX_FILE_BYTES=10*1024*1024;
+const PROJECT_ALLOWED_EXTENSIONS=["pdf","docx"];
+function projectValidateFile(file){
+  if(!file) throw new Error("Choose a project file first.");
+  const ext=String(file.name||"").split(".").pop().toLowerCase();
+  if(!PROJECT_ALLOWED_EXTENSIONS.includes(ext)) throw new Error("Only PDF and DOCX files are allowed.");
+  if(file.size>PROJECT_MAX_FILE_BYTES) throw new Error("Maximum file size is 10 MB. Choose a smaller file.");
+  if(!file.size) throw new Error("The selected file is empty.");
+}
+function projectDataUrlToBlob(dataUrl){
+  const parts=String(dataUrl||"").split(",");
+  if(parts.length<2) throw new Error("Invalid stored project file.");
+  const mime=(parts[0].match(/data:([^;]+)/)||[])[1]||"application/octet-stream";
+  const binary=atob(parts.slice(1).join(","));
+  const bytes=new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+  return new Blob([bytes],{type:mime});
+}
 async function projectOpenChunkedFile(sub){
-  try{const dataUrl=await projectLoadFileChunks(sub.id,sub.fileChunkCount);if(!dataUrl)throw new Error("File data unavailable.");const a=document.createElement("a");a.href=dataUrl;a.download=sub.fileName||"project-file";document.body.appendChild(a);a.click();a.remove();}
-  catch(e){alert("Could not open project file: "+((e&&e.message)||e));}
+  // PDF is previewed in a new tab; DOCX is downloaded for opening in Word.
+  const isPdf=String(sub.fileName||"").toLowerCase().endsWith(".pdf");
+  const tab=isPdf?window.open("","_blank"):null;
+  if(tab){tab.document.title="Loading project...";tab.document.body.textContent="Loading PDF...";}
+  try{
+    const dataUrl=await projectLoadFileChunks(sub.id,sub.fileChunkCount);
+    const blob=projectDataUrlToBlob(dataUrl);
+    const url=URL.createObjectURL(blob);
+    if(isPdf&&tab){tab.location.href=url;setTimeout(()=>URL.revokeObjectURL(url),180000);}
+    else {if(tab)tab.close();const a=document.createElement("a");a.href=url;a.download=sub.fileName||"project-file";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),180000);}
+  }catch(e){if(tab)tab.close();alert("Could not open project file: "+((e&&e.message)||e));}
 }
 async function projectUploadFile(file, projectId, studentId, submissionId){
-  if(!file) throw new Error("No file selected.");
+  projectValidateFile(file);
   const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream",url:"",path:"",chunked:false,chunkCount:0};
   // v351: do NOT use Firebase Storage. Save through the already-working projectSubmissions Firestore path in safe chunks.
   const dataUrl=await projectFileToDataUrl(file);
@@ -5431,29 +5459,52 @@ async function projectUploadFile(file, projectId, studentId, submissionId){
 
 function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
 async function aiCorrectProjectSubmission({project, submission, student}){
-  let apiKey=getAIKey();
-  if(!apiKey){ apiKey=await loadAIKeyFromCloud(); if(apiKey) setAIKey(apiKey); }
-  if(!apiKey) throw new Error("No AI key found. Save the Claude AI key first.");
+  const apiKey=(localStorage.getItem("rp_openai_api_key")||"").trim();
+  if(!apiKey) throw new Error("OpenAI API Key is missing. Open the key settings in Projects and save a valid OpenAI key.");
   const rubric=project.rubric||projectRubricFor(project.type);
-  const submittedText=String(submission.text || submission.fileText || "").trim();
-  if(!submittedText){
-    throw new Error("AI cannot read this submission content. Use Manual Grade, or ask the student to submit text/readable file.");
+  const submittedText=String(submission.text||submission.fileText||"").trim();
+  const fileName=String(submission.fileName||"");
+  const isPdf=!!submission.fileChunked && fileName.toLowerCase().endsWith(".pdf");
+  const isDocx=!!submission.fileChunked && fileName.toLowerCase().endsWith(".docx");
+  if(!submittedText&&!isPdf&&!isDocx) throw new Error("No readable project content. Open the submission and grade manually.");
+  const prompt=`You are an English teacher assistant. Evaluate the actual student project using the exact teacher rubric. Review content, language, organization and visible design where the submitted PDF allows. Do not infer unreadable content. Give conservative, evidence-based scores. The teacher makes the final decision.\nProject: ${project.title}\nType: ${project.type}\nInstructions: ${project.instructions||"None"}\nMax score: ${projectMaxScore(project)}\nRubric:\n${projectRubricText(rubric)}\nStudent: ${student?student.name:submission.studentName||"Student"}\nReturn ONLY JSON: {"score":8,"total":10,"criteria":[{"label":"Content / Ideas","score":2,"max":3,"comment":"Evidence-based comment"}],"studentFeedback":"Short constructive feedback","teacherNote":"Short note"}. Include every rubric criterion, keep each score within its maximum, and ensure total equals the sum of criterion scores.`;
+  const content=[{type:"input_text",text:prompt}];
+  if(isPdf){
+    const fileData=await projectLoadFileChunks(submission.id,submission.fileChunkCount);
+    if(!fileData.startsWith("data:application/pdf") && !fileData.startsWith("data:application/octet-stream")) throw new Error("Stored PDF data is not readable.");
+    content.push({type:"input_file",filename:fileName||"project.pdf",file_data:fileData});
+  }else if(isDocx){
+    // DOCX is not a PDF. Extract its document XML from the existing SheetJS JSZip dependency.
+    const fileData=await projectLoadFileChunks(submission.id,submission.fileChunkCount);
+    if(typeof JSZip==="undefined") throw new Error("DOCX automatic reading is unavailable. Please upload PDF or grade manually.");
+    const blob=projectDataUrlToBlob(fileData);
+    const zip=await JSZip.loadAsync(await blob.arrayBuffer());
+    const xmlFile=zip.file("word/document.xml");
+    if(!xmlFile) throw new Error("DOCX does not contain readable document text.");
+    const xml=await xmlFile.async("string");
+    const doc=new DOMParser().parseFromString(xml,"application/xml");
+    const text=Array.from(doc.getElementsByTagName("w:t")).map(n=>n.textContent||"").join(" ").trim();
+    if(!text) throw new Error("DOCX text is empty. Grade manually or upload a PDF.");
+    content.push({type:"input_text",text:"Student DOCX content (layout may not be preserved):\n"+text.slice(0,25000)});
+  }else{
+    content.push({type:"input_text",text:"Student submission:\n"+submittedText.slice(0,25000)});
   }
-  const prompt = `You are an English teacher assistant. Grade this student project strictly using the teacher's project type, instructions, and rubric.\n\nProject title: ${project.title}\nProject type: ${project.type}\nMax score: ${projectMaxScore(project)}\nTeacher instructions:\n${project.instructions||"No extra instructions."}\n\nMandatory language requirement:\nThe student project/research must be written in English. If the submission is mainly Arabic or not in English, clearly mention this in the feedback and reduce the score under Language and Requirements according to the rubric.\n\nRubric:\n${projectRubricText(rubric)}\n\nStudent name: ${student?student.name:(submission.studentName||"Student")}\nSubmission mode: ${submission.submissionMode||"text"}\nStudent submission:\n${submittedText.slice(0,12000)}\n\nReturn ONLY valid JSON in this exact format:\n{"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"2-3 short friendly sentences for the student","teacherNote":"short note for teacher about missing requirements or concerns"}\nUse decimal scores if needed. Do not exceed each criterion max. Requirements must be judged against the teacher instructions.`;
-  const resp = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:1400,temperature:0.2,messages:[{role:"user",content:prompt}]})
+  const resp=await fetch("https://api.openai.com/v1/responses",{
+    method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
+    body:JSON.stringify({model:"gpt-4.1",input:[{role:"user",content}],max_output_tokens:1800})
   });
   const json=await resp.json().catch(()=>null);
-  if(!resp.ok) throw new Error((json&&json.error&&json.error.message)||("AI correction failed: "+resp.status));
-  let text=(json.content&&json.content[0]&&json.content[0].text)||"";
-  text=text.replace(/```json/g,"").replace(/```/g,"").trim();
-  const start=text.indexOf("{"); const end=text.lastIndexOf("}"); if(start>=0&&end>start) text=text.slice(start,end+1);
-  const parsed=eqParseJsonObject(text);
-  const total=projectMaxScore(project);
-  const score=Math.max(0,Math.min(total,Number(parsed.score)||0));
-  return {...parsed,score,total,correctedAt:new Date().toISOString(),source:"ai"};
+  if(!resp.ok) throw new Error((json&&json.error&&json.error.message)||("OpenAI correction failed: HTTP "+resp.status));
+  const resultText=(json.output_text||((json.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==="output_text").map(x=>x.text).join("\n"))||"").trim();
+  const cleaned=resultText.replace(/```json/g,"").replace(/```/g,"").trim();
+  const first=cleaned.indexOf("{"),last=cleaned.lastIndexOf("}");
+  if(first<0||last<=first) throw new Error("AI did not return a readable rubric evaluation. Try again.");
+  const parsed=eqParseJsonObject(cleaned.slice(first,last+1));
+  if(!Array.isArray(parsed.criteria)||!parsed.criteria.length) throw new Error("AI returned an incomplete rubric evaluation.");
+  const max=projectMaxScore(project);
+  const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
+  const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v352"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5580,6 +5631,7 @@ function StudentProjects({user,data,reload}){
     const submitMode = p.submissionType==="bothChoice" ? mode : (p.submissionType==="file"?"file":"text");
     if(submitMode==="text"&&!text.trim()){setMsg("Write your project text first.");return;}
     if(submitMode==="file"&&!file){setMsg("Choose a file first.");return;}
+    if(submitMode==="file"){try{projectValidateFile(file);}catch(e){setMsg("❌ "+e.message);return;}}
     let fileMeta={}; let fileText="";
     if(submitMode==="file"&&file){
       try{ fileText=(await extractFileText(file)||"").trim().slice(0,12000); }catch(e){ fileText=""; }
@@ -5629,7 +5681,7 @@ function StudentProjects({user,data,reload}){
       {latest&&<Card style={{marginBottom:"10px",background:latest.status==="approved"?"#f0fdf4":"#f8fafc",border:"1px solid "+(latest.status==="approved"?"#86efac":C.br),direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>حالة آخر تسليم</b><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>المحاولة {latest.attempt} · {projectStatusArabic(latest.status)} · {latest.submittedAt}</div>{latest.finalScore!=null&&<div style={{fontSize:"16px",fontWeight:"900",color:gc(latest.finalScore*10),fontFamily:F}}>الدرجة النهائية: {latest.finalScore}/10</div>}{latest.teacherFeedback&&<div style={{fontSize:"12px",color:C.tx,marginTop:"5px",fontFamily:F}}>ملاحظة المعلم: {latest.teacherFeedback}</div>}</Card>}
       {!disabled&&(!latest||canResubmit)&&<Card>
         {p.submissionType==="bothChoice"&&<><Label text="اختر طريقة التسليم"/><div style={{display:"flex",gap:"8px",marginBottom:"10px"}}><button onClick={()=>setMode("text")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="text"?C.p:C.br),background:mode==="text"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>كتابة النص</button><button onClick={()=>setMode("file")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="file"?C.p:C.br),background:mode==="file"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>رفع ملف</button></div></>}
-        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" accept=".pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>{setFile(e.target.files&&e.target.files[0]);setMsg("");}} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>يفضل رفع ملف نصي واضح. بعض ملفات PDF/Word قد تحتاج مراجعة المعلم إذا لم يستطع النظام قراءة النص.</div></>}
+        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>{const f=e.target.files&&e.target.files[0];try{if(f)projectValidateFile(f);setFile(f||null);setMsg("");}catch(err){setFile(null);e.target.value="";setMsg("❌ "+err.message);}}} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>الملفات المسموحة: PDF أو DOCX فقط. الحد الأقصى 10 MB. يُفضّل PDF للتصحيح الآلي وعرض الملف.</div></>}
         {msg&&<div style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d,fontWeight:"800",margin:"8px 0",fontFamily:F}}>{msg}</div>}
         <Btn color={C.p} onClick={()=>submitProject(p)} disabled={submitting} style={{width:"100%",marginTop:"10px",opacity:submitting ? 0.65 : 1}}>{submitting?"جارٍ رفع وإرسال المشروع...":"تسليم المشروع"}</Btn>
       </Card>}
@@ -5695,7 +5747,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
     {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} title="View PDF / Download DOCX" style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{"👁 View File: "+s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
   </div>;
 }
 
@@ -13258,7 +13310,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v351 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v352 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
