@@ -983,6 +983,35 @@ async function fsAll(col) {
     return local();
   }
 }
+async function fsGetDoc(col, id) {
+  const local = () => { try { return (JSON.parse(localStorage.getItem("eq_"+col) || "[]")||[]).find(x=>String(x.id||x._id||"")===String(id)) || null; } catch(e){ return null; } };
+  if (!FIREBASE_OK) return local();
+  try {
+    const d = await db.collection(col).doc(String(id)).get();
+    return d && d.exists ? ({...d.data(), _id:d.id}) : null;
+  } catch(e) {
+    console.warn("Firestore doc read failed", col, id, e && e.message);
+    return local();
+  }
+}
+async function projectSubmissionsForStudentRemote(projectId, st) {
+  // V356 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
+  if (!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) {
+    const all=await fsAll("projectSubmissions");
+    return projectSubmissionsForStudent(all,projectId,st);
+  }
+  try {
+    const sid=String(st&&st.id||"");
+    const snap=await db.collection("projectSubmissions").where("studentId","==",sid).get();
+    const rows=snap.docs.map(d=>({...d.data(),_id:d.id}));
+    return projectSubmissionsForStudent(rows,projectId,st);
+  } catch(e) {
+    console.warn("V356 targeted project submission lookup failed; using safe fallback",e&&e.message);
+    const all=await fsAll("projectSubmissions");
+    return projectSubmissionsForStudent(all,projectId,st);
+  }
+}
+
 async function fsSet(col, id, data) {
   if (!FIREBASE_OK) {
     const arr = JSON.parse(localStorage.getItem("eq_"+col) || "[]");
@@ -1026,9 +1055,11 @@ function eqLoadFastDataCache(){
 async function loadLoginData() {
   // V329: login must never wait for quizzes, responses, RP audio/submissions, projects or gradebook data.
   // Only the collections required to authenticate and build the class selector are fetched here.
-  const [usersRaw,classesRaw,appSettings,deletedStudents,deletedClasses] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsAll("appSettings"),fsAll("deletedStudents"),fsAll("deletedClasses")
+  // V356 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
+  const [usersRaw,classesRaw,googlePolicyRow,deletedStudents,deletedClasses] = await Promise.all([
+    fsAll("users"),fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
+  const appSettings=googlePolicyRow?[googlePolicyRow]:[];
   const activeUserKeySet=new Set();
   (usersRaw||[]).forEach(function(u){
     if(u && String(u.role||"")==="student" && !isStudentTombstone(u)){
@@ -5504,7 +5535,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const max=projectMaxScore(project);
   const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
   const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
-  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v353"};
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v356"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5649,8 +5680,8 @@ function StudentProjects({user,data,reload}){
     projectSubmitLock.current=true;
     setSubmitting(true);
     try{
-      const fresh=await fsAll("projectSubmissions");
-      const prior=projectSubmissionsForStudent(fresh,p.id,user);
+      // V356 SAFE SPEED: do not download every project submission/file chunk before Submit.
+      const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
@@ -12099,7 +12130,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return Array.from(map.values());
   })();
   const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
-  // v353: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
+  // v356: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
   // v315: red badge for unseen Reading Theory attempts.
@@ -13314,7 +13345,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v353 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v356 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
