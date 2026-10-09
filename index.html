@@ -208,8 +208,7 @@ try{
 <!-- FOLLOWUP219_DAILY_FOLLOWUP_AUTOSAVE_DRAFT_20260707 -->
 <!-- FOLLOWUP218_SAFE_ZERO_CONFIRM_GRADE_SHEET_TOGGLE_20260707 -->
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
-<!-- V347_PROJECTS_IDEMPOTENCY_AI_KEY_20261009 -->
-<!-- V346_PROJECT_FILE_SUBMIT_FIX_20261009 -->
+<!-- V348_PROJECT_SUBMIT_DIAGNOSTIC_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 </head>
 <body>
@@ -5102,14 +5101,14 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
   const [msg,setMsg]=useState("");
   const [saving,setSaving]=useState(false);
   const [aiKeyInput,setAiKeyInput]=useState(()=>getAIKey());
-  const [openaiKeyInput,setOpenaiKeyInput]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
-  const [showOpenaiKey,setShowOpenaiKey]=useState(false);
-  const [openaiKeyMsg,setOpenaiKeyMsg]=useState("");
   const [aiKeyMsg,setAiKeyMsg]=useState("");
+  const [openaiKey,setOpenaiKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
+  const [showOpenaiKey,setShowOpenaiKey]=useState(false);
+  const [openaiKeyStatus,setOpenaiKeyStatus]=useState("");
   const [studentGooglePolicy,setStudentGooglePolicy]=useState("optional");
   const [googlePolicyMsg,setGooglePolicyMsg]=useState("");
 
-  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg("");setAiKeyInput(getAIKey());setAiKeyMsg("");setOpenaiKeyInput(localStorage.getItem("rp_openai_api_key")||"");setShowOpenaiKey(false);setOpenaiKeyMsg("");setGooglePolicyMsg(""); if(user.role==="teacher"){fsAll("appSettings").then(rows=>{const r=(rows||[]).find(x=>x&&x.id==="student_google_registration_policy");setStudentGooglePolicy(r&&r.mode==="required"?"required":"optional");}).catch(()=>setStudentGooglePolicy("optional"));} } },[open]);
+  useEffect(()=>{ if(open){ setName(user.name||"");setEmail(user.email||"");setStudentId(user.studentId||"");setClassId(user.classId||"");setPassword("");setMsg("");setAiKeyInput(getAIKey());setAiKeyMsg("");setOpenaiKey(localStorage.getItem("rp_openai_api_key")||"");setShowOpenaiKey(false);setOpenaiKeyStatus("");setGooglePolicyMsg(""); if(user.role==="teacher"){fsAll("appSettings").then(rows=>{const r=(rows||[]).find(x=>x&&x.id==="student_google_registration_policy");setStudentGooglePolicy(r&&r.mode==="required"?"required":"optional");}).catch(()=>setStudentGooglePolicy("optional"));} } },[open]);
 
   async function save(){
     setMsg("");
@@ -5140,17 +5139,6 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
     setTimeout(()=>setAiKeyMsg(""),3000);
   }
 
-  function saveOpenaiKey(){
-    const k=openaiKeyInput.trim();
-    if(k)localStorage.setItem("rp_openai_api_key",k);else localStorage.removeItem("rp_openai_api_key");
-    setOpenaiKeyMsg(k?"✅ OpenAI key saved on this device for RP and Projects.":"OpenAI key cleared.");
-  }
-  async function testOpenaiKey(){
-    const k=openaiKeyInput.trim();if(!k){setOpenaiKeyMsg("Enter a key first.");return;}
-    setOpenaiKeyMsg("Testing...");
-    try{const r=await fetch("https://api.openai.com/v1/models",{headers:{Authorization:"Bearer "+k}});if(!r.ok)throw new Error("HTTP "+r.status);setOpenaiKeyMsg("✅ OpenAI key authentication works.");}
-    catch(e){setOpenaiKeyMsg("❌ "+(e.message||e));}
-  }
   async function saveStudentGooglePolicy(mode){
     const next=mode==="required"?"required":"optional";
     setStudentGooglePolicy(next);setGooglePolicyMsg("Saving...");
@@ -5190,12 +5178,16 @@ function ProfileModal({user, classes, open, onClose, onSaved}) {
         </div>
         {googlePolicyMsg&&<div style={{fontSize:"11px",fontWeight:800,color:googlePolicyMsg.startsWith("✅")?C.s:C.mu,marginTop:"7px"}}>{googlePolicyMsg}</div>}
       </div>}
-      {user.role==="teacher" && <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid "+C.br}}>
-        <div style={{fontSize:"12px",fontWeight:"900",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🔑 OpenAI API Key — RP & Projects</div>
-        <div style={{fontSize:"11px",color:C.mu,marginBottom:"8px",fontFamily:F}}>Uses the existing RP OpenAI key on this device. This is separate from the Claude key below. Never share API keys with students.</div>
-        <div style={{display:"flex",gap:"6px"}}><input type={showOpenaiKey?"text":"password"} value={openaiKeyInput} onChange={e=>setOpenaiKeyInput(e.target.value)} placeholder="sk-..." style={{...inp,flex:1,minWidth:0,fontFamily:"monospace"}}/><Btn size="sm" color={C.mu} onClick={()=>setShowOpenaiKey(x=>!x)}>{showOpenaiKey?"Hide":"Show"}</Btn></div>
-        <div style={{display:"flex",gap:"7px"}}><Btn color={C.s} onClick={saveOpenaiKey} style={{flex:1}}>Update Key</Btn><Btn color={C.p} onClick={testOpenaiKey} style={{flex:1}}>Test Key</Btn></div>
-        {openaiKeyMsg&&<div style={{fontSize:"11px",marginTop:"7px",fontFamily:F}}>{openaiKeyMsg}</div>}
+      {user.role==="teacher" && <div style={{marginTop:"16px",padding:"12px",border:"2px solid #2563eb",borderRadius:"10px"}}>
+        <strong style={{fontSize:"14px",color:C.p}}>🔑 OpenAI API Key — Reading Progress / Projects</strong>
+        <p style={{fontSize:"11px",color:C.mu}}>Same rp_openai_api_key used by Reading Progress on this device. Do not share this key with students.</p>
+        <input type={showOpenaiKey?"text":"password"} value={openaiKey} onChange={e=>setOpenaiKey(e.target.value)} placeholder="sk-..." style={{...inp,fontFamily:"monospace"}}/>
+        <div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}>
+          <Btn size="sm" color={C.mu} onClick={()=>setShowOpenaiKey(v=>!v)}>{showOpenaiKey?"🙈 Hide":"👁 Show"}</Btn>
+          <Btn size="sm" color={C.s} onClick={()=>{localStorage.setItem("rp_openai_api_key",openaiKey.trim());setOpenaiKeyStatus("✅ OpenAI key saved on this device.");}}>💾 Update Key</Btn>
+          <Btn size="sm" color={C.p} onClick={async()=>{setOpenaiKeyStatus("Testing...");try{const r=await fetch("https://api.openai.com/v1/models",{headers:{Authorization:"Bearer "+openaiKey.trim()}});setOpenaiKeyStatus(r.ok?"✅ OpenAI key is valid.":"❌ OpenAI returned HTTP "+r.status);}catch(e){setOpenaiKeyStatus("❌ Connection/test failed: "+(e.message||e));}}}>🧪 Test Key</Btn>
+        </div>
+        {openaiKeyStatus&&<p style={{fontSize:"11px",color:C.tx}}>{openaiKeyStatus}</p>}
       </div>}
       {user.role==="teacher" && <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid "+C.br}}>
         <div style={{fontSize:"12px",fontWeight:"800",color:C.tx,fontFamily:F,marginBottom:"6px"}}>🤖 Claude AI Key</div>
@@ -5327,7 +5319,7 @@ function projectAllowedToResubmit(p, st, subs){
   const latest=projectSubmissionsForStudent(subs,p.id,st)[0];
   if(!latest) return false;
   if(latest.status==="resubmit_allowed") return true;
-  return (p.resubmitStudentIds||[]).includes(st.id) || (p.resubmitClassIds||[]).some(cid=>sameClassId(cid,st.classId));
+  return false; // Only an explicit resubmit_allowed state unlocks a new attempt.
 }
 function projectSimilarityThreshold(rule){
   if(rule==="strict") return 75;
@@ -5399,55 +5391,49 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
   return null;
 }
 async function projectUploadFile(file, projectId, studentId){
-  if(!file) return {url:"",name:"",size:0,type:""};
-  const meta={name:file.name,size:file.size,type:file.type||""};
-  if(!(FIREBASE_OK && storage && storage.ref)){
-    throw new Error("Cloud file storage is not available. The project was not submitted.");
-  }
+  if(!file) throw new Error("No file selected.");
+  const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream"};
+  if(!(FIREBASE_OK && storage && storage.ref)) throw new Error("Firebase Storage unavailable. Check storage configuration.");
   const clean=String(file.name||"project-file").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-80);
   const path="projectSubmissions/"+String(projectId||"project")+"/"+String(studentId||"student")+"/"+Date.now()+"_"+clean;
   const ref=storage.ref().child(path);
-  await ref.put(file,{contentType:file.type||"application/octet-stream"});
-  meta.url=await ref.getDownloadURL();
-  meta.path=path;
-  if(!meta.url) throw new Error("The file upload did not return a download link.");
-  return meta;
-}
-function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
-async function projectPdfDataUrl(submission){
-  if(!submission.fileUrl) throw new Error("PDF file link is missing.");
-  const response=await fetch(submission.fileUrl);
-  if(!response.ok) throw new Error("Could not download PDF for AI correction ("+response.status+").");
-  const blob=await response.blob();
-  if(blob.size>12*1024*1024) throw new Error("PDF is too large for direct AI correction (12 MB limit).");
-  return await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error("Could not read PDF."));reader.readAsDataURL(blob);});
-}
-async function aiCorrectProjectSubmission({project, submission, student}){
-  const apiKey=String(localStorage.getItem("rp_openai_api_key")||"").trim();
-  if(!apiKey) throw new Error("OpenAI API Key is missing. Set it in Teacher Settings ⚙️.");
-  const rubric=project.rubric||projectRubricFor(project.type);
-  const submittedText=String(submission.text||submission.fileText||"").trim();
-  const isPdf=/\.pdf$/i.test(submission.fileName||"")||/pdf/i.test(submission.fileType||"");
-  if(!submittedText && !isPdf) throw new Error("This file has no readable text. AI Correct currently supports PDF or text submissions; use Manual Grade for other files.");
-  const prompt=`You are an English teacher. Grade the submitted project strictly against the instructions and rubric. If a PDF is attached, read the actual PDF content. Do not invent missing content. Project: ${project.title}. Type: ${project.type}. Max score: ${projectMaxScore(project)}. Instructions: ${project.instructions||"None"}. Rubric: ${projectRubricText(rubric)}. Student: ${student?student.name:submission.studentName||"Student"}. Submission text: ${submittedText.slice(0,12000)}. Respond with ONLY a JSON object {"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"short friendly feedback","teacherNote":"notes"}. Check English language and rubric requirements. Do not exceed the total or criterion maximums.`;
-  const content=[{type:"input_text",text:prompt}];
-  if(isPdf) content.push({type:"input_file",filename:submission.fileName||"project.pdf",file_data:await projectPdfDataUrl(submission)});
-  const resp=await fetch("https://api.openai.com/v1/responses",{
-    method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
-    body:JSON.stringify({model:"gpt-4.1-mini",input:[{role:"user",content}],max_output_tokens:1600})
-  });
-  const json=await resp.json().catch(()=>null);
-  if(!resp.ok) throw new Error((json&&json.error&&json.error.message)||("OpenAI correction failed: "+resp.status));
-  let output=String(json.output_text||"");
-  if(!output) output=(json.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==="output_text").map(x=>x.text||"").join("\n");
-  output=output.replace(/```json/g,"").replace(/```/g,"").trim();
-  const a=output.indexOf("{"),b=output.lastIndexOf("}");if(a>=0&&b>a)output=output.slice(a,b+1);
-  const parsed=eqParseJsonObject(output);
-  const total=projectMaxScore(project);
-  const score=Math.max(0,Math.min(total,Number(parsed.score)||0));
-  return {...parsed,score,total,correctedAt:new Date().toISOString(),source:"openai"};
+  const task=ref.put(file,{contentType:meta.type});
+  let timer;
+  try{
+    await Promise.race([task,new Promise((_,reject)=>{timer=setTimeout(()=>{try{task.cancel();}catch(e){} reject(new Error("File upload timed out after 45 seconds. Check Firebase Storage rules/network."));},45000);})]);
+    meta.url=await Promise.race([ref.getDownloadURL(),new Promise((_,reject)=>setTimeout(()=>reject(new Error("Could not obtain file download link.")),15000))]);
+    meta.path=path;
+    if(!meta.url) throw new Error("No download link returned.");
+    return meta;
+  }finally{clearTimeout(timer);}
 }
 
+function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
+async function aiCorrectProjectSubmission({project, submission, student}){
+  let apiKey=getAIKey();
+  if(!apiKey){ apiKey=await loadAIKeyFromCloud(); if(apiKey) setAIKey(apiKey); }
+  if(!apiKey) throw new Error("No AI key found. Save the Claude AI key first.");
+  const rubric=project.rubric||projectRubricFor(project.type);
+  const submittedText=String(submission.text || submission.fileText || "").trim();
+  if(!submittedText){
+    throw new Error("AI cannot read this submission content. Use Manual Grade, or ask the student to submit text/readable file.");
+  }
+  const prompt = `You are an English teacher assistant. Grade this student project strictly using the teacher's project type, instructions, and rubric.\n\nProject title: ${project.title}\nProject type: ${project.type}\nMax score: ${projectMaxScore(project)}\nTeacher instructions:\n${project.instructions||"No extra instructions."}\n\nMandatory language requirement:\nThe student project/research must be written in English. If the submission is mainly Arabic or not in English, clearly mention this in the feedback and reduce the score under Language and Requirements according to the rubric.\n\nRubric:\n${projectRubricText(rubric)}\n\nStudent name: ${student?student.name:(submission.studentName||"Student")}\nSubmission mode: ${submission.submissionMode||"text"}\nStudent submission:\n${submittedText.slice(0,12000)}\n\nReturn ONLY valid JSON in this exact format:\n{"score":8,"total":10,"criteria":[{"label":"Content","score":2.5,"max":3,"comment":"short comment"}],"studentFeedback":"2-3 short friendly sentences for the student","teacherNote":"short note for teacher about missing requirements or concerns"}\nUse decimal scores if needed. Do not exceed each criterion max. Requirements must be judged against the teacher instructions.`;
+  const resp = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-3-5-sonnet-20241022",max_tokens:1400,temperature:0.2,messages:[{role:"user",content:prompt}]})
+  });
+  const json=await resp.json().catch(()=>null);
+  if(!resp.ok) throw new Error((json&&json.error&&json.error.message)||("AI correction failed: "+resp.status));
+  let text=(json.content&&json.content[0]&&json.content[0].text)||"";
+  text=text.replace(/```json/g,"").replace(/```/g,"").trim();
+  const start=text.indexOf("{"); const end=text.lastIndexOf("}"); if(start>=0&&end>start) text=text.slice(start,end+1);
+  const parsed=eqParseJsonObject(text);
+  const total=projectMaxScore(project);
+  const score=Math.max(0,Math.min(total,Number(parsed.score)||0));
+  return {...parsed,score,total,correctedAt:new Date().toISOString(),source:"ai"};
+}
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
   return <div style={{background:compact?"#f8fafc":"#eff6ff",border:"1px solid "+(compact?C.br:"#bfdbfe"),borderRadius:"10px",padding:"10px",marginTop:"8px"}}>
@@ -5565,10 +5551,8 @@ function StudentProjects({user,data,reload}){
   const submissions=data.projectSubmissions||[];
   const input={width:"100%",padding:"10px 12px",borderRadius:"9px",border:"1px solid "+C.br,fontSize:"13px",fontFamily:F,boxSizing:"border-box",background:"#fff",color:C.tx};
   async function submitProject(p){
-    if(submitting || projectSubmitLock.current) return;
+    if(submitting||projectSubmitLock.current) return;
     setMsg("");
-    const existing=projectSubmissionsForStudent(submissions,p.id,user);
-    if(existing.length && !projectAllowedToResubmit(p,user,submissions)){setMsg("✅ This project has already been submitted. Ask your teacher to allow resubmission.");return;}
     const dstat=projectDateStatus(p);
     if(dstat==="not_started"){setMsg("Project submission has not started yet.");return;}
     if(dstat==="ended"&&!projectAllowedToResubmit(p,user,submissions)){setMsg("Project submission time has ended.");return;}
@@ -5593,15 +5577,15 @@ function StudentProjects({user,data,reload}){
     setSubmitting(true);
     try{
       const fresh=await fsAll("projectSubmissions");
-      const current=projectSubmissionsForStudent(fresh,p.id,user);
-      if(current.length && !projectAllowedToResubmit(p,user,fresh)) throw new Error("This project has already been submitted.");
+      const prior=projectSubmissionsForStudent(fresh,p.id,user);
+      if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       if(submitMode==="file"&&file){
         setMsg("⏳ Uploading project file...");
         fileMeta=await projectUploadFile(file,p.id,user.id);
       }
-      const old=projectSubmissionsForStudent(fresh,p.id,user);
+      const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
-      const id="project_attempt_"+String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")+"_"+String(user.id).replace(/[^a-zA-Z0-9_-]/g,"_")+"_"+attempt;
+      const id=uid();
       await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
@@ -5641,9 +5625,10 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const [fProject,setFProject]=useState("all");
   const [fStatus,setFStatus]=useState("all");
   const [msg,setMsg]=useState("");
+  const [projectOpenaiKey,setProjectOpenaiKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
+  const [projectKeyVisible,setProjectKeyVisible]=useState(false);
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const subs=(data.projectSubmissions||[]).filter(s=>projects.some(p=>p.id===s.projectId));
-  const latestProjectSubs=Object.values(subs.reduce((map,x)=>{const key=String(x.projectId)+"|"+String(x.studentId||x.studentNumber);const prev=map[key];if(!prev || Number(x.attempt||1)>Number(prev.attempt||1) || (Number(x.attempt||1)===Number(prev.attempt||1)&&String(x.submittedAt||"")>String(prev.submittedAt||"")))map[key]=x;return map;},{}));
   const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
   async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; await fsSet("projects",p.id,{...p,status:"deleted",updatedAt:today()}); await reload(); }
   async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); await fsSet("projectSubmissions",s.id,{...s,aiReview:review,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg("✅ AI correction ready. Review and approve."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
@@ -5659,24 +5644,35 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   }
   async function manualGrade(p,s){ const v=prompt("Final score out of 10:", s.finalScore!=null?s.finalScore:(s.aiReview&&s.aiReview.score)||""); if(v===null)return; const fb=prompt("Feedback for student:", s.teacherFeedback || (s.aiReview&&s.aiReview.studentFeedback)||"")||""; await approve(p,s,v,fb); }
   async function deleteProjectAttempt(p,s){
-    if(!confirm("Delete ONLY this project attempt for "+(s.studentName||"student")+"? This cannot be undone."))return;
+    if(!window.confirm("Delete ONLY this project attempt?\nStudent: "+(s.studentName||"")+"\nProject: "+p.title+"\nAttempt: "+(s.attempt||1)+"\nThis cannot be undone.")) return;
     try{
       if(s.gradebookResponseId) await fsDel("responses",s.gradebookResponseId);
       await fsDel("projectSubmissions",s.id);
-      setMsg("✅ Selected attempt deleted. Other submissions were not changed.");await reload();
+      setMsg("✅ Attempt deleted. Other submissions were preserved.");
+      await reload();
     }catch(e){setMsg("❌ Delete failed: "+(e.message||e));}
   }
   async function allowResubmit(p,s){ await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); setMsg("✅ Resubmission allowed for "+(s.studentName||"student")); await reload(); }
   if(screen==="create"||screen==="edit") return <ProjectCreateForm user={user} data={data} myClasses={myClasses} myStudents={myStudents} editProject={screen==="edit"?editProject:null} onSaved={async()=>{await reload();setScreen("list");setEditProject(null);}} onCancel={()=>{setScreen("list");setEditProject(null);}}/>;
   return <div>
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px"}}><div><strong style={{color:"#fff",fontSize:"14px",fontFamily:F}}>🧩 Projects</strong><p style={{margin:"4px 0 0",color:C.mu,fontSize:"11px",fontFamily:F}}>10-mark project assessments · AI suggests · teacher approves · Gradebook after approval.</p></div><Btn color={C.s} onClick={()=>setScreen("create")}>+ Project</Btn></div></Card>
+    <details style={{marginBottom:"10px",background:"#fff",border:"1px solid #bfdbfe",borderRadius:"10px",padding:"10px"}}>
+      <summary style={{cursor:"pointer",fontWeight:900,color:C.p}}>🔑 OpenAI API Key — View / Update / Test</summary>
+      <p style={{fontSize:"11px",color:C.mu}}>Uses the SAME local key as Reading Progress. Never share it with students.</p>
+      <input type={projectKeyVisible?"text":"password"} value={projectOpenaiKey} onChange={e=>setProjectOpenaiKey(e.target.value)} placeholder="sk-..." style={{width:"100%",padding:"10px",boxSizing:"border-box",border:"1px solid #cbd5e1",borderRadius:"8px"}}/>
+      <div style={{display:"flex",gap:"7px",flexWrap:"wrap",marginTop:"8px"}}>
+        <Btn size="sm" color={C.mu} onClick={()=>setProjectKeyVisible(v=>!v)}>{projectKeyVisible?"Hide":"Show"}</Btn>
+        <Btn size="sm" color={C.s} onClick={()=>{localStorage.setItem("rp_openai_api_key",projectOpenaiKey.trim());setMsg("✅ OpenAI key saved on this device.");}}>Update Key</Btn>
+        <Btn size="sm" color={C.p} onClick={async()=>{setMsg("⏳ Testing OpenAI key...");try{const r=await fetch("https://api.openai.com/v1/models",{headers:{Authorization:"Bearer "+projectOpenaiKey.trim()}});setMsg(r.ok?"✅ OpenAI key is valid.":"❌ OpenAI key test: HTTP "+r.status);}catch(e){setMsg("❌ OpenAI key test failed: "+(e.message||e));}}}>Test Key</Btn>
+      </div>
+    </details>
     {msg&&<div style={{background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("⏳")?"#eff6ff":"#fef2f2",border:"1px solid "+(msg.startsWith("✅")?"#86efac":msg.startsWith("⏳")?"#93c5fd":"#fca5a5"),borderRadius:"9px",padding:"9px",fontSize:"12px",marginBottom:"9px",whiteSpace:"pre-wrap",fontFamily:F}}>{msg}</div>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"10px"}}><Stat icon="🧩" label="Projects" value={projects.length} color={C.p}/><Stat icon="📥" label="Submitted" value={latestProjectSubs.length} color={C.s}/><Stat icon="⏳" label="Need Approval" value={latestProjectSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length} color={C.w}/><Stat icon="✅" label="Approved" value={latestProjectSubs.filter(s=>s.status==="approved").length} color={C.s}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"10px"}}><Stat icon="🧩" label="Projects" value={projects.length} color={C.p}/><Stat icon="📥" label="Submitted" value={subs.length} color={C.s}/><Stat icon="⏳" label="Need Approval" value={subs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length} color={C.w}/><Stat icon="✅" label="Approved" value={subs.filter(s=>s.status==="approved").length} color={C.s}/></div>
     <Card style={{marginBottom:"10px"}}><div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><select value={fProject} onChange={e=>setFProject(e.target.value)} style={{flex:2,minWidth:"150px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}</select><select value={fClass} onChange={e=>setFClass(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">اختر الفصل لعرض الطلاب</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Status</option><option value="submitted">Submitted</option><option value="ai_corrected">AI Corrected</option><option value="approved">Approved</option><option value="resubmit_allowed">Resubmission Allowed</option></select></div></Card>
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
-    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {latestProjectSubs.filter(x=>x.projectId===p.id).length} · Approved {latestProjectSubs.filter(x=>x.projectId===p.id&&x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
+    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} onClick={()=>approve(p,s,(ai&&ai.score)||s.finalScore||0,(ai&&ai.studentFeedback)||s.teacherFeedback||"")}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
   </div>;
 }
 
@@ -13239,7 +13235,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v347 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v348 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount}</span>}</button>
