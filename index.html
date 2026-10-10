@@ -996,7 +996,7 @@ async function fsGetDoc(col, id) {
   }
 }
 async function projectSubmissionsForStudentRemote(projectId, st) {
-  // V358 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
+  // V359 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
   if (!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) {
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
@@ -1007,7 +1007,7 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
     const rows=snap.docs.map(d=>({...d.data(),_id:d.id}));
     return projectSubmissionsForStudent(rows,projectId,st);
   } catch(e) {
-    console.warn("V358 targeted project submission lookup failed; using safe fallback",e&&e.message);
+    console.warn("V359 targeted project submission lookup failed; using safe fallback",e&&e.message);
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
   }
@@ -1056,7 +1056,7 @@ function eqLoadFastDataCache(){
 async function loadLoginData() {
   // V329: login must never wait for quizzes, responses, RP audio/submissions, projects or gradebook data.
   // Only the collections required to authenticate and build the class selector are fetched here.
-  // V358 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
+  // V359 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
   const [usersRaw,classesRaw,googlePolicyRow,deletedStudents,deletedClasses] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
@@ -3485,7 +3485,7 @@ async function extractFileText(file) {
     wb.SheetNames.forEach(sn => { txt += XLSX.utils.sheet_to_csv(wb.Sheets[sn]) + "\n"; });
     return txt;
   }
-  // v358: extract reliable PDF/DOCX text locally BEFORE submission so copy detection
+  // v359: extract reliable PDF/DOCX text locally BEFORE submission so copy detection
   // can compare content even when a student changes only the cover/name and re-saves the file.
   if (name.endsWith(".pdf")) {
     try {
@@ -5399,9 +5399,24 @@ function projectLooksEnglishEnough(t){
   if(latin<20 && txt.trim().length>40) return false;
   return latin>=Math.max(20, arabic*2);
 }
+function projectSimilarityComparableText(t){
+  // v359: remove predictable cover/reference boilerplate before similarity scoring.
+  // This reduces false positives caused by the shared school template while preserving the student's main content.
+  const raw=String(t||"").replace(/\r/g,"\n");
+  const boiler=[
+    /al[-\s]?showbah secondary school/i,/saleh ahmed al[-\s]?hamdan/i,
+    /^\s*(project title|student name|student|class|school|teacher)\s*[:\-]?/i,
+    /^\s*(references|reference|bibliography|works cited)\s*[:\-]?\s*$/i,
+    /^\s*https?:\/\//i,/^\s*www\./i
+  ];
+  return raw.split(/\n+/).filter(line=>{
+    const x=line.trim(); if(!x)return false;
+    return !boiler.some(re=>re.test(x));
+  }).join(" ");
+}
 function projectUsefulWords(t){
   const stop={the:1,a:1,an:1,and:1,or:1,to:1,of:1,in:1,on:1,for:1,is:1,are:1,was:1,were:1,be:1,with:1,this:1,that:1,it:1,as:1,by:1,from:1,at:1,عن:1,في:1,من:1,الى:1,إلى:1,على:1,و:1,او:1,أو:1,هو:1,هي:1,هذا:1,هذه:1,ان:1,أن:1};
-  return projectNormalizeText(t).split(" ").filter(w=>w && w.length>2 && !stop[w]);
+  return projectNormalizeText(projectSimilarityComparableText(t)).split(" ").filter(w=>w && w.length>2 && !stop[w]);
 }
 function projectNgrams(words,n){
   const arr=[]; for(let i=0;i<=words.length-n;i++) arr.push(words.slice(i,i+n).join(" ")); return arr;
@@ -5445,8 +5460,8 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
       best={score,threshold,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",evidenceCurrent:projectSimilarityEvidence(text, otherText),evidenceMatched:projectSimilarityEvidence(otherText, text),matchedSubmissionId:s.id};
     }
   });
-  if(best && best.score>=threshold) return {...best,blocked:true,checkedAt:new Date().toISOString()};
-  if(best && best.score>=70) return {...best,blocked:false,checkedAt:new Date().toISOString()};
+  if(best && best.score>=threshold) return {...best,blocked:false,flagged:true,reviewRequired:true,checkedAt:new Date().toISOString()};
+  if(best && best.score>=70) return {...best,blocked:false,flagged:true,reviewRequired:false,checkedAt:new Date().toISOString()};
   return null;
 }
 async function projectSha256File(file){try{if(!file||!crypto||!crypto.subtle)return "";const b=await file.arrayBuffer();const h=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,"0")).join("");}catch(e){return "";}}
@@ -5465,7 +5480,7 @@ function projectCheckTextAgainstSavedFingerprints(project,currentStudent,current
     if(!s||s.source==="project_file_chunk"||String(s.projectId)!==String(project.id)||String(s.studentId||"")===String(currentStudent.id||""))return;
     const fp=s.aiReview&&s.aiReview.similarityFingerprint; if(!fp)return;
     const score=projectTextVsFingerprintScore(text,fp);
-    if(!best||score>best.score)best={score,threshold,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",matchedSubmissionId:s.id,evidenceCurrent:"Distinctive content phrases match a previous submission.",evidenceMatched:"Saved content fingerprint from the previous submission.",blocked:score>=threshold,checkedAt:new Date().toISOString(),kind:"Content fingerprint"};
+    if(!best||score>best.score)best={score,threshold,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",matchedSubmissionId:s.id,evidenceCurrent:"Distinctive content phrases match a previous submission.",evidenceMatched:"Saved content fingerprint from the previous submission.",blocked:false,flagged:true,reviewRequired:score>=threshold,checkedAt:new Date().toISOString(),kind:"Content fingerprint"};
   });
   return best&&best.score>=70?best:null;
 }
@@ -5583,7 +5598,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const max=projectMaxScore(project);
   const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
   const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
-  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v358"};
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v359"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5677,7 +5692,7 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
       <Label text="Similarity Check / كشف النسخ من طالب آخر"/><select value={similarityRule} onChange={e=>setSimilarityRule(e.target.value)} style={input}>
         <option value="normal">Normal — block at 85%</option><option value="strict">Strict — block at 75%</option><option value="lenient">Lenient — block at 90%</option>
       </select>
-      <div style={{fontSize:"10px",color:C.mu,marginTop:"4px",fontFamily:F}}>Checks this project against other student submissions before accepting. It shows evidence and blocks high similarity.</div>
+      <div style={{fontSize:"10px",color:C.mu,marginTop:"4px",fontFamily:F}}>Checks this project against other student submissions. High similarity is accepted but flagged for teacher review; it does not automatically reject or reduce the score.</div>
       <Label text="Start Date"/><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={input}/>
       <Label text="End Date"/><input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={input}/>
       <Label text="Project Instructions / تعليمات المشروع"/><textarea value={instructions} onChange={e=>setInstructions(e.target.value)} placeholder="Write clear requirements. AI will use these instructions when grading." style={{...input,minHeight:"110px",resize:"vertical"}}/>
@@ -5722,18 +5737,17 @@ function StudentProjects({user,data,reload}){
       return;
     }
     let copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
-    // v358: BEFORE AI correction, compare locally extracted PDF/DOCX text against
+    // v359: BEFORE AI correction, compare locally extracted PDF/DOCX text against
     // fingerprints already saved from older AI-reviewed submissions.
     if(!copyCheck && currentProjectText){ copyCheck=projectCheckTextAgainstSavedFingerprints(p,user,currentProjectText,submissions); }
-    if(fileHash){const exact=(submissions||[]).find(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(p.id)&&String(s.studentId||"")!==String(user.id||"")&&s.fileHash===fileHash);if(exact)copyCheck={score:100,threshold:projectSimilarityThreshold(p.similarityRule),matchedStudentName:exact.studentName||"another student",matchedStudentId:exact.studentNumber||exact.studentId||"",matchedSubmissionId:exact.id,evidenceCurrent:"Identical uploaded file (SHA-256 match).",evidenceMatched:"Identical uploaded file (SHA-256 match).",blocked:true,checkedAt:new Date().toISOString()};}
-    if(copyCheck && copyCheck.blocked){
-      setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
-      return;
-    }
+    if(fileHash){const exact=(submissions||[]).find(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(p.id)&&String(s.studentId||"")!==String(user.id||"")&&s.fileHash===fileHash);if(exact)copyCheck={score:100,threshold:projectSimilarityThreshold(p.similarityRule),matchedStudentName:exact.studentName||"another student",matchedStudentId:exact.studentNumber||exact.studentId||"",matchedSubmissionId:exact.id,evidenceCurrent:"Identical uploaded file (SHA-256 match).",evidenceMatched:"Identical uploaded file (SHA-256 match).",blocked:false,flagged:true,reviewRequired:true,kind:"Identical file",checkedAt:new Date().toISOString()};}
+    // v359: similarity is a teacher-review signal, never an automatic student rejection.
+    // The submission continues normally even at 100%; evidence remains teacher-only.
+    if(copyCheck){ copyCheck={...copyCheck,blocked:false,flagged:true,reviewRequired:copyCheck.score>=projectSimilarityThreshold(p.similarityRule)}; }
     projectSubmitLock.current=true;
     setSubmitting(true);
     try{
-      // V358 SAFE SPEED: do not download every project submission/file chunk before Submit.
+      // V359 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       const old=prior;
@@ -5833,7 +5847,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
     {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {p.assignMode} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div></Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} title="View PDF / Download DOCX" style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{"👁 View File: "+s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"10px",color:s.similarityCheck.score>=70?C.w:C.mu,fontWeight:"800",fontFamily:F}}>Similarity check: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Similarity evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:visibleSubs.map(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} title="View PDF / Download DOCX" style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{"👁 View File: "+s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"11px",marginTop:"6px",padding:"7px 9px",borderRadius:"8px",background:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fef2f2":"#fffbeb",border:"1px solid "+(s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fecaca":"#fde68a"),color:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?C.d:C.w,fontWeight:"900",fontFamily:F}}>⚠️ {s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"High Similarity — Teacher Review Required":"Similarity Notice"}: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}. This does not automatically reduce the grade.</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Review Similarity Evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>})}
   </div>;
 }
 
@@ -12184,7 +12198,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return Array.from(map.values());
   })();
   const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
-  // v358: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
+  // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
   // v315: red badge for unseen Reading Theory attempts.
@@ -13399,7 +13413,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v358 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v359 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
