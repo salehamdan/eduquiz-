@@ -995,7 +995,7 @@ async function fsGetDoc(col, id) {
   }
 }
 async function projectSubmissionsForStudentRemote(projectId, st) {
-  // V356 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
+  // V357 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
   if (!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) {
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
@@ -1006,7 +1006,7 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
     const rows=snap.docs.map(d=>({...d.data(),_id:d.id}));
     return projectSubmissionsForStudent(rows,projectId,st);
   } catch(e) {
-    console.warn("V356 targeted project submission lookup failed; using safe fallback",e&&e.message);
+    console.warn("V357 targeted project submission lookup failed; using safe fallback",e&&e.message);
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
   }
@@ -1055,7 +1055,7 @@ function eqLoadFastDataCache(){
 async function loadLoginData() {
   // V329: login must never wait for quizzes, responses, RP audio/submissions, projects or gradebook data.
   // Only the collections required to authenticate and build the class selector are fetched here.
-  // V356 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
+  // V357 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
   const [usersRaw,classesRaw,googlePolicyRow,deletedStudents,deletedClasses] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
@@ -5422,6 +5422,9 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
   if(best && best.score>=70) return {...best,blocked:false,checkedAt:new Date().toISOString()};
   return null;
 }
+async function projectSha256File(file){try{if(!file||!crypto||!crypto.subtle)return "";const b=await file.arrayBuffer();const h=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,"0")).join("");}catch(e){return "";}}
+function projectFingerprintSimilarity(a,b){const A=new Set((Array.isArray(a)?a:[]).map(projectNormalizeText).filter(x=>x.length>=8)),B=new Set((Array.isArray(b)?b:[]).map(projectNormalizeText).filter(x=>x.length>=8));if(!A.size||!B.size)return 0;let n=0;A.forEach(x=>{if(B.has(x))n++;});return Math.round(200*n/(A.size+B.size));}
+function projectCheckFingerprintAgainstSubmissions(p,cur,review,list){let best=null,t=projectSimilarityThreshold(p&&p.similarityRule);(list||[]).forEach(s=>{if(!s||s.source==="project_file_chunk"||String(s.projectId)!==String(p.id)||String(s.id)===String(cur.id)||String(s.studentId||"")===String(cur.studentId||""))return;let score=0,kind="";if(cur.fileHash&&s.fileHash&&cur.fileHash===s.fileHash){score=100;kind="Identical file";}else if(review&&review.similarityFingerprint&&s.aiReview&&s.aiReview.similarityFingerprint){score=projectFingerprintSimilarity(review.similarityFingerprint,s.aiReview.similarityFingerprint);kind="Content fingerprint";}if(!best||score>best.score)best={score,kind,threshold:t,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",matchedSubmissionId:s.id};});return best&&best.score>=70?{...best,flagged:true,checkedAt:new Date().toISOString()}:null;}
 async function projectFileToDataUrl(file){
   return await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(r.error||new Error("Could not read file."));r.readAsDataURL(file);});
 }
@@ -5498,7 +5501,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const isPdf=!!submission.fileChunked && fileName.toLowerCase().endsWith(".pdf");
   const isDocx=!!submission.fileChunked && fileName.toLowerCase().endsWith(".docx");
   if(!submittedText&&!isPdf&&!isDocx) throw new Error("No readable project content. Open the submission and grade manually.");
-  const prompt=`You are an English teacher assistant. Evaluate the actual student project using ONLY the teacher instructions and the exact rubric below. Review content, English, organization, following instructions, and visible design where the submitted PDF allows. Do not infer unreadable content. The teacher makes the final decision.\n\nSTRICT SCORING RULES:\n1. Do NOT invent, add, or assume requirements that are not explicitly stated in the teacher instructions or rubric.\n2. Do NOT deduct marks for preferences, enhancements, or optional improvements that are not explicit requirements. You may mention optional improvements in feedback, but they must not reduce the score.\n3. If an instruction gives an acceptable range (for example 5-6 pages), ANY value inside that range fully satisfies that requirement. Never deduct for meeting the minimum instead of the maximum.\n4. For Creativity and Effort, award according to the written rubric only. If the work clearly shows suitable examples, good design, tables/timelines/visuals, clear effort, OR a personal touch as the rubric states, do not require extra original artwork or personal reflection unless explicitly required.\n5. A deduction must identify the exact unmet instruction or rubric descriptor. If you cannot name an explicit unmet requirement, do not deduct.\n6. Give full marks when the evidence satisfies the criterion. Be fair and evidence-based, not artificially harsh.\n\nProject: ${project.title}\nType: ${project.type}\nInstructions: ${project.instructions||"None"}\nMax score: ${projectMaxScore(project)}\nRubric:\n${projectRubricText(rubric)}\nStudent: ${student?student.name:submission.studentName||"Student"}\nReturn ONLY JSON: {"score":10,"total":10,"criteria":[{"label":"Content / Ideas","score":3,"max":3,"comment":"Evidence-based comment tied only to the rubric"}],"studentFeedback":"Short constructive feedback","teacherNote":"For every deduction, cite the exact unmet rubric/instruction requirement"}. Include every rubric criterion, keep each score within its maximum, and ensure total equals the sum of criterion scores.`;
+  const prompt=`You are an English teacher assistant. Evaluate the actual student project using ONLY the teacher instructions and the exact rubric below. Review content, English, organization, following instructions, and visible design where the submitted PDF allows. Do not infer unreadable content. The teacher makes the final decision.\n\nSTRICT SCORING RULES:\n1. Do NOT invent, add, or assume requirements that are not explicitly stated in the teacher instructions or rubric.\n2. Do NOT deduct marks for preferences, enhancements, or optional improvements that are not explicit requirements. You may mention optional improvements in feedback, but they must not reduce the score.\n3. If an instruction gives an acceptable range (for example 5-6 pages), ANY value inside that range fully satisfies that requirement. Never deduct for meeting the minimum instead of the maximum.\n4. For Creativity and Effort, award according to the written rubric only. If the work clearly shows suitable examples, good design, tables/timelines/visuals, clear effort, OR a personal touch as the rubric states, do not require extra original artwork or personal reflection unless explicitly required.\n5. A deduction must identify the exact unmet instruction or rubric descriptor. If you cannot name an explicit unmet requirement, do not deduct.\n6. Give full marks when the evidence satisfies the criterion. Be fair and evidence-based, not artificially harsh.\n\nProject: ${project.title}\nType: ${project.type}\nInstructions: ${project.instructions||"None"}\nMax score: ${projectMaxScore(project)}\nRubric:\n${projectRubricText(rubric)}\nStudent: ${student?student.name:submission.studentName||"Student"}\nReturn ONLY JSON: {"score":10,"total":10,"criteria":[{"label":"Content / Ideas","score":3,"max":3,"comment":"Evidence-based comment tied only to the rubric"}],"studentFeedback":"Short constructive feedback","teacherNote":"For every deduction, cite the exact unmet rubric/instruction requirement","similarityFingerprint":["12-20 distinctive factual phrases from the actual student content"]}. Include every rubric criterion, keep each score within its maximum, ensure total equals the sum of criterion scores, and include 12-20 distinctive content phrases in similarityFingerprint for local similarity checking. Do not use generic rubric wording in that fingerprint.`;
   const content=[{type:"input_text",text:prompt}];
   if(isPdf){
     const fileData=await projectLoadFileChunks(submission.id,submission.fileChunkCount);
@@ -5535,7 +5538,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const max=projectMaxScore(project);
   const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
   const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
-  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v356"};
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v357"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5663,16 +5666,18 @@ function StudentProjects({user,data,reload}){
     if(submitMode==="text"&&!text.trim()){setMsg("Write your project text first.");return;}
     if(submitMode==="file"&&!file){setMsg("Choose a file first.");return;}
     if(submitMode==="file"){try{projectValidateFile(file);}catch(e){setMsg("❌ "+e.message);return;}}
-    let fileMeta={}; let fileText="";
+    let fileMeta={}; let fileText=""; let fileHash="";
     if(submitMode==="file"&&file){
       try{ fileText=(await extractFileText(file)||"").trim().slice(0,12000); }catch(e){ fileText=""; }
+      fileHash=await projectSha256File(file);
     }
     const currentProjectText = submitMode==="text" ? text.trim() : fileText;
     if(currentProjectText && !projectLooksEnglishEnough(currentProjectText)){
       setMsg("يجب أن يكون المشروع أو البحث مكتوبًا باللغة الإنجليزية. عدّل النص ثم أعد التسليم.");
       return;
     }
-    const copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
+    let copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
+    if(fileHash){const exact=(submissions||[]).find(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(p.id)&&String(s.studentId||"")!==String(user.id||"")&&s.fileHash===fileHash);if(exact)copyCheck={score:100,threshold:projectSimilarityThreshold(p.similarityRule),matchedStudentName:exact.studentName||"another student",matchedStudentId:exact.studentNumber||exact.studentId||"",matchedSubmissionId:exact.id,evidenceCurrent:"Identical uploaded file (SHA-256 match).",evidenceMatched:"Identical uploaded file (SHA-256 match).",blocked:true,checkedAt:new Date().toISOString()};}
     if(copyCheck && copyCheck.blocked){
       setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
       return;
@@ -5680,7 +5685,7 @@ function StudentProjects({user,data,reload}){
     projectSubmitLock.current=true;
     setSubmitting(true);
     try{
-      // V356 SAFE SPEED: do not download every project submission/file chunk before Submit.
+      // V357 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       const old=prior;
@@ -5691,7 +5696,7 @@ function StudentProjects({user,data,reload}){
         setMsg("⏳ Uploading project file...");
         fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
-      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,fileHash,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
@@ -5730,13 +5735,14 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const [fProject,setFProject]=useState("all");
   const [fStatus,setFStatus]=useState("all");
   const [msg,setMsg]=useState("");
+  useEffect(()=>{if(!msg||msg.startsWith("⏳"))return;const t=setTimeout(()=>setMsg(""),3500);return()=>clearTimeout(t);},[msg]);
   const [projectOpenaiKey,setProjectOpenaiKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
   const [projectKeyVisible,setProjectKeyVisible]=useState(false);
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const subs=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&projects.some(p=>p.id===s.projectId));
   const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
   async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; await fsSet("projects",p.id,{...p,status:"deleted",updatedAt:today()}); await reload(); }
-  async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); await fsSet("projectSubmissions",s.id,{...s,aiReview:review,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg("✅ AI correction completed successfully. Review the suggested score, then approve or edit it."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
+  async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); const fp=projectCheckFingerprintAgainstSubmissions(p,s,review,subs); const sim=fp||s.similarityCheck||null; await fsSet("projectSubmissions",s.id,{...s,aiReview:review,similarityCheck:sim,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg(fp?"⚠️ AI correction completed. Similarity detected: "+fp.score+"% with "+fp.matchedStudentName+".":"✅ AI correction completed successfully. Review the suggested score, then approve or edit it."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
   async function approve(p,s,score,feedback){
     const finalScore=Math.max(0,Math.min(10,Number(score)||0));
     const gbId="project_grade_"+p.id;
@@ -12130,7 +12136,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return Array.from(map.values());
   })();
   const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
-  // v356: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
+  // v357: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
   // v315: red badge for unseen Reading Theory attempts.
@@ -13345,7 +13351,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v356 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v357 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
