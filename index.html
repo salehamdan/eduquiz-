@@ -5465,6 +5465,46 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
   return null;
 }
 async function projectSha256File(file){try{if(!file||!crypto||!crypto.subtle)return "";const b=await file.arrayBuffer();const h=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,"0")).join("");}catch(e){return "";}}
+// v360 FAST SIMILARITY INDEX: one small index document per project; never loads old PDFs or submission rows.
+function projectFastHash32(str){let h=2166136261>>>0;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h>>>0;}
+function projectFastFingerprint(text){
+  const w=projectUsefulWords(text); if(w.length<18)return [];
+  const grams=projectNgrams(w,5), seen=new Set(), vals=[];
+  for(const g of grams){const h=projectFastHash32(g);if(!seen.has(h)){seen.add(h);vals.push(h);}}
+  // Deterministic compact MinHash-like sketch. 96 integers is tiny even for 140 students.
+  vals.sort((a,b)=>a-b); return vals.slice(0,96);
+}
+function projectFastFingerprintScore(a,b){
+  const A=new Set(Array.isArray(a)?a:[]),B=new Set(Array.isArray(b)?b:[]); if(!A.size||!B.size)return 0;
+  let n=0; A.forEach(x=>{if(B.has(x))n++;});
+  // containment catches same project with a changed cover/name; Dice keeps unrelated work low.
+  const contain=n/Math.min(A.size,B.size), dice=(2*n)/(A.size+B.size);
+  return Math.round(100*Math.max(contain,dice));
+}
+function projectSimilarityIndexId(projectId){return "project_similarity_"+String(projectId);}
+async function projectReadSimilarityIndex(projectId){
+  const d=await fsGetDoc("projectSimilarityIndex",projectSimilarityIndexId(projectId));
+  return d&&Array.isArray(d.entries)?d:{id:projectSimilarityIndexId(projectId),projectId:String(projectId),entries:[]};
+}
+function projectCheckFastIndex(project,currentStudent,text,fileHash,index){
+  const fp=projectFastFingerprint(text), threshold=projectSimilarityThreshold(project&&project.similarityRule); let best=null;
+  for(const e of ((index&&index.entries)||[])){
+    if(!e||String(e.studentId||"")===String(currentStudent.id||""))continue;
+    let score=0,kind="Content fingerprint";
+    if(fileHash&&e.fileHash&&fileHash===e.fileHash){score=100;kind="Identical file";}
+    else score=projectFastFingerprintScore(fp,e.fp);
+    if(!best||score>best.score)best={score,threshold,kind,matchedStudentName:e.studentName||"another student",matchedStudentId:e.studentNumber||e.studentId||"",matchedSubmissionId:e.submissionId||"",evidenceCurrent:kind==="Identical file"?"Identical uploaded file (SHA-256 match).":"Compact content fingerprint matched a previous submission.",evidenceMatched:kind==="Identical file"?"Identical uploaded file (SHA-256 match).":"Saved compact fingerprint from the previous submission.",blocked:false,flagged:true,reviewRequired:score>=threshold,checkedAt:new Date().toISOString()};
+  }
+  return {check:(best&&best.score>=70)?best:null,fp};
+}
+async function projectUpdateSimilarityIndex(project,student,submissionId,fileHash,fp){
+  if((!fileHash)&&(!fp||!fp.length))return;
+  const id=projectSimilarityIndexId(project.id), idx=await projectReadSimilarityIndex(project.id), entries=(idx.entries||[]).filter(e=>String(e.submissionId||"")!==String(submissionId));
+  entries.push({submissionId:String(submissionId),studentId:String(student.id||""),studentNumber:String(student.studentId||""),studentName:String(student.name||""),fileHash:fileHash||"",fp:Array.isArray(fp)?fp:[],at:new Date().toISOString()});
+  // Keep a bounded lightweight index; 220 entries comfortably covers the intended 140-student use.
+  const row={id,projectId:String(project.id),entries:entries.slice(-220),updatedAt:new Date().toISOString()};
+  await fsSet("projectSimilarityIndex",id,row);
+}
 function projectFingerprintSimilarity(a,b){const A=new Set((Array.isArray(a)?a:[]).map(projectNormalizeText).filter(x=>x.length>=8)),B=new Set((Array.isArray(b)?b:[]).map(projectNormalizeText).filter(x=>x.length>=8));if(!A.size||!B.size)return 0;let n=0;A.forEach(x=>{if(B.has(x))n++;});return Math.round(200*n/(A.size+B.size));}
 function projectTextVsFingerprintScore(text,fp){
   const norm=projectNormalizeText(text);
@@ -5598,7 +5638,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const max=projectMaxScore(project);
   const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
   const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
-  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v359"};
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v360"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5736,13 +5776,15 @@ function StudentProjects({user,data,reload}){
       setMsg("يجب أن يكون المشروع أو البحث مكتوبًا باللغة الإنجليزية. عدّل النص ثم أعد التسليم.");
       return;
     }
-    let copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
-    // v359: BEFORE AI correction, compare locally extracted PDF/DOCX text against
-    // fingerprints already saved from older AI-reviewed submissions.
-    if(!copyCheck && currentProjectText){ copyCheck=projectCheckTextAgainstSavedFingerprints(p,user,currentProjectText,submissions); }
-    if(fileHash){const exact=(submissions||[]).find(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(p.id)&&String(s.studentId||"")!==String(user.id||"")&&s.fileHash===fileHash);if(exact)copyCheck={score:100,threshold:projectSimilarityThreshold(p.similarityRule),matchedStudentName:exact.studentName||"another student",matchedStudentId:exact.studentNumber||exact.studentId||"",matchedSubmissionId:exact.id,evidenceCurrent:"Identical uploaded file (SHA-256 match).",evidenceMatched:"Identical uploaded file (SHA-256 match).",blocked:false,flagged:true,reviewRequired:true,kind:"Identical file",checkedAt:new Date().toISOString()};}
-    // v359: similarity is a teacher-review signal, never an automatic student rejection.
-    // The submission continues normally even at 100%; evidence remains teacher-only.
+    // v360: read ONE compact per-project fingerprint index document only.
+    // No previous PDF, file chunk, or project submission collection is loaded for similarity checking.
+    let copyCheck=null, fastFingerprint=[];
+    try{
+      const simIndex=await projectReadSimilarityIndex(p.id);
+      const fast=projectCheckFastIndex(p,user,currentProjectText,fileHash,simIndex);
+      copyCheck=fast.check; fastFingerprint=fast.fp;
+    }catch(e){ console.warn("v360 fast similarity index unavailable",e&&e.message); fastFingerprint=projectFastFingerprint(currentProjectText); }
+    // Similarity remains teacher-review only; it never blocks submission or reduces the grade.
     if(copyCheck){ copyCheck={...copyCheck,blocked:false,flagged:true,reviewRequired:copyCheck.score>=projectSimilarityThreshold(p.similarityRule)}; }
     projectSubmitLock.current=true;
     setSubmitting(true);
@@ -5759,6 +5801,8 @@ function StudentProjects({user,data,reload}){
         fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
       await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,fileHash,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+      // Update only the tiny fingerprint index after the real submission succeeds.
+      try{await projectUpdateSimilarityIndex(p,user,id,fileHash,fastFingerprint);}catch(e){console.warn("v360 similarity index update failed",e&&e.message);}
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
@@ -13413,7 +13457,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v359 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v360 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
