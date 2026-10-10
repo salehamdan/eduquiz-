@@ -161,6 +161,7 @@ try{
 <!-- SheetJS for Excel import -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <!-- React + Babel -->
 <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
@@ -995,7 +996,7 @@ async function fsGetDoc(col, id) {
   }
 }
 async function projectSubmissionsForStudentRemote(projectId, st) {
-  // V357 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
+  // V358 SAFE SPEED: read only this student's submission rows; never download file chunks or the whole collection.
   if (!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) {
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
@@ -1006,7 +1007,7 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
     const rows=snap.docs.map(d=>({...d.data(),_id:d.id}));
     return projectSubmissionsForStudent(rows,projectId,st);
   } catch(e) {
-    console.warn("V357 targeted project submission lookup failed; using safe fallback",e&&e.message);
+    console.warn("V358 targeted project submission lookup failed; using safe fallback",e&&e.message);
     const all=await fsAll("projectSubmissions");
     return projectSubmissionsForStudent(all,projectId,st);
   }
@@ -1055,7 +1056,7 @@ function eqLoadFastDataCache(){
 async function loadLoginData() {
   // V329: login must never wait for quizzes, responses, RP audio/submissions, projects or gradebook data.
   // Only the collections required to authenticate and build the class selector are fetched here.
-  // V357 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
+  // V358 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
   const [usersRaw,classesRaw,googlePolicyRow,deletedStudents,deletedClasses] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy"),fsAll("deletedStudents"),fsAll("deletedClasses")
   ]);
@@ -3484,11 +3485,37 @@ async function extractFileText(file) {
     wb.SheetNames.forEach(sn => { txt += XLSX.utils.sheet_to_csv(wb.Sheets[sn]) + "\n"; });
     return txt;
   }
-  // PDF/DOC/DOCX are binary containers. Do NOT read them with file.text():
-  // binary bytes can look like random Latin/Arabic text and wrongly block submission.
-  // The original file is uploaded for teacher review; text-based checks run only
-  // when we can extract reliable text in-browser.
-  if (name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx")) return "";
+  // v358: extract reliable PDF/DOCX text locally BEFORE submission so copy detection
+  // can compare content even when a student changes only the cover/name and re-saves the file.
+  if (name.endsWith(".pdf")) {
+    try {
+      if (typeof pdfjsLib === "undefined") return "";
+      try { pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; } catch(_e){}
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+      let out="";
+      const maxPages=Math.min(pdf.numPages||0,30);
+      for(let n=1;n<=maxPages;n++){
+        const page=await pdf.getPage(n);
+        const tc=await page.getTextContent();
+        out += " " + (tc.items||[]).map(x=>x&&x.str||"").join(" ");
+        if(out.length>30000) break;
+      }
+      return out.replace(/\s+/g," ").trim().slice(0,30000);
+    } catch(e){ console.warn("PDF text extraction failed",e&&e.message); return ""; }
+  }
+  if (name.endsWith(".docx")) {
+    try {
+      if(typeof JSZip==="undefined") return "";
+      const zip=await JSZip.loadAsync(await file.arrayBuffer());
+      const xmlFile=zip.file("word/document.xml");
+      if(!xmlFile) return "";
+      const xml=await xmlFile.async("string");
+      const doc=new DOMParser().parseFromString(xml,"application/xml");
+      return Array.from(doc.getElementsByTagName("w:t")).map(n=>n.textContent||"").join(" ").replace(/\s+/g," ").trim().slice(0,30000);
+    }catch(e){ console.warn("DOCX text extraction failed",e&&e.message); return ""; }
+  }
+  if (name.endsWith(".doc")) return "";
   try { return await file.text(); } catch(e){ return ""; }
 }
 
@@ -5424,6 +5451,24 @@ function projectCheckCopiedFromClassmate({project, submissions, currentStudent, 
 }
 async function projectSha256File(file){try{if(!file||!crypto||!crypto.subtle)return "";const b=await file.arrayBuffer();const h=await crypto.subtle.digest("SHA-256",b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,"0")).join("");}catch(e){return "";}}
 function projectFingerprintSimilarity(a,b){const A=new Set((Array.isArray(a)?a:[]).map(projectNormalizeText).filter(x=>x.length>=8)),B=new Set((Array.isArray(b)?b:[]).map(projectNormalizeText).filter(x=>x.length>=8));if(!A.size||!B.size)return 0;let n=0;A.forEach(x=>{if(B.has(x))n++;});return Math.round(200*n/(A.size+B.size));}
+function projectTextVsFingerprintScore(text,fp){
+  const norm=projectNormalizeText(text);
+  const arr=(Array.isArray(fp)?fp:[]).map(projectNormalizeText).filter(x=>x.length>=8);
+  if(!norm||!arr.length)return 0;
+  let hits=0; arr.forEach(x=>{if(norm.includes(x))hits++;});
+  return Math.round(100*hits/arr.length);
+}
+function projectCheckTextAgainstSavedFingerprints(project,currentStudent,currentText,list){
+  const text=String(currentText||"").trim(); if(projectNormalizeText(text).length<120)return null;
+  const threshold=projectSimilarityThreshold(project&&project.similarityRule); let best=null;
+  (list||[]).forEach(s=>{
+    if(!s||s.source==="project_file_chunk"||String(s.projectId)!==String(project.id)||String(s.studentId||"")===String(currentStudent.id||""))return;
+    const fp=s.aiReview&&s.aiReview.similarityFingerprint; if(!fp)return;
+    const score=projectTextVsFingerprintScore(text,fp);
+    if(!best||score>best.score)best={score,threshold,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",matchedSubmissionId:s.id,evidenceCurrent:"Distinctive content phrases match a previous submission.",evidenceMatched:"Saved content fingerprint from the previous submission.",blocked:score>=threshold,checkedAt:new Date().toISOString(),kind:"Content fingerprint"};
+  });
+  return best&&best.score>=70?best:null;
+}
 function projectCheckFingerprintAgainstSubmissions(p,cur,review,list){let best=null,t=projectSimilarityThreshold(p&&p.similarityRule);(list||[]).forEach(s=>{if(!s||s.source==="project_file_chunk"||String(s.projectId)!==String(p.id)||String(s.id)===String(cur.id)||String(s.studentId||"")===String(cur.studentId||""))return;let score=0,kind="";if(cur.fileHash&&s.fileHash&&cur.fileHash===s.fileHash){score=100;kind="Identical file";}else if(review&&review.similarityFingerprint&&s.aiReview&&s.aiReview.similarityFingerprint){score=projectFingerprintSimilarity(review.similarityFingerprint,s.aiReview.similarityFingerprint);kind="Content fingerprint";}if(!best||score>best.score)best={score,kind,threshold:t,matchedStudentName:s.studentName||"another student",matchedStudentId:s.studentNumber||s.studentId||"",matchedSubmissionId:s.id};});return best&&best.score>=70?{...best,flagged:true,checkedAt:new Date().toISOString()}:null;}
 async function projectFileToDataUrl(file){
   return await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(r.error||new Error("Could not read file."));r.readAsDataURL(file);});
@@ -5538,7 +5583,7 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const max=projectMaxScore(project);
   const criteria=parsed.criteria.map(c=>({...c,score:Math.max(0,Math.min(Number(c.max)||0,Number(c.score)||0))}));
   const score=Math.max(0,Math.min(max,Math.round(criteria.reduce((sum,c)=>sum+c.score,0)*10)/10));
-  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v357"};
+  return {...parsed,criteria,score,total:max,correctedAt:new Date().toISOString(),source:"openai_project_pdf_v358"};
 }
 function ProjectRubricView({type, compact}){
   const rub=projectRubricFor(type);
@@ -5677,6 +5722,9 @@ function StudentProjects({user,data,reload}){
       return;
     }
     let copyCheck = projectCheckCopiedFromClassmate({project:p,submissions,currentStudent:user,currentText:currentProjectText});
+    // v358: BEFORE AI correction, compare locally extracted PDF/DOCX text against
+    // fingerprints already saved from older AI-reviewed submissions.
+    if(!copyCheck && currentProjectText){ copyCheck=projectCheckTextAgainstSavedFingerprints(p,user,currentProjectText,submissions); }
     if(fileHash){const exact=(submissions||[]).find(s=>s&&s.source!=="project_file_chunk"&&String(s.projectId)===String(p.id)&&String(s.studentId||"")!==String(user.id||"")&&s.fileHash===fileHash);if(exact)copyCheck={score:100,threshold:projectSimilarityThreshold(p.similarityRule),matchedStudentName:exact.studentName||"another student",matchedStudentId:exact.studentNumber||exact.studentId||"",matchedSubmissionId:exact.id,evidenceCurrent:"Identical uploaded file (SHA-256 match).",evidenceMatched:"Identical uploaded file (SHA-256 match).",blocked:true,checkedAt:new Date().toISOString()};}
     if(copyCheck && copyCheck.blocked){
       setMsg("Submission rejected. Your project is very similar to another submitted project ("+copyCheck.score+"%). Evidence: "+copyCheck.evidenceCurrent.slice(0,180)+"... Please rewrite it in your own words.");
@@ -5685,7 +5733,7 @@ function StudentProjects({user,data,reload}){
     projectSubmitLock.current=true;
     setSubmitting(true);
     try{
-      // V357 SAFE SPEED: do not download every project submission/file chunk before Submit.
+      // V358 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       const old=prior;
@@ -12136,7 +12184,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return Array.from(map.values());
   })();
   const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
-  // v357: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
+  // v358: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
   // v315: red badge for unseen Reading Theory attempts.
@@ -13351,7 +13399,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v357 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v358 · Stable" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
