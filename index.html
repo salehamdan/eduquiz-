@@ -5598,15 +5598,42 @@ async function projectUploadFile(file, projectId, studentId, submissionId){
   const path="project-files/"+String(projectId)+"/"+String(studentId)+"/"+String(submissionId)+"/"+safeName;
   const ref=storage.ref().child(path);
   let uploaded=false;
+  let uploadTask=null;
   try{
-    const snap=await ref.put(file,{contentType:file.type||"application/octet-stream",customMetadata:{projectId:String(projectId),studentId:String(studentId),submissionId:String(submissionId)}});
+    const metadata={contentType:file.type||"application/octet-stream",customMetadata:{projectId:String(projectId),studentId:String(studentId),submissionId:String(submissionId)}};
+    uploadTask=ref.put(file,metadata);
+    const snap=await new Promise((resolve,reject)=>{
+      let settled=false;
+      const timer=setTimeout(()=>{
+        if(settled)return; settled=true;
+        try{uploadTask.cancel();}catch(_e){}
+        reject(new Error("Upload timed out after 45 seconds. Check Firebase Storage rules or network connection."));
+      },45000);
+      uploadTask.on("state_changed",
+        (snapshot)=>{
+          const total=Number(snapshot.totalBytes)||Number(file.size)||1;
+          const pct=Math.max(0,Math.min(100,Math.round((Number(snapshot.bytesTransferred)||0)*100/total)));
+          try{window.dispatchEvent(new CustomEvent("eduquiz-project-upload-progress",{detail:{percent:pct,bytesTransferred:snapshot.bytesTransferred,totalBytes:snapshot.totalBytes}}));}catch(_e){}
+        },
+        (err)=>{if(settled)return;settled=true;clearTimeout(timer);reject(err);},
+        ()=>{if(settled)return;settled=true;clearTimeout(timer);resolve(uploadTask.snapshot);}
+      );
+    });
     uploaded=true;
     const url=await snap.ref.getDownloadURL();
     if(!url) throw new Error("Storage did not return a file URL.");
     return {name:file.name,size:file.size,type:file.type||"application/octet-stream",url,path,chunked:false,chunkCount:0,storage:true};
   }catch(e){
     if(uploaded){try{await ref.delete();}catch(_e){}}
-    throw new Error("Project upload failed. Nothing was submitted. "+((e&&e.message)||e));
+    const code=String(e&&e.code||"");
+    let detail=(e&&e.message)||String(e);
+    if(code==="storage/unauthorized") detail="Firebase Storage denied this upload (storage/unauthorized). Check Storage security rules for project-files/.";
+    else if(code==="storage/canceled") detail="The upload was canceled before completion.";
+    else if(code==="storage/retry-limit-exceeded") detail="Firebase Storage could not complete the upload in time (storage/retry-limit-exceeded).";
+    else if(code==="storage/quota-exceeded") detail="Firebase Storage quota was exceeded.";
+    else if(code==="storage/bucket-not-found") detail="Firebase Storage bucket was not found. Check storageBucket configuration.";
+    else if(code==="storage/project-not-found") detail="Firebase project was not found by Storage.";
+    throw new Error("Project upload failed. Nothing was submitted. "+detail);
   }
 }
 async function projectStorageFileToDataUrl(submission){
@@ -5956,6 +5983,11 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const [msg,setMsg]=useState("");
   useEffect(()=>{if(!msg||msg.startsWith("⏳"))return;const t=setTimeout(()=>setMsg(""),3500);return()=>clearTimeout(t);},[msg]);
   const [projectOpenaiKey,setProjectOpenaiKey]=useState(()=>localStorage.getItem("rp_openai_api_key")||"");
+  useEffect(()=>{
+    const onProgress=(ev)=>{const pct=Number(ev&&ev.detail&&ev.detail.percent);if(Number.isFinite(pct))setMsg("⏳ Uploading project file... "+pct+"%");};
+    window.addEventListener("eduquiz-project-upload-progress",onProgress);
+    return ()=>window.removeEventListener("eduquiz-project-upload-progress",onProgress);
+  },[]);
   const [projectKeyVisible,setProjectKeyVisible]=useState(false);
   const [openSubmissionClasses,setOpenSubmissionClasses]=useState({});
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
@@ -13605,7 +13637,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v365 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v366 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
