@@ -5535,7 +5535,7 @@ function projectFileChunkId(submissionId,idx){return "__project_file_chunk__"+St
 async function projectSaveFileChunks(submissionId,dataUrl){
   const raw=String(dataUrl||""); if(!raw) throw new Error("Empty project file.");
   const chunkSize=420000,total=Math.ceil(raw.length/chunkSize);
-  if(total>36) throw new Error("Project file exceeds the 10 MB limit.");
+  if(total>36) throw new Error("Legacy project file is too large.");
   for(let i=0;i<total;i++){
     const row={id:projectFileChunkId(submissionId,i),source:"project_file_chunk",submissionId:String(submissionId),part:i,total,data:raw.slice(i*chunkSize,(i+1)*chunkSize),createdAt:new Date().toISOString()};
     if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection) await db.collection("projectSubmissions").doc(row.id).set(row);
@@ -5553,13 +5553,13 @@ async function projectLoadFileChunks(submissionId,count){
   }
   return parts.join("");
 }
-const PROJECT_MAX_FILE_BYTES=10*1024*1024;
+const PROJECT_MAX_FILE_BYTES=2*1024*1024;
 const PROJECT_ALLOWED_EXTENSIONS=["pdf","docx"];
 function projectValidateFile(file){
   if(!file) throw new Error("Choose a project file first.");
   const ext=String(file.name||"").split(".").pop().toLowerCase();
   if(!PROJECT_ALLOWED_EXTENSIONS.includes(ext)) throw new Error("Only PDF and DOCX files are allowed.");
-  if(file.size>PROJECT_MAX_FILE_BYTES) throw new Error("Maximum file size is 10 MB. Choose a smaller file.");
+  if(file.size>PROJECT_MAX_FILE_BYTES) throw new Error("Maximum file size is 2 MB. Compress the file and try again.");
   if(!file.size) throw new Error("The selected file is empty.");
 }
 function projectDataUrlToBlob(dataUrl){
@@ -5584,14 +5584,49 @@ async function projectOpenChunkedFile(sub){
     else {if(tab)tab.close();const a=document.createElement("a");a.href=url;a.download=sub.fileName||"project-file";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),180000);}
   }catch(e){if(tab)tab.close();alert("Could not open project file: "+((e&&e.message)||e));}
 }
+
+async function projectOpenStoredFile(sub){
+  if(sub&&sub.fileChunked) return projectOpenChunkedFile(sub);
+  const url=String(sub&&sub.fileUrl||"");
+  if(!url){alert("Project file URL is missing.");return;}
+  window.open(url,"_blank");
+}
 async function projectUploadFile(file, projectId, studentId, submissionId){
   projectValidateFile(file);
-  const meta={name:file.name,size:file.size,type:file.type||"application/octet-stream",url:"",path:"",chunked:false,chunkCount:0};
-  // v351: do NOT use Firebase Storage. Save through the already-working projectSubmissions Firestore path in safe chunks.
-  const dataUrl=await projectFileToDataUrl(file);
-  meta.chunkCount=await projectSaveFileChunks(submissionId,dataUrl);
-  meta.chunked=true; meta.path="firestore-projectSubmissions-chunks:"+submissionId;
-  return meta;
+  if(!(FIREBASE_OK && storage && storage.ref)) throw new Error("Firebase Storage is unavailable. The project was NOT submitted. Try again when the connection is restored.");
+  const safeName=String(file.name||"project.pdf").replace(/[^a-zA-Z0-9._-]+/g,"_").slice(-120);
+  const path="project-files/"+String(projectId)+"/"+String(studentId)+"/"+String(submissionId)+"/"+safeName;
+  const ref=storage.ref().child(path);
+  let uploaded=false;
+  try{
+    const snap=await ref.put(file,{contentType:file.type||"application/octet-stream",customMetadata:{projectId:String(projectId),studentId:String(studentId),submissionId:String(submissionId)}});
+    uploaded=true;
+    const url=await snap.ref.getDownloadURL();
+    if(!url) throw new Error("Storage did not return a file URL.");
+    return {name:file.name,size:file.size,type:file.type||"application/octet-stream",url,path,chunked:false,chunkCount:0,storage:true};
+  }catch(e){
+    if(uploaded){try{await ref.delete();}catch(_e){}}
+    throw new Error("Project upload failed. Nothing was submitted. "+((e&&e.message)||e));
+  }
+}
+async function projectStorageFileToDataUrl(submission){
+  const url=String(submission&&submission.fileUrl||"");
+  if(!url) throw new Error("Stored project file URL is missing.");
+  const resp=await fetch(url);
+  if(!resp.ok) throw new Error("Could not download the stored project file (HTTP "+resp.status+").");
+  const blob=await resp.blob();
+  if(blob.size>PROJECT_MAX_FILE_BYTES+65536) throw new Error("Stored project file is larger than the current 2 MB limit.");
+  return await projectFileToDataUrl(blob);
+}
+async function projectDeleteStoredFile(sub){
+  const path=String(sub&&sub.filePath||"");
+  const url=String(sub&&sub.fileUrl||"");
+  if(!(FIREBASE_OK&&storage)) return false;
+  try{
+    if(path&&path.indexOf("firestore-projectSubmissions-chunks:")!==0){await storage.ref().child(path).delete();return true;}
+    if(url){await storage.refFromURL(url).delete();return true;}
+  }catch(e){ if(e&&e.code!=="storage/object-not-found") throw e; }
+  return false;
 }
 
 function projectRubricText(rubric){ return (rubric||[]).map(x=>"- "+x.label+" / "+(x.labelAr||"")+": "+x.points+" marks. "+(x.student||"")+" "+(x.studentAr||"")).join("\n"); }
@@ -5601,18 +5636,19 @@ async function aiCorrectProjectSubmission({project, submission, student}){
   const rubric=project.rubric||projectRubricFor(project.type);
   const submittedText=String(submission.text||submission.fileText||"").trim();
   const fileName=String(submission.fileName||"");
-  const isPdf=!!submission.fileChunked && fileName.toLowerCase().endsWith(".pdf");
-  const isDocx=!!submission.fileChunked && fileName.toLowerCase().endsWith(".docx");
+  const hasStoredFile=!!(submission.fileUrl||submission.fileChunked);
+  const isPdf=hasStoredFile && fileName.toLowerCase().endsWith(".pdf");
+  const isDocx=hasStoredFile && fileName.toLowerCase().endsWith(".docx");
   if(!submittedText&&!isPdf&&!isDocx) throw new Error("No readable project content. Open the submission and grade manually.");
   const prompt=`You are an English teacher assistant. Evaluate the actual student project using ONLY the teacher instructions and the exact rubric below. Review content, English, organization, following instructions, and visible design where the submitted PDF allows. Do not infer unreadable content. The teacher makes the final decision.\n\nSTRICT SCORING RULES:\n1. Do NOT invent, add, or assume requirements that are not explicitly stated in the teacher instructions or rubric.\n2. Do NOT deduct marks for preferences, enhancements, or optional improvements that are not explicit requirements. You may mention optional improvements in feedback, but they must not reduce the score.\n3. If an instruction gives an acceptable range (for example 5-6 pages), ANY value inside that range fully satisfies that requirement. Never deduct for meeting the minimum instead of the maximum.\n4. For Creativity and Effort, award according to the written rubric only. If the work clearly shows suitable examples, good design, tables/timelines/visuals, clear effort, OR a personal touch as the rubric states, do not require extra original artwork or personal reflection unless explicitly required.\n5. A deduction must identify the exact unmet instruction or rubric descriptor. If you cannot name an explicit unmet requirement, do not deduct.\n6. Give full marks when the evidence satisfies the criterion. Be fair and evidence-based, not artificially harsh.\n\nProject: ${project.title}\nType: ${project.type}\nInstructions: ${project.instructions||"None"}\nMax score: ${projectMaxScore(project)}\nRubric:\n${projectRubricText(rubric)}\nStudent: ${student?student.name:submission.studentName||"Student"}\nReturn ONLY JSON: {"score":10,"total":10,"criteria":[{"label":"Content / Ideas","score":3,"max":3,"comment":"Evidence-based comment tied only to the rubric"}],"studentFeedback":"Short constructive feedback","teacherNote":"For every deduction, cite the exact unmet rubric/instruction requirement","similarityFingerprint":["12-20 distinctive factual phrases from the actual student content"]}. Include every rubric criterion, keep each score within its maximum, ensure total equals the sum of criterion scores, and include 12-20 distinctive content phrases in similarityFingerprint for local similarity checking. Do not use generic rubric wording in that fingerprint.`;
   const content=[{type:"input_text",text:prompt}];
   if(isPdf){
-    const fileData=await projectLoadFileChunks(submission.id,submission.fileChunkCount);
+    const fileData=submission.fileChunked?await projectLoadFileChunks(submission.id,submission.fileChunkCount):await projectStorageFileToDataUrl(submission);
     if(!fileData.startsWith("data:application/pdf") && !fileData.startsWith("data:application/octet-stream")) throw new Error("Stored PDF data is not readable.");
     content.push({type:"input_file",filename:fileName||"project.pdf",file_data:fileData});
   }else if(isDocx){
     // DOCX is not a PDF. Extract its document XML from the existing SheetJS JSZip dependency.
-    const fileData=await projectLoadFileChunks(submission.id,submission.fileChunkCount);
+    const fileData=submission.fileChunked?await projectLoadFileChunks(submission.id,submission.fileChunkCount):await projectStorageFileToDataUrl(submission);
     if(typeof JSZip==="undefined") throw new Error("DOCX automatic reading is unavailable. Please upload PDF or grade manually.");
     const blob=projectDataUrlToBlob(fileData);
     const zip=await JSZip.loadAsync(await blob.arrayBuffer());
@@ -5685,7 +5721,7 @@ function projectSchoolYearDefault(){
 }
 
 
-// ── V363 PROJECT TOPIC BANK + ASSIGNMENT ─────────────────────
+// ── V364 PROJECT STORAGE 2MB + V363 TOPIC BANK ─────────────────────
 const PROJECT_TOPIC_BANK_DEFAULT = [
 {id:"u1-1",unit:1,unitTitle:"Two Is Better Than One",category:"Grammar",title:"Other, Others, Another, Each Other, and One Another"},
 {id:"u1-2",unit:1,unitTitle:"Two Is Better Than One",category:"Grammar",title:"Simple Present vs. Present Progressive"},
@@ -5738,7 +5774,7 @@ function projectStudentKey(st){return String(st&& (st.id||st._id||st.studentId||
 function projectTopicForStudent(p,st){const k=projectStudentKey(st);return p&&p.topicAssignments&&p.topicAssignments[k]||null;}
 function projectShuffle(arr){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function projectPromptForStudent(p,st,cls,topic){
-  return `You are going to create a complete English school project for a Grade 12 student.\n\nSTUDENT INFORMATION:\nStudent Name: ${st.name||""}\nClass: ${(cls&&cls.name)||st.className||st.classId||""}\nAssigned Unit: Unit ${topic.unit} – ${topic.unitTitle}\nAssigned Category: ${topic.category}\nAssigned Project Topic: ${topic.title}\n\nIMPORTANT:\nUse the assigned project topic exactly as given above. Do not ask the student to choose or type a topic. Use the student's name and class automatically. If the student's name is Arabic, transliterate it naturally into English.\n\nPROJECT REQUIREMENTS:\n• Write the entire project in English.\n• Create 5–6 pages, including the Cover Page and References.\n• Make the project visually attractive, well organized, and professionally designed.\n• The project should look like a high-quality Grade 12 school project, not a plain text essay.\n• Use clear, natural English suitable for an EFL Grade 12 student.\n• Include a Cover Page, Introduction, 3–4 main sections, Conclusion, and References.\n• Add relevant visuals, examples, tables, timelines, diagrams, or comparisons when appropriate.\n• The final deliverable should be prepared as one PDF file.\n\nCOVER PAGE:\nInclude the project title, student's English name, class, and an attractive design related to the assigned topic.\n\nPROJECT-SPECIFIC TEACHER INSTRUCTIONS:\n${p.instructions||"Follow the assigned topic carefully and support the project with appropriate examples and references."}\n\nStart creating the complete project now.`;
+  return `You are going to create a complete English school project for a Grade 12 student.\n\nSTUDENT INFORMATION:\nStudent Name: ${st.name||""}\nClass: ${(cls&&cls.name)||st.className||st.classId||""}\nAssigned Unit: Unit ${topic.unit} – ${topic.unitTitle}\nAssigned Category: ${topic.category}\nAssigned Project Topic: ${topic.title}\n\nIMPORTANT:\nUse the assigned project topic exactly as given above. Do not ask the student to choose or type a topic. Use the student's name and class automatically. If the student's name is Arabic, transliterate it naturally into English.\n\nPROJECT REQUIREMENTS:\n• Write the entire project in English.\n• Create 5–6 pages, including the Cover Page and References.\n• Make the project visually attractive, well organized, and professionally designed.\n• The project should look like a high-quality Grade 12 school project, not a plain text essay.\n• Use clear, natural English suitable for an EFL Grade 12 student.\n• Include a Cover Page, Introduction, 3–4 main sections, Conclusion, and References.\n• Add relevant visuals, examples, tables, timelines, diagrams, or comparisons when appropriate.\n• The final deliverable should be prepared as one PDF file.\n• Optimize and compress all images. The final PDF file MUST be under 2 MB.\n\nCOVER PAGE:\nInclude the project title, student's English name, class, and an attractive design related to the assigned topic.\n\nPROJECT-SPECIFIC TEACHER INSTRUCTIONS:\n${p.instructions||"Follow the assigned topic carefully and support the project with appropriate examples and references."}\n\nStart creating the complete project now.`;
 }
 async function projectCopyText(txt){
   if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(txt);return;}
@@ -5868,7 +5904,14 @@ function StudentProjects({user,data,reload}){
         setMsg("⏳ Uploading project file...");
         fileMeta=await projectUploadFile(file,p.id,user.id,id);
       }
-      await fsSet("projectSubmissions",id,{id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,fileHash,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()});
+      const submissionRow={id,projectId:p.id,teacherId:p.teacherId,studentId:user.id,studentNumber:user.studentId||"",studentName:user.name||"",classId:user.classId||"",submissionMode:submitMode,text:submitMode==="text"?text.trim():"",fileName:fileMeta.name||"",fileUrl:fileMeta.url||"",filePath:fileMeta.path||"",fileSize:fileMeta.size||0,fileType:fileMeta.type||"",fileChunked:!!fileMeta.chunked,fileChunkCount:fileMeta.chunkCount||0,fileText,fileHash,similarityCheck:copyCheck||null,attempt,status:"submitted",submittedAt:new Date().toISOString(),createdAt:today()};
+      try{
+        if(FIREBASE_OK&&db&&db.collection) await db.collection("projectSubmissions").doc(id).set(submissionRow);
+        else await fsSet("projectSubmissions",id,submissionRow);
+      }catch(saveErr){
+        if(fileMeta&&fileMeta.url){try{await projectDeleteStoredFile({fileUrl:fileMeta.url,filePath:fileMeta.path});}catch(_e){}}
+        throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
+      }
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
@@ -5893,7 +5936,7 @@ function StudentProjects({user,data,reload}){
       {latest&&<Card style={{marginBottom:"10px",background:latest.status==="approved"?"#f0fdf4":"#f8fafc",border:"1px solid "+(latest.status==="approved"?"#86efac":C.br),direction:"rtl",textAlign:"right"}}><b style={{fontSize:"13px",color:C.tx,fontFamily:F}}>حالة آخر تسليم</b><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>المحاولة {latest.attempt} · {projectStatusArabic(latest.status)} · {latest.submittedAt}</div>{latest.finalScore!=null&&<div style={{fontSize:"16px",fontWeight:"900",color:gc(latest.finalScore*10),fontFamily:F}}>الدرجة النهائية: {latest.finalScore}/10</div>}{latest.teacherFeedback&&<div style={{fontSize:"12px",color:C.tx,marginTop:"5px",fontFamily:F}}>ملاحظة المعلم: {latest.teacherFeedback}</div>}</Card>}
       {!disabled&&(!latest||canResubmit)&&<Card>
         {p.submissionType==="bothChoice"&&<><Label text="اختر طريقة التسليم"/><div style={{display:"flex",gap:"8px",marginBottom:"10px"}}><button onClick={()=>setMode("text")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="text"?C.p:C.br),background:mode==="text"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>كتابة النص</button><button onClick={()=>setMode("file")} style={{flex:1,padding:"10px",borderRadius:"9px",border:"2px solid "+(mode==="file"?C.p:C.br),background:mode==="file"?"#eff6ff":"#fff",fontWeight:"800",fontFamily:F}}>رفع ملف</button></div></>}
-        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>{const f=e.target.files&&e.target.files[0];try{if(f)projectValidateFile(f);setFile(f||null);setMsg("");}catch(err){setFile(null);e.target.value="";setMsg("❌ "+err.message);}}} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>الملفات المسموحة: PDF أو DOCX فقط. الحد الأقصى 10 MB. يُفضّل PDF للتصحيح الآلي وعرض الملف.</div></>}
+        {submitMode==="text"?<><Label text="اكتب مشروعك هنا باللغة الإنجليزية"/><div style={{fontSize:"11px",color:"#9a3412",fontWeight:"800",marginBottom:"6px",fontFamily:F}}>اكتب باللغة الإنجليزية فقط. التسليم المكتوب بالعربية لن يُقبل.</div><textarea value={text} onChange={e=>setText(e.target.value)} style={{...input,minHeight:"170px",resize:"vertical",direction:"ltr"}}/></>:<><Label text="ارفع ملف المشروع"/><input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e=>{const f=e.target.files&&e.target.files[0];try{if(f)projectValidateFile(f);setFile(f||null);setMsg("");}catch(err){setFile(null);e.target.value="";setMsg("❌ "+err.message);}}} style={input}/><div style={{fontSize:"10px",color:C.mu,marginTop:"5px",fontFamily:F}}>الملفات المسموحة: PDF أو DOCX فقط. الحد الأقصى 2 MB. يُفضّل PDF للتصحيح الآلي وعرض الملف.</div></>}
         {msg&&<div style={{fontSize:"12px",color:msg.startsWith("✅")?C.s:C.d,fontWeight:"800",margin:"8px 0",fontFamily:F}}>{msg}</div>}
         <Btn color={C.p} onClick={()=>submitProject(p)} disabled={submitting} style={{width:"100%",marginTop:"10px",opacity:submitting ? 0.65 : 1}}>{submitting?"جارٍ رفع وإرسال المشروع...":"تسليم المشروع"}</Btn>
       </Card>}
@@ -5935,6 +5978,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     if(!window.confirm("Delete ONLY this project attempt?\nStudent: "+(s.studentName||"")+"\nProject: "+p.title+"\nAttempt: "+(s.attempt||1)+"\nThis cannot be undone.")) return;
     try{
       if(s.gradebookResponseId) await fsDel("responses",s.gradebookResponseId);
+      if(s.fileUrl||s.filePath){await projectDeleteStoredFile(s);}
       if(s.fileChunked&&s.fileChunkCount){for(let i=0;i<Number(s.fileChunkCount||0);i++) await fsDel("projectSubmissions",projectFileChunkId(s.id,i));}
       await fsDel("projectSubmissions",s.id);
       setMsg("✅ Attempt deleted. Other submissions were preserved.");
@@ -5971,7 +6015,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     if(!options.length){setMsg("❌ No unused alternative topic in this class.");return;}
     await setStudentTopic(p,st,options[Math.floor(Math.random()*options.length)].id);
   }
-  function renderSubmissionCard(s){const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenChunkedFile(s)} style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{"👁 View File: "+s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"11px",marginTop:"6px",padding:"7px 9px",borderRadius:"8px",background:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fef2f2":"#fffbeb",border:"1px solid "+(s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fecaca":"#fde68a"),color:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?C.d:C.w,fontWeight:"900",fontFamily:F}}>⚠️ {s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"High Similarity — Teacher Review Required":"Similarity Notice"}: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}. This does not automatically reduce the grade.</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Review Similarity Evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>}
+  function renderSubmissionCard(s){const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));const cls=st&&data.classes.find(c=>c.id===st.classId);const ai=s.aiReview;return <Card key={s.id} style={{marginBottom:"9px",border:"1px solid "+(s.status==="approved"?"#86efac":s.status==="ai_corrected"?"#93c5fd":C.br)}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{st?st.name:s.studentName} <span style={{fontSize:"10px",color:C.mu,fontWeight:"500"}}>#{st?st.studentId:s.studentNumber}</span></div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?cls.name:"—"} · {p?p.title:"Unknown project"} · Attempt {s.attempt||1} · {s.submissionMode} · {s.status}</div>{s.fileName&&<div style={{fontSize:"10px",color:C.p,fontFamily:F}}>📎 {s.fileUrl?<a href={s.fileUrl} target="_blank">{s.fileName}</a>:s.fileChunked?<button onClick={()=>projectOpenStoredFile(s)} style={{border:"none",background:"none",padding:0,color:C.p,textDecoration:"underline",cursor:"pointer",fontFamily:F,fontSize:"10px"}}>{"👁 View File: "+s.fileName}</button>:s.fileName}</div>}{s.similarityCheck&&<div style={{fontSize:"11px",marginTop:"6px",padding:"7px 9px",borderRadius:"8px",background:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fef2f2":"#fffbeb",border:"1px solid "+(s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"#fecaca":"#fde68a"),color:s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?C.d:C.w,fontWeight:"900",fontFamily:F}}>⚠️ {s.similarityCheck.score>=projectSimilarityThreshold(p&&p.similarityRule)?"High Similarity — Teacher Review Required":"Similarity Notice"}: {s.similarityCheck.score}% with {s.similarityCheck.matchedStudentName||"another student"}. This does not automatically reduce the grade.</div>}</div>{s.finalScore!=null&&<div style={{fontSize:"18px",fontWeight:"900",color:gc(s.finalScore*10),fontFamily:F}}>{s.finalScore}/10</div>}</div>{s.text&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.p,cursor:"pointer",fontFamily:F}}>View text</summary><div style={{whiteSpace:"pre-wrap",fontSize:"11px",background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px",marginTop:"5px",maxHeight:"180px",overflowY:"auto",fontFamily:F}}>{s.text}</div></details>}{s.similarityCheck&&<details style={{marginTop:"8px"}}><summary style={{fontSize:"11px",fontWeight:"800",color:C.w,cursor:"pointer",fontFamily:F}}>Review Similarity Evidence</summary><div style={{fontSize:"11px",background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"8px",padding:"8px",marginTop:"5px",fontFamily:F}}><b>Matched student:</b> {s.similarityCheck.matchedStudentName} #{s.similarityCheck.matchedStudentId}<br/><b>Similarity:</b> {s.similarityCheck.score}%<br/><b>Current evidence:</b><br/>{s.similarityCheck.evidenceCurrent}<br/><b>Matched evidence:</b><br/>{s.similarityCheck.evidenceMatched}</div></details>}{ai&&<div style={{marginTop:"8px",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"9px",padding:"8px"}}><div style={{fontSize:"12px",fontWeight:"900",color:C.p,fontFamily:F}}>AI Suggested Score: {ai.score}/10</div>{(ai.criteria||[]).map((c,i)=><div key={i} style={{fontSize:"11px",color:C.tx,fontFamily:F,padding:"3px 0"}}><b>{c.label}:</b> {c.score}/{c.max} — {c.comment}</div>)}{ai.studentFeedback&&<div style={{fontSize:"11px",color:C.tx,fontFamily:F,marginTop:"5px"}}>Feedback: {ai.studentFeedback}</div>}</div>}<div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"9px"}}>{s.status!=="approved"&&<><Btn size="sm" color={C.p} onClick={()=>runAI(p,s)}>🤖 AI Correct</Btn><Btn size="sm" color={C.s} disabled={!ai} onClick={()=>{if(ai)approve(p,s,ai.score,ai.studentFeedback||"");}}>✅ Approve AI Score</Btn><Btn size="sm" color={C.w} onClick={()=>manualGrade(p,s)}>✍️ Manual / Edit</Btn></>}<Btn size="sm" color={C.pu} onClick={()=>allowResubmit(p,s)}>Allow Resubmission</Btn><Btn size="sm" color={C.d} onClick={()=>deleteProjectAttempt(p,s)}>🗑 Delete Attempt</Btn></div></Card>}
   if(screen==="bank") return <ProjectTopicBankManager data={data} onSaved={reload} onClose={()=>setScreen("list")}/>;
   if(screen==="create"||screen==="edit") return <ProjectCreateForm user={user} data={data} myClasses={myClasses} myStudents={myStudents} editProject={screen==="edit"?editProject:null} onSaved={async()=>{await reload();setScreen("list");setEditProject(null);}} onCancel={()=>{setScreen("list");setEditProject(null);}}/>;
   return <div>
@@ -12770,7 +12814,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function exportExamWord(){
     if(!examExport)return;setExamExportBusy("Word");
     try{
-      const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${examStyles()}</style></head><body>${examHtml(examExport,examExportForm)}</body></html>`;
+      const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${examStyles()}</style></head><body>${examHtml(examExport,examExportForm)}<script>window.__EDUQUIZ_PROJECT_STORAGE_VERSION__="v364-storage-2mb";</script>
+</body></html>`;
       const blob=new Blob(["\ufeff",html],{type:"application/msword;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=safeExamFileName(examExportForm.quiz)+".doc";document.body.appendChild(a);a.click();setTimeout(()=>{try{a.remove();URL.revokeObjectURL(url)}catch(_e){}},1200);
     }catch(e){alert("Word export failed: "+(e.message||e));}finally{setExamExportBusy("");}
   }
@@ -13561,7 +13606,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v363 · Project Topics" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v364 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
