@@ -5890,35 +5890,36 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
     <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
   </div>;
 }
-// EDUQUIZ V368 — surgical fix: stable class collapse + atomic duplicate-submit protection.
-// V368: atomic project submission lock. Prevents double-click / slow-network races from creating two attempts.
-function projectSubmissionLockId(projectId, st){
-  const sid=String(st&&st.id||st&&st.studentId||"").replace(/[^a-zA-Z0-9_-]/g,"_");
-  return String(projectId||"").replace(/[^a-zA-Z0-9_-]/g,"_")+"__"+sid;
+// V369: DB-backed project submission idempotency. This prevents two slow/repeated submits
+// from creating two attempts, even when the second request starts before the first one finishes.
+function projectSubmissionGuardId(projectId,studentId){
+  return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
 }
-async function projectAcquireSubmissionLock(projectId, st, token){
-  if(!(FIREBASE_OK&&db&&db.collection&&db.runTransaction)) return true;
-  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
+async function projectAcquireSubmissionGuard(p,st){
+  const token=uid();
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection&&db.runTransaction)) return {token,remote:false};
+  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id));
+  const now=Date.now(), staleMs=120000;
   await db.runTransaction(async tx=>{
-    const snap=await tx.get(ref);
-    const d=snap.exists?(snap.data()||{}):{};
-    if(d.state==="submitting" || d.state==="submitted") throw new Error("This project is already being submitted or has already been submitted. Please wait; do not press Submit again.");
-    tx.set(ref,{projectId:String(projectId||""),studentId:String(st&&st.id||""),studentNumber:String(st&&st.studentId||""),token:String(token),state:"submitting",updatedAt:new Date().toISOString()},{merge:true});
+    const snap=await tx.get(ref); const row=snap&&snap.exists?snap.data():null;
+    if(row&&row.status==="submitted") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+    if(row&&row.status==="submitting"&&(now-Number(row.startedAtMs||0))<staleMs) throw new Error("Your project submission is already being processed. Please wait; do not submit it again.");
+    tx.set(ref,{projectId:p.id,studentId:st.id,studentNumber:st.studentId||"",status:"submitting",token,startedAtMs:now,updatedAt:new Date().toISOString()},{merge:true});
   });
-  return true;
+  return {token,remote:true,ref};
 }
-async function projectFinalizeSubmissionLock(projectId, st, token, submissionId){
-  if(!(FIREBASE_OK&&db&&db.collection)) return;
-  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
-  try{await ref.set({projectId:String(projectId||""),studentId:String(st&&st.id||""),studentNumber:String(st&&st.studentId||""),token:String(token),state:"submitted",submissionId:String(submissionId||""),updatedAt:new Date().toISOString()},{merge:true});}catch(e){console.warn("V368 submission lock finalize failed",e&&e.message);}
+async function projectFinishSubmissionGuard(guard,submissionId){
+  if(!guard||!guard.remote||!guard.ref) return;
+  await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"submitted",submissionId:submissionId||"",finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});});
 }
-async function projectReleaseSubmissionLock(projectId, st, token, force){
-  if(!(FIREBASE_OK&&db&&db.collection)) return;
-  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
-  try{
-    if(force){await ref.delete();return;}
-    if(db.runTransaction) await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)return;const d=snap.data()||{};if(String(d.token||"")===String(token||"") && d.state==="submitting")tx.delete(ref);});
-  }catch(e){console.warn("V368 submission lock release failed",e&&e.message);}
+async function projectReleaseSubmissionGuard(guard){
+  if(!guard||!guard.remote||!guard.ref) return;
+  try{await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"idle",token:"",updatedAt:new Date().toISOString()},{merge:true});});}catch(e){console.warn("submission guard release failed",e&&e.message);}
+}
+async function projectAllowSubmissionAgain(p,s){
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection)) return;
+  const sid=s.studentId||s.studentNumber||""; if(!sid)return;
+  try{await db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,sid)).set({projectId:p.id,studentId:sid,status:"allowed",token:"",allowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});}catch(e){console.warn("submission guard reset failed",e&&e.message);}
 }
 function StudentProjects({user,data,reload}){
   const [openProject,setOpenProject]=useState(null);
@@ -5958,13 +5959,13 @@ function StudentProjects({user,data,reload}){
     }
     projectSubmitLock.current=true;
     setSubmitting(true);
+    let submissionGuard=null; let submissionSaved=false;
     try{
+      // V369: acquire an atomic Firestore guard BEFORE upload/slow work.
+      submissionGuard=await projectAcquireSubmissionGuard(p,user);
       // V359 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
-      const submitToken=uid();
-      await projectAcquireSubmissionLock(p.id,user,submitToken);
-      let submissionSaved=false;
       const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
       // v351: create the submission id BEFORE any file chunk uses it.
@@ -5982,13 +5983,13 @@ function StudentProjects({user,data,reload}){
         throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
       }
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
-      submissionSaved=true;
-      await projectFinalizeSubmissionLock(p.id,user,submitToken,id);
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
+      submissionSaved=true;
+      try{await projectFinishSubmissionGuard(submissionGuard,id);}catch(e){console.warn("submission guard finish failed",e&&e.message);}
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
-      try{if(typeof submitToken!=="undefined" && !submissionSaved) await projectReleaseSubmissionLock(p.id,user,submitToken,false);}catch(_e){}
+      if(!submissionSaved) await projectReleaseSubmissionGuard(submissionGuard);
       setMsg("تعذر إرسال المشروع: "+((e&&e.message)||String(e))+" حاول مرة أخرى.");
     }finally{
       projectSubmitLock.current=false;
@@ -6057,11 +6058,12 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       if(s.fileUrl||s.filePath){await projectDeleteStoredFile(s);}
       if(s.fileChunked&&s.fileChunkCount){for(let i=0;i<Number(s.fileChunkCount||0);i++) await fsDel("projectSubmissions",projectFileChunkId(s.id,i));}
       await fsDel("projectSubmissions",s.id);
+      await projectAllowSubmissionAgain(p,s);
       setMsg("✅ Attempt deleted. Other submissions were preserved.");
       await reload();
     }catch(e){setMsg("❌ Delete failed: "+(e.message||e));}
   }
-  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x))||{id:s.studentId,studentId:s.studentNumber}; await projectReleaseSubmissionLock(p.id,st,"",true); setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+"."); await reload();}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
+  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); await projectAllowSubmissionAgain(p,s); setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+"."); await reload();}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
   async function assignTopicsRandomly(p){
     const bank=projectTopicBank(data); if(!bank.length){setMsg("❌ Topic Bank is empty.");return;}
     const targets=projectTargetStudents(p,myStudents); if(!targets.length){setMsg("❌ No students are assigned to this project.");return;}
@@ -13681,7 +13683,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v366 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v369 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
