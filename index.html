@@ -5890,6 +5890,36 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
     <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
   </div>;
 }
+// EDUQUIZ V368 — surgical fix: stable class collapse + atomic duplicate-submit protection.
+// V368: atomic project submission lock. Prevents double-click / slow-network races from creating two attempts.
+function projectSubmissionLockId(projectId, st){
+  const sid=String(st&&st.id||st&&st.studentId||"").replace(/[^a-zA-Z0-9_-]/g,"_");
+  return String(projectId||"").replace(/[^a-zA-Z0-9_-]/g,"_")+"__"+sid;
+}
+async function projectAcquireSubmissionLock(projectId, st, token){
+  if(!(FIREBASE_OK&&db&&db.collection&&db.runTransaction)) return true;
+  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
+  await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    const d=snap.exists?(snap.data()||{}):{};
+    if(d.state==="submitting" || d.state==="submitted") throw new Error("This project is already being submitted or has already been submitted. Please wait; do not press Submit again.");
+    tx.set(ref,{projectId:String(projectId||""),studentId:String(st&&st.id||""),studentNumber:String(st&&st.studentId||""),token:String(token),state:"submitting",updatedAt:new Date().toISOString()},{merge:true});
+  });
+  return true;
+}
+async function projectFinalizeSubmissionLock(projectId, st, token, submissionId){
+  if(!(FIREBASE_OK&&db&&db.collection)) return;
+  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
+  try{await ref.set({projectId:String(projectId||""),studentId:String(st&&st.id||""),studentNumber:String(st&&st.studentId||""),token:String(token),state:"submitted",submissionId:String(submissionId||""),updatedAt:new Date().toISOString()},{merge:true});}catch(e){console.warn("V368 submission lock finalize failed",e&&e.message);}
+}
+async function projectReleaseSubmissionLock(projectId, st, token, force){
+  if(!(FIREBASE_OK&&db&&db.collection)) return;
+  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionLockId(projectId,st));
+  try{
+    if(force){await ref.delete();return;}
+    if(db.runTransaction) await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)return;const d=snap.data()||{};if(String(d.token||"")===String(token||"") && d.state==="submitting")tx.delete(ref);});
+  }catch(e){console.warn("V368 submission lock release failed",e&&e.message);}
+}
 function StudentProjects({user,data,reload}){
   const [openProject,setOpenProject]=useState(null);
   const [mode,setMode]=useState("text");
@@ -5932,6 +5962,9 @@ function StudentProjects({user,data,reload}){
       // V359 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       if(prior.length && prior[0].status!=="resubmit_allowed") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+      const submitToken=uid();
+      await projectAcquireSubmissionLock(p.id,user,submitToken);
+      let submissionSaved=false;
       const old=prior;
       const attempt=old.length?Math.max(...old.map(x=>Number(x.attempt)||1))+1:1;
       // v351: create the submission id BEFORE any file chunk uses it.
@@ -5949,10 +5982,13 @@ function StudentProjects({user,data,reload}){
         throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
       }
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
+      submissionSaved=true;
+      await projectFinalizeSubmissionLock(p.id,user,submitToken,id);
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
+      try{if(typeof submitToken!=="undefined" && !submissionSaved) await projectReleaseSubmissionLock(p.id,user,submitToken,false);}catch(_e){}
       setMsg("تعذر إرسال المشروع: "+((e&&e.message)||String(e))+" حاول مرة أخرى.");
     }finally{
       projectSubmitLock.current=false;
@@ -5998,7 +6034,6 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     return ()=>window.removeEventListener("eduquiz-project-upload-progress",onProgress);
   },[]);
   const [projectKeyVisible,setProjectKeyVisible]=useState(false);
-  const [openSubmissionClasses,setOpenSubmissionClasses]=useState({});
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const subs=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&projects.some(p=>p.id===s.projectId));
   const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
@@ -6026,7 +6061,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       await reload();
     }catch(e){setMsg("❌ Delete failed: "+(e.message||e));}
   }
-  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+"."); await reload();}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
+  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x))||{id:s.studentId,studentId:s.studentNumber}; await projectReleaseSubmissionLock(p.id,st,"",true); setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+"."); await reload();}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
   async function assignTopicsRandomly(p){
     const bank=projectTopicBank(data); if(!bank.length){setMsg("❌ Topic Bank is empty.");return;}
     const targets=projectTargetStudents(p,myStudents); if(!targets.length){setMsg("❌ No students are assigned to this project.");return;}
@@ -6078,7 +6113,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
     {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);const assignedCount=targets.filter(st=>projectTopicForStudent(p,st)).length;const bank=projectTopicBank(data);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Topics {assignedCount}/{targets.length} · Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.s} onClick={()=>assignTopicsRandomly(p)}>🎲 Assign Topics</Btn><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div>{targets.length>0&&<details style={{marginTop:"8px",borderTop:"1px solid "+C.br,paddingTop:"7px"}}><summary style={{cursor:"pointer",fontSize:"11px",fontWeight:900,color:C.p,fontFamily:F}}>Student Topics — view / change individually</summary><div style={{display:"grid",gap:"5px",marginTop:"7px",maxHeight:"300px",overflowY:"auto"}}>{targets.slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""))).map(st=>{const t=projectTopicForStudent(p,st);const cls=data.classes.find(c=>sameClassId(c.id,st.classId));return <div key={projectStudentKey(st)} style={{display:"grid",gridTemplateColumns:"minmax(110px,1fr) minmax(130px,2fr) 32px",gap:"6px",alignItems:"center",fontSize:"11px"}}><div><b>{st.name}</b><span style={{color:C.mu}}> · {cls?cls.name:""}</span></div><select value={t?t.id:""} onChange={e=>setStudentTopic(p,st,e.target.value)} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"7px",fontSize:"10px",fontFamily:F}}><option value="">Not assigned</option>{bank.map(x=><option key={x.id} value={x.id}>U{x.unit} · {x.title}</option>)}</select><button onClick={()=>randomizeStudentTopic(p,st)} title="Random topic for this student" style={{border:"1px solid "+C.br,borderRadius:"7px",padding:"6px",cursor:"pointer",background:"#eff6ff"}}>🎲</button></div>})}</div></details>}</Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:myClasses.filter(c=>visibleSubs.some(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(c=>{const classSubs=visibleSubs.filter(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);});const newCount=classSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length;const approvedCount=classSubs.filter(s=>s.status==="approved").length;return <details key={c.id} open={!!openSubmissionClasses[c.id]} onToggle={e=>setOpenSubmissionClasses(v=>({...v,[c.id]:e.currentTarget.open}))} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontSize:"12px",color:C.tx,fontFamily:F}}>{c.name} — {classSubs.length} Submitted · {newCount} New/Need Approval · {approvedCount} Approved</summary><div style={{marginTop:"9px"}}>{classSubs.map(renderSubmissionCard)}</div></details>})}
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:myClasses.filter(c=>visibleSubs.some(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(c=>{const classSubs=visibleSubs.filter(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);});const newCount=classSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length;const approvedCount=classSubs.filter(s=>s.status==="approved").length;return <details key={c.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontSize:"12px",color:C.tx,fontFamily:F}}>{c.name} — {classSubs.length} Submitted · {newCount} New/Need Approval · {approvedCount} Approved</summary><div style={{marginTop:"9px"}}>{classSubs.map(renderSubmissionCard)}</div></details>})}
     {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length>0&&<details style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontFamily:F}}>Other / Unmatched Class — {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length} submissions</summary>{visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(renderSubmissionCard)}</details>}
 
   </div>;
