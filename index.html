@@ -7905,7 +7905,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   async function submit(){
     if(submitting){setMsg("Updating... Upload already in progress.");return;}
     if(!task||!blob){setMsg("Record your reading first.");return;}
-    try{ const fresh=await loadLoginData(); if(!activeStudentInData(user,fresh)){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);localStorage.removeItem("rp_attempt_records_v11");}catch(e){} setMsg("Account removed. Submission blocked. Please contact your teacher."); return; } }catch(e){}
+    try{ const fresh=(window.__EQ_CURRENT_DATA&&Array.isArray(window.__EQ_CURRENT_DATA.users))?window.__EQ_CURRENT_DATA:null; if(fresh&&!activeStudentInData(user,fresh)){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);localStorage.removeItem("rp_attempt_records_v11");}catch(e){} setMsg("Account removed. Submission blocked. Please contact your teacher."); return; } }catch(e){}
     const key=currentBlobKey();
     if((sentBlobKey && sentBlobKey===key)||isRecordingSubmitted(recordingId)){setMsg("This recording has already been submitted. Record a new attempt if allowed.");return;}
     if(!canAttemptTask(task)){setMsg("Attempt limit reached. Ask your teacher for retake permission.");return;}
@@ -13758,7 +13758,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v391" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v392" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14676,6 +14676,7 @@ function App() {
   useEffect(()=>{ window.__EQ_CURRENT_DATA=data; },[data]);
   useEffect(()=>{
     const onRpMutation=(ev)=>{
+      window.__EQ_LAST_RP_MUTATION_AT=Date.now();
       const d=ev&&ev.detail||{}; const id=String(d.id||""); if(!id)return;
       setData(prev=>{
         if(!prev)return prev;
@@ -14716,7 +14717,15 @@ function App() {
     }catch(_e){}
   };
 
-  async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
+  async function reload(){
+    if(window.__EQ_LAST_RP_MUTATION_AT && Date.now()-window.__EQ_LAST_RP_MUTATION_AT<8000 && window.__EQ_CURRENT_DATA){
+      try{window.__eqReadDiag&&window.__eqReadDiag("reload:rp-suppressed",0);}catch(_e){}
+      const d=window.__EQ_CURRENT_DATA;
+      try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(e){}
+      return d;
+    }
+    const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;
+  }
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   function viewAsStudent(studentUser){ setParkedTeacher(user); setUser(studentUser); reload(); }
@@ -17299,10 +17308,13 @@ document.addEventListener("click", function(e){
       const patch={...res,analysis:{...res,seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds},transcript,status:'pending_review',seconds,durationSeconds:seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds,analyzedAt:now,updatedAt:now,teacherAutoAnalyzed:true,teacherAutoVersion:'targeted-v390'};
       await db.collection('readingSubmissions').doc(r.id).set(patch,{merge:true});
       updateLocal(r.id,patch);
+      try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(r.id),record:{...r,...patch,id:String(r.id)}}}));}catch(_e){}
       return {ok:1};
     }catch(e){
       const msg=String(e&&e.message||e||'AI analysis failed');
-      try{await firebase.firestore().collection('readingSubmissions').doc(r.id).set({analysisStatus:'Waiting for teacher retry: '+msg.slice(0,160),lastAnalysisError:msg.slice(0,200),updatedAt:new Date().toISOString()},{merge:true});}catch(_e){}
+      const failPatch={analysisStatus:'Waiting for teacher retry: '+msg.slice(0,160),lastAnalysisError:msg.slice(0,200),updatedAt:new Date().toISOString()};
+      try{await firebase.firestore().collection('readingSubmissions').doc(r.id).set(failPatch,{merge:true});}catch(_e){}
+      try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(r.id),record:{...r,...failPatch,id:String(r.id)}}}));}catch(_e){}
       return {ok:0,fail:1,lastErr:msg};
     }
   };
