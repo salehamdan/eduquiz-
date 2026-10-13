@@ -12400,7 +12400,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }catch(_e){}
     }
     refreshPendingSectionCounts();
-    timer=null; /* V377: event-driven pending counts; no idle Firestore polling */
+    // V378: no idle polling; counts refresh on data/event changes.
+    timer=null;
     const onChanged=()=>refreshPendingSectionCounts();
     window.addEventListener("eq-pending-counts-changed",onChanged);
     return ()=>{alive=false;if(timer)clearInterval(timer);window.removeEventListener("eq-pending-counts-changed",onChanged);};
@@ -13683,7 +13684,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v377 · RP Read Hotfix · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v378 · RP Read Hotfix · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14651,9 +14652,9 @@ function App() {
       busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
     const onVis=()=>{ if(document.visibilityState==="visible") refresh(); };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", onVis);
-    return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); };
+    // V378: do not reload all Firestore collections on browser focus/visibility.
+    // Realtime listeners and explicit actions keep live data current without a 16-collection reload.
+    return ()=>{};
   },[user&&user.id,user&&user.role]);
 
   // v274 — keep the teacher session alive for 55 minutes from the LAST real activity.
@@ -15942,20 +15943,9 @@ document.addEventListener("click", function(e){
   }
 
   function rpStartRealtimeDrawerSync(){
-    try{
-      if(window.__rp117DrawerLiveStarted) return;
-      if(!(typeof db!=="undefined" && db && db.collection)) return;
-      window.__rp117DrawerLiveStarted=true;
-      db.collection("readingSubmissions").onSnapshot(function(snap){
-        try{
-          const remote=[];
-          snap.forEach(function(doc){ remote.push({id:doc.id, ...(doc.data?doc.data():{})}); });
-          if(typeof window.rpV11MergeCloudRecords==="function") window.rpV11MergeCloudRecords(remote);
-          if(typeof renderCards==="function") renderCards();
-          window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions"}}));
-        }catch(e){ console.warn("RP117 drawer live snapshot failed", e); }
-      }, function(err){ console.warn("RP117 drawer live unavailable", err&&err.message); window.__rp117DrawerLiveStarted=false; });
-    }catch(e){ window.__rp117DrawerLiveStarted=false; }
+    // V378: App-level readingSubmissions listener is the single realtime source.
+    // Avoid a second full-collection snapshot in the RP drawer.
+    return;
   }
 
     function teacherPanel(){
@@ -16041,7 +16031,8 @@ document.addEventListener("click", function(e){
     window.eqGetRPPendingCount=async function(){
       try{
         rpRefreshRosters(false);
-        const rows=recordsLive();
+        let rows=recordsFastWithBackgroundSync();
+        try{ if(Date.now()-__rpLastCloudSyncAt>5000) rows=await syncCloudIntoLocal(); }catch(_e){}
         return (rows||[]).filter(r=>rpRecordVisible(r)&&isWaitingForTeacher(r)).length;
       }catch(_e){ return 0; }
     };
@@ -17091,7 +17082,8 @@ document.addEventListener("click", function(e){
   }
   window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
   window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
-  /* V377: no background full-collection RP AI scan while idle. Manual RP analysis remains available. */
+  // V378: disable idle full-collection RP auto scan. Teacher Analyze/Re-analyze remains available.
+  // No background runOnce polling.
 })();
 </script>
 
@@ -17148,6 +17140,7 @@ async function load(){
 async function save(){DATA.deletedSubmissionIds=uniq(DATA.deletedSubmissionIds||[]);DATA.deletedTaskIds=uniq(DATA.deletedTaskIds||[]);DATA.tasks=(DATA.tasks||[]).filter(t=>!DATA.deletedTaskIds.includes(String(t.id)));DATA.submissions=(DATA.submissions||[]).filter(s=>!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId)));DATA.retakeRequests=(DATA.retakeRequests||[]).filter(r=>!DATA.deletedTaskIds.includes(String(r.taskId))&&!r.cleared);jset(LOCAL,DATA);try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}if(DATA.settings&&DATA.settings.aiEndpoint)localStorage.setItem(EP,DATA.settings.aiEndpoint);try{if(typeof fsSet==="function")await fsSet("appSettings",DOC,Object.assign({id:DOC},DATA));else if(typeof db!=="undefined"&&db)await db.collection("appSettings").doc(DOC).set(Object.assign({id:DOC},DATA),{merge:true})}catch(e){}}
 window.eqGetWritingPendingCount=async function(){
   try{
+    await load();
     return (DATA.submissions||[]).filter(s=>s&&!s.deleted&&!DATA.deletedSubmissionIds.includes(String(s.id))&&!DATA.deletedTaskIds.includes(String(s.taskId))&&String(s.status||"pending_review")==="pending_review").length;
   }catch(_e){ return 0; }
 };
@@ -17326,7 +17319,7 @@ function tabScores(el){
   el.innerHTML='<div class="w12box"><b>Writing Results</b><div style="font-size:12px;color:#64748b">Advanced Writing Students × Writing Tasks. Final teacher score is shown when approved; before approval the current AI score is shown as pending.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:10px"><span style="color:#16a34a;font-weight:900">● Final</span><span style="color:#d97706;font-weight:900">● Pending</span><span style="color:#dc2626;font-weight:900">● Not Submitted</span><span style="color:#94a3b8;font-weight:900">● Not Assigned</span></div></div>'+cards+(us.length?'':'<div class="w12box">No Advanced Writing Students selected.</div>')
 }
 async function studentPanel(forcedStudent,strictMode){const body=panel("✍️ Writing — Student");body.innerHTML='<div class="w12box">Loading...</div>';await load();const u=(forcedStudent&&typeof forcedStudent==="object")?forcedStudent:sess();const isStrict=!!(strictMode&&forcedStudent);if(!(isStrict?strictStudentSelected(u):selected(u))){body.innerHTML='<div class="w12box"><b>تأكيد رقم الطالب</b><input id="snum" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="show" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button></div>';body.querySelector("#show").onclick=async()=>{const v=body.querySelector("#snum").value.trim();if(!v)return;["eqWritingStudentNumber_v12","eqWritingStudentNumber_v11","eqWritingStudentNumber_v10","eqWritingStudentNumber_v8"].forEach(k=>localStorage.setItem(k,v));await load();studentPanel()};return}const al=isStrict?strictStudentAliases(u):aliases(u);const studentTasks=(DATA.tasks||[]).filter(t=>taskAssignedTo(t,u));body.innerHTML=studentTasks.map(t=>{const mine=visibleSubs().filter(s=>String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));const req=(DATA.retakeRequests||[]).find(r=>requestMatches(r,al,t.id)&&!r.cleared);const old=mine[0],can=!!req||(old&&old.status==="retake_requested");if(!old&&!taskIsOpen(t))return '<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:9px;padding:9px;border-radius:10px;background:#f1f5f9;color:#64748b;font-weight:800">Task is currently closed.</div></div>';if(old&&!can){const a=Object.assign({},old.auto||localMark(old.text,t,0));if(old.finalScore!=null){a.score=old.finalScore;a.total=a.total||10;a.level=lvl(old.finalScore);a.source=old.teacherOverride?"teacher-override":(a.source||"final")}return'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div>'+box(a,true)+'<div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Status: <b>'+esc(old.status||"pending_review")+'</b></div></div>'}return'<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div>'+(can?'<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;padding:10px;margin-top:8px;font-weight:900">Retake requested — أعد المحاولة واكتب من جديد.</div>':'')+'<textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">'+(can?"Submit Retake":"Submit Writing")+'</button></div>'}).join("")||'<div class="w12box">لا توجد مهام كتابة.</div>';body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{const t=DATA.tasks.find(x=>x.id===btn.dataset.submit),text=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]').value.trim();if(!text)return alert("Write your paragraph first.");btn.disabled=true;btn.textContent="Scoring...";const saved=isStrict?"":(localStorage.getItem("eqWritingStudentNumber_v12")||localStorage.getItem("eqWritingStudentNumber_v11")||localStorage.getItem("eqWritingStudentNumber_v10")||localStorage.getItem("eqWritingStudentNumber_v8")||""),sid=isStrict?strictStudentSid(u,al):(saved?(/^\d+$/.test(saved)?"student_"+saved:saved):(Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al)[0]||"student"));DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>requestMatches(r,al,t.id)?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString()}):r);visibleSubs().forEach(s=>{if(String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))&&s.status==="retake_requested")s.status="retaken"});const mx=Math.max(0,...visibleSubs().filter(s=>String(s.taskId)===String(t.id)).map(s=>sim(text,s.text)));const a=await aiMark(text,t,u.name||hi()||"Student",mx);const mode=String(t.mode||"ai_teacher");const st=mode==="ai"?"accepted":"pending_review";DATA.submissions.push({id:uid("sub"),taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||hi()||"Student",text,auto:a,status:st,finalScore:mode==="ai"?a.score:null,createdAt:new Date().toISOString()});await save();alert("Writing submitted and scored.");studentPanel(u,isStrict)})}
-setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
+setTimeout(function(){fab();},1500);
 })();
 </script>
 <!-- V344_WRITING_EVALUATION_TASK_STATUS_FILTERS_20261008 -->
