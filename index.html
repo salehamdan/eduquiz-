@@ -997,6 +997,7 @@ function FirestoreReadBox(){
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
     <b>Firestore reads — this device</b><br/>
     Total observed: {D.total} · {Math.round(D.total/mins)}/min
+    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
     {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
   </div>;
 }
@@ -12443,16 +12444,12 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     let alive=true, timer=null;
     async function refreshPendingSectionCounts(){
       try{
-        // V386 STARTUP: badge counts must be pure in-memory calculations.
-        // Never open Writing/RP cloud loaders merely to paint the Sections badges.
-        // Those loaders were re-reading users/classes/RP during login and competing with Main.
+        // V387: badges must use the dashboard snapshot already in memory.
+        // Never start an extra Writing/RP Firestore sync just to paint Sections badges.
         let wc=0, rc=0;
         const wd=(data.appSettings||[]).find(x=>String(x&&(x.id||x._id)||"")==="writing_independent_v12");
         wc=((wd&&wd.submissions)||[]).filter(x=>x&&!x.deleted&&String(x.status||"pending_review")==="pending_review").length;
-        rc=(data.readingSubmissions||[]).filter(function(x){
-          if(!x || x.deleted===true || String(x.status||"").toLowerCase()==="deleted") return false;
-          try{ return typeof rpIsPendingReviewSubmission==="function" ? rpIsPendingReviewSubmission(x) : ["submitted","pending","pending_review"].includes(String(x.status||"submitted").toLowerCase()); }catch(_e){ return String(x.status||"submitted").toLowerCase()==="pending_review"; }
-        }).length;
+        rc=((data.readingSubmissions)||[]).filter(x=>x&&!x.deleted&&String(x.status||"pending_review")==="pending_review").length;
         if(alive){setWritingPendingCount(wc);setRpPendingCount(rc);}
       }catch(_e){}
     }
@@ -13744,7 +13741,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v386" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v387" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14658,7 +14655,7 @@ function App() {
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
 
-  async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);if(typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
+  async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   function viewAsStudent(studentUser){ setParkedTeacher(user); setUser(studentUser); reload(); }
@@ -14704,14 +14701,16 @@ function App() {
       setLoading(false);
       // V333: hydrate heavy collections only after the usable screen is already visible.
       if(sess){
-        // V386: Main still hydrates fully, but the roster already used for authentication/paint is reused.
+        // V385: Main still hydrates fully, but the roster already used for authentication/paint is reused.
         // On a cached teacher session this removes the largest redundant startup read (users/classes).
         setTimeout(function(){
           const rosterBase=(cachedTeacherFast&&cached)?cached:d;
+          const started=performance.now();
           loadDashboardDataWithRoster(rosterBase).then(function(fresh){
-            setData(fresh);
-            try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);if(typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}
-          }).catch(function(e){console.warn("V386 background dashboard hydrate failed",e);});
+            setData(fresh); window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
+            try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}
+            try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
+          }).catch(function(e){console.warn("V387 background dashboard hydrate failed",e);});
         },250);
       }
     })();
@@ -14783,19 +14782,19 @@ function App() {
 
     function handleLogin(u){
       setUser(fixAhmedStudent(u));
-      // V386: teacher authentication already has users/classes in `data` from loadLoginData().
-      // Reuse that roster for the first full Main hydrate instead of calling loadAllData(),
-      // which downloaded users/classes/deletion rosters a second time.
+      // V387 ROOT STARTUP FIX: Login has already fetched users/classes. Reuse that exact snapshot.
+      // The old path called reload()->loadAllData(), downloading the full roster again before Main.
       setTimeout(function(){
-        if(String((u&&u.role)||"")==="teacher" && data && Array.isArray(data.users) && Array.isArray(data.classes)){
-          loadDashboardDataWithRoster(data).then(function(fresh){
-            setData(fresh);
-            try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);}catch(_e){}
-          }).catch(function(e){console.warn("V386 post-login dashboard hydrate failed",e);});
-        }else{
-          reload().catch(function(e){console.warn("V386 post-login data refresh failed",e);});
-        }
-      },80);
+        const started=performance.now();
+        const base=(data&&Array.isArray(data.users)&&Array.isArray(data.classes))?data:null;
+        const job=(String(u&&u.role||"")==="teacher"&&base)?loadDashboardDataWithRoster(base):loadAllData();
+        job.then(function(fresh){
+          setData(fresh);
+          window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
+          try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);}catch(e){}
+          try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
+        }).catch(function(e){console.warn("V387 post-login dashboard refresh failed",e);});
+      },50);
     }
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} /* keep EQ_LOGIN_MEMORY_KEY so the student does not rewrite name/class/id/password each time */ try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
@@ -16042,8 +16041,7 @@ document.addEventListener("click", function(e){
     panelMade=true;
     // RP158: start live sync before the drawer is opened so new submissions can update badge/Overview.
     try{ rpStartRealtimeDrawerSync(); }catch(_e){}
-    // V386 STARTUP: constructing the hidden RP drawer must not download RP data.
-    // Opening RP calls renderCards(), which performs the required cloud sync then.
+    try{ setTimeout(function(){ syncCloudIntoLocal().then(function(){ try{ if(typeof renderCards==="function") renderCards(); }catch(_e){} }); }, 600); }catch(_e){}
     const panel=document.createElement("div");
     panel.id="rp-v11-panel";
     panel.style.cssText="position:fixed;top:0;right:0;width:min(92vw,430px);height:100vh;overflow:auto;padding:14px;border-left:3px solid #2563eb;background:#fff;box-shadow:-14px 0 35px rgba(15,23,42,.22);font-family:system-ui;direction:ltr;z-index:99998;display:none";
