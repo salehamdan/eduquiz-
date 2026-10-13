@@ -974,6 +974,8 @@ async function forceUpdate(){
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
 // V384 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
 window.__EQ_READ_DIAG = window.__EQ_READ_DIAG || {startedAt:Date.now(), total:0, by:{}, events:[]};
+window.__EQ_TIMING = window.__EQ_TIMING || {pageStart:performance.now(),marks:{}};
+window.__eqMark=function(k){try{window.__EQ_TIMING.marks[k]=Math.round(performance.now()-window.__EQ_TIMING.pageStart);window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}};
 window.__eqReadDiag = function(source,count){
   try{
     count=Math.max(0,Number(count)||0);
@@ -997,7 +999,7 @@ function FirestoreReadBox(){
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
     <b>Firestore reads — this device</b><br/>
     Total observed: {D.total} · {Math.round(D.total/mins)}/min
-    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
+    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}{window.__EQ_TIMING&&window.__EQ_TIMING.marks&&<React.Fragment><br/>Startup: login {window.__EQ_TIMING.marks.login||"-"} · main {window.__EQ_TIMING.marks.main||"-"} ms</React.Fragment>}
     {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
   </div>;
 }
@@ -13747,7 +13749,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v388" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v389" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14661,7 +14663,7 @@ function App() {
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
 
-  // V388: one in-memory source of truth for RP/Main/Sections. No refresh is required after a local RP mutation.
+  // V389: one in-memory source of truth for RP/Main/Sections. No refresh is required after a local RP mutation.
   useEffect(()=>{ window.__EQ_CURRENT_DATA=data; },[data]);
   useEffect(()=>{
     const onRpMutation=(ev)=>{
@@ -14806,26 +14808,43 @@ function App() {
     return ()=>{unsubs.forEach(u=>{try{u&&u();}catch(e){}});};
   },[user&&user.id,user&&user.role]);
 
-  // V388: exactly one teacher RP listener. It keeps badge, RP drawer and Main Pending Reviews synchronized.
-  // Initial snapshot is one collection read-set; subsequent changes are incremental. No polling/full refresh loop.
+  // V389: one teacher RP listener, but React data remains the only source of truth.
+  // Initial snapshot seeds the same state; later docChanges patch that same array immediately.
   useEffect(()=>{
     if(!user || String(user.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    let first=true;
-    let unsub=null;
+    let first=true,unsub=null;
     try{
       unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
-        try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",snap.size||0);}catch(_e){}
+        const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
+        try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",first?(snap.size||0):changes.length);}catch(_e){}
+        setData(prev=>{
+          if(!prev)return prev;
+          let rows=Array.isArray(prev.readingSubmissions)?prev.readingSubmissions.slice():[];
+          if(first){
+            rows=[];snap.forEach(doc=>rows.push({id:doc.id,...(doc.data?doc.data():{})}));
+          }else{
+            changes.forEach(ch=>{
+              const id=String(ch.doc.id), rec={id,...(ch.doc.data?ch.doc.data():{})};
+              const i=rows.findIndex(r=>String(r&&(r.id||r._id)||"")===id);
+              if(ch.type==="removed"){if(i>=0)rows.splice(i,1);}
+              else if(i>=0)rows[i]={...rows[i],...rec}; else rows.push(rec);
+            });
+          }
+          const next={...prev,readingSubmissions:rows};
+          window.__EQ_CURRENT_DATA=next;
+          try{RP_LIVE_CACHE=rows.slice();__rpLastCloudSyncAt=Date.now();}catch(_e){}
+          return next;
+        });
         first=false;
-        const rows=[];snap.forEach(doc=>rows.push({id:doc.id,...(doc.data?doc.data():{})}));
-        setData(prev=>{if(!prev)return prev;const next={...prev,readingSubmissions:rows};window.__EQ_CURRENT_DATA=next;return next;});
-        try{window.rpV11MergeCloudRecords&&window.rpV11MergeCloudRecords(rows);}catch(_e){}
         try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
-      },e=>console.warn("V388 teacher RP live sync unavailable",e&&e.message));
+        try{const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(_e){}
+      },e=>console.warn("V389 teacher RP live sync unavailable",e&&e.message));
     }catch(e){}
     return ()=>{try{unsub&&unsub();}catch(e){}};
   },[user&&user.id,user&&user.role]);
 
     function handleLogin(u){
+      try{window.__eqMark&&window.__eqMark("login");}catch(_e){}
       setUser(fixAhmedStudent(u));
       // V388 STARTUP + RP SYNC FIX: Login has already fetched users/classes. Reuse that exact snapshot.
       // The old path called reload()->loadAllData(), downloading the full roster again before Main.
@@ -14836,6 +14855,7 @@ function App() {
         job.then(function(fresh){
           setData(fresh);
           window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
+          try{window.__eqMark&&window.__eqMark("main");}catch(_e){}
           try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);}catch(e){}
           try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
         }).catch(function(e){console.warn("V387 post-login dashboard refresh failed",e);});
@@ -16158,15 +16178,20 @@ document.addEventListener("click", function(e){
     fab.onclick=async()=>{panel.style.display="block";await renderCards();};
     // v288: Sections > RP opens this real recordings/Pending drawer.
     window.eqOpenRPDrawer=async function(){
-      try{const d=window.__EQ_CURRENT_DATA;if(d&&Array.isArray(d.readingSubmissions))window.rpV11MergeCloudRecords(d.readingSubmissions);}catch(_e){}
+      try{
+        const d=window.__EQ_CURRENT_DATA;
+        if(d&&Array.isArray(d.readingSubmissions)){
+          RP_LIVE_CACHE=d.readingSubmissions.slice();
+          __rpLastCloudSyncAt=Date.now();
+        }
+      }catch(_e){}
       panel.style.display="block";
       await renderCards();
     };
     window.eqGetRPPendingCount=async function(){
       try{
-        rpRefreshRosters(false);
-        let rows=recordsFastWithBackgroundSync();
-        try{ if(Date.now()-__rpLastCloudSyncAt>5000) rows=await syncCloudIntoLocal(); }catch(_e){}
+        const d=window.__EQ_CURRENT_DATA;
+        const rows=(d&&Array.isArray(d.readingSubmissions))?d.readingSubmissions:recordsLive();
         return (rows||[]).filter(r=>rpRecordVisible(r)&&isWaitingForTeacher(r)).length;
       }catch(_e){ return 0; }
     };
@@ -16738,12 +16763,14 @@ document.addEventListener("click", function(e){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
     // V334: preserve teacher typing even if another safe RP refresh occurs.
     rpCaptureTeacherDrafts(panel);
-    // V388: opening RP must be instant and must not launch hidden full-collection reads/auto-analysis.
+    // V389: opening RP must be instant and must not launch hidden full-collection reads/auto-analysis.
     // Current React snapshot + the single teacher realtime listener are the source of truth.
     try{ await rpRefreshRosters(false); }catch(_e){}
-    let allLocalRaw=recordsLive();
+    const snap=window.__EQ_CURRENT_DATA;
+    let allLocalRaw=(snap&&Array.isArray(snap.readingSubmissions))?snap.readingSubmissions:recordsLive();
+    try{RP_LIVE_CACHE=allLocalRaw.slice();}catch(_e){}
     const allLocal=allLocalRaw.filter(rpRecordVisible);
-    const rpTasks=await rpLoadReadingTasks();
+    const rpTasks=(snap&&Array.isArray(snap.readingTasks))?snap.readingTasks.filter(t=>t&&t.status!=="deleted"&&t.deleted!==true):await rpLoadReadingTasks();
     rpPopulateFilterOptions(allLocal,rpTasks);
     const waitingAll=allLocal.filter(isWaitingForTeacher).length;
     const badge=document.getElementById("rp-floating-count");
