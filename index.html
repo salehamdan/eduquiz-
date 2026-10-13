@@ -92,7 +92,7 @@
 <script>
 try{
   Object.keys(localStorage).forEach(function(k){
-    if(/^eduquiz_active_login_classes/i.test(k) || k==="eq_users"){ localStorage.removeItem(k); }
+    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_fast_data_cache/i.test(k) || k==="eq_users"){ localStorage.removeItem(k); }
   });
 }catch(e){}
 </script>
@@ -101,7 +101,7 @@ try{
 <script>
 try{
   Object.keys(localStorage).forEach(function(k){
-    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_classes/i.test(k) || /^eq_users/i.test(k)){
+    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_fast_data_cache/i.test(k) || /^eq_classes/i.test(k) || /^eq_users/i.test(k)){
       localStorage.removeItem(k);
     }
   });
@@ -212,7 +212,6 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 <!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
-<!-- V383 FAST MAIN CACHE: preserve dashboard cache; teacher login does not auto-load all Firestore collections -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -973,7 +972,7 @@ async function forceUpdate(){
 
 
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
-// V383 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
+// V382 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
 window.__EQ_READ_DIAG = window.__EQ_READ_DIAG || {startedAt:Date.now(), total:0, by:{}, events:[]};
 window.__eqReadDiag = function(source,count){
   try{
@@ -14667,12 +14666,7 @@ function App() {
       // dashboard on screen. The lightweight auth snapshot is only for validation; full data
       // refreshes in the background. This removes the long blank/login wait without touching data.
       const keepCachedTeacher = !!(cached && sess && String(sess.role||"")!=="student");
-      const keepCachedLoginDashboard = !!(cached && !sess);
-      if(keepCachedLoginDashboard){
-        // V383: keep the already-renderable Main payload while refreshing only login identity/class rows.
-        // This prevents a blank/empty dashboard after teacher authentication.
-        setData({...cached, users:d.users||cached.users||[], classes:d.classes||cached.classes||[], firebaseUsers:d.firebaseUsers||[], firebaseClasses:d.firebaseClasses||[], deletedStudents:d.deletedStudents||[], deletedClasses:d.deletedClasses||[]});
-      }else if(!keepCachedTeacher) setData(d);
+      if(!keepCachedTeacher) setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
@@ -14683,7 +14677,7 @@ function App() {
       }
       setLoading(false);
       // V333: hydrate heavy collections only after the usable screen is already visible.
-      if(sess && String(sess.role||"")==="student"){ setTimeout(function(){ reload().catch(function(e){console.warn("V333 background hydrate failed",e);}); },700); }
+      if(sess){ setTimeout(function(){ reload().catch(function(e){console.warn("V333 background hydrate failed",e);}); },700); }
     })();
   },[]);
 
@@ -14754,7 +14748,7 @@ function App() {
     function handleLogin(u){
       setUser(fixAhmedStudent(u));
       // V330: authentication completes from the existing login snapshot; hydrate heavy collections after first paint.
-      if(String(u&&u.role||"")==="student") setTimeout(function(){ reload().catch(function(e){console.warn("V330 post-login data refresh failed",e);}); },350);
+      setTimeout(function(){ reload().catch(function(e){console.warn("V330 post-login data refresh failed",e);}); },350);
     }
   function handleLogout(){clearSession();try{auth&&auth.signOut&&auth.signOut();}catch(e){} /* keep EQ_LOGIN_MEMORY_KEY so the student does not rewrite name/class/id/password each time */ try{const old=document.getElementById("rp-v11-student-status"); if(old) old.remove();}catch(e){} eqHardCleanLoggedOutUI(); setDirectQuiz(null); setParkedTeacher(null); setUser(null); setTimeout(eqHardCleanLoggedOutUI,50);}
 
