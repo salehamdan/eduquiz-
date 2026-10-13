@@ -153,6 +153,47 @@ try{
   ::-webkit-scrollbar-thumb { background:#cbd5e1;border-radius:4px; }
 </style>
 
+<!-- V376_DIAGNOSTIC_BOOTSTRAP: diagnostic only; no feature/data logic changed -->
+<script>
+(function(){
+  window.__EQ_BOOT_ERRORS__=[];
+  function esc(v){return String(v==null?'':v).replace(/[&<>\"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]||c;});}
+  function render(){
+    var root=document.getElementById('root');
+    if(!root || !window.__EQ_BOOT_ERRORS__.length) return;
+    if(root.innerHTML.indexOf('Loading')<0) return;
+    var msg=window.__EQ_BOOT_ERRORS__.join('\n\n');
+    root.innerHTML='<div style="padding:24px;font-family:system-ui;color:#fff;background:#0f172a;min-height:100vh"><h3>⚠️ Startup diagnostic</h3><pre style="white-space:pre-wrap;font-size:11px;color:#fca5a5;background:#1e293b;padding:12px;border-radius:8px">'+esc(msg)+'</pre><p style="color:#94a3b8;font-size:13px">Screenshot this exact message.</p></div>';
+  }
+  function add(msg){ window.__EQ_BOOT_ERRORS__.push(String(msg||'Unknown startup error')); setTimeout(render,0); }
+  window.addEventListener('error',function(e){
+    var t=e&&e.target;
+    if(t && t!==window && (t.src||t.href)){
+      add('RESOURCE LOAD ERROR\n'+(t.tagName||'resource')+'\n'+(t.src||t.href));
+      return;
+    }
+    add('JAVASCRIPT ERROR\n'+(e.message||'Script error')+'\n'+(e.filename||'(no filename)')+':'+(e.lineno||0)+':'+(e.colno||0));
+  },true);
+  window.addEventListener('unhandledrejection',function(e){
+    var r=e&&e.reason; add('PROMISE ERROR\n'+(r&&r.stack?r.stack:(r&&r.message?r.message:String(r||'unknown'))));
+  });
+  window.addEventListener('DOMContentLoaded',function(){
+    setTimeout(function(){
+      var missing=[];
+      if(typeof firebase==='undefined') missing.push('Firebase SDK');
+      if(typeof XLSX==='undefined') missing.push('SheetJS/XLSX');
+      if(typeof JSZip==='undefined') missing.push('JSZip');
+      if(typeof pdfjsLib==='undefined') missing.push('PDF.js');
+      if(typeof React==='undefined') missing.push('React');
+      if(typeof ReactDOM==='undefined') missing.push('ReactDOM');
+      if(typeof Babel==='undefined') missing.push('Babel');
+      if(typeof Recharts==='undefined') missing.push('Recharts');
+      if(missing.length) add('MISSING STARTUP LIBRARIES\n'+missing.join('\n'));
+    },1500);
+  });
+})();
+</script>
+
 <!-- Firebase SDK (compat = no build step) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -175,12 +216,7 @@ function showErr(msg){
   var root = document.getElementById("root");
   if(root){ root.innerHTML = '<div style="padding:24px;font-family:system-ui;color:#fff;background:#0f172a;min-height:100vh"><h3>⚠️ Error</h3><pre style="white-space:pre-wrap;font-size:11px;color:#fca5a5;background:#1e293b;padding:12px;border-radius:8px">'+msg+'</pre><p style="color:#94a3b8;font-size:13px">Screenshot and send this to continue.</p></div>'; }
 }
-window.addEventListener("error", function(e){
-  var root = document.getElementById("root");
-  if(root && root.innerHTML.indexOf("Loading")>-1){
-    showErr((e.message||"Script error")+"\n"+(e.filename||"")+":"+(e.lineno||"")+":"+(e.colno||""));
-  }
-});
+/* V376: superseded by early diagnostic bootstrap */
 window.addEventListener("unhandledrejection", function(e){
   var msg = (e.reason&&e.reason.message?e.reason.message:String(e.reason||""));
   // Do not replace the whole app with an error screen for Firebase permission/cache errors.
@@ -12400,7 +12436,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }catch(_e){}
     }
     refreshPendingSectionCounts();
-    timer=setInterval(refreshPendingSectionCounts,3600000); // v375: hourly safety refresh; normal updates remain event-driven
+    timer=setInterval(refreshPendingSectionCounts,12000);
     const onChanged=()=>refreshPendingSectionCounts();
     window.addEventListener("eq-pending-counts-changed",onChanged);
     return ()=>{alive=false;if(timer)clearInterval(timer);window.removeEventListener("eq-pending-counts-changed",onChanged);};
@@ -13683,7 +13719,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v375 · Firestore Idle Read Hotfix · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v376 · RP Read Hotfix · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17093,7 +17129,7 @@ document.addEventListener("click", function(e){
   window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
   window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
   setTimeout(()=>runOnce(2), 5000);
-  setInterval(()=>runOnce(2), 3600000); // v375: prevent idle full-RP scans every 5 minutes
+  setInterval(()=>runOnce(2), 300000);
 })();
 </script>
 
