@@ -972,7 +972,7 @@ async function forceUpdate(){
 
 
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
-// V382 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
+// V384 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
 window.__EQ_READ_DIAG = window.__EQ_READ_DIAG || {startedAt:Date.now(), total:0, by:{}, events:[]};
 window.__eqReadDiag = function(source,count){
   try{
@@ -994,7 +994,7 @@ function FirestoreReadBox(){
   const D=window.__EQ_READ_DIAG||{startedAt:Date.now(),total:0,by:{}};
   const mins=Math.max(1/60,(Date.now()-Number(D.startedAt||Date.now()))/60000);
   const top=Object.entries(D.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  return <div id="eq-read-diag" style={{position:"fixed",right:"8px",bottom:"8px",zIndex:2147483647,background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",maxWidth:"260px",boxShadow:"0 5px 18px #0005",opacity:.92}}>
+  return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
     <b>Firestore reads — this device</b><br/>
     Total observed: {D.total} · {Math.round(D.total/mins)}/min
     {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
@@ -1110,6 +1110,25 @@ async function loadLoginData() {
   const firebaseClasses=(classesRaw||[]).filter(function(c){return c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;});
   return {users,classes,firebaseUsers,firebaseClasses,appSettings:appSettings||[],deletedStudents:deletedStudents||[],deletedClasses:deletedClasses||[],
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
+}
+
+// V385 FAST TEACHER STARTUP: reuse the already loaded/cached roster during the first dashboard hydrate.
+// This avoids immediately downloading users/classes/deletion rosters a second time while preserving
+// every Main collection (quizzes, responses, RP, Reading Theory, Projects, settings, etc.).
+async function loadDashboardDataWithRoster(base) {
+  if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
+  try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
+  const [quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
+    fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions")
+  ]);
+  const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
+  if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
+  const allData={
+    ...base, quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,
+    readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions
+  };
+  eqSaveFastDataCache(allData);
+  return allData;
 }
 
 async function loadAllData() {
@@ -12409,6 +12428,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [qrdSearch,setQrdSearch]=useState("");
   const [profileOpen,setProfileOpen]=useState(false);
   const [navOpen,setNavOpen]=useState(false);
+  const [readDiagOpen,setReadDiagOpen]=useState(false);
   const [quizFastPatch,setQuizFastPatch]=useState({});
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
@@ -13721,29 +13741,32 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v382 · Firebase Read Counter · Firebase Read + Login Optimization · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v385" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
-        <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
-        <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
+        <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
+        <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}{currentTab.id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
+          <div style={{marginBottom:"9px"}}>
+            <button onClick={()=>setReadDiagOpen(!readDiagOpen)} style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:readDiagOpen?"#eff6ff":"#fff",color:C.tx,fontWeight:900,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>📊 Firestore Reads</button>
+            {readDiagOpen&&<div style={{marginTop:"6px"}}><FirestoreReadBox/></div>}
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
-            <button onClick={()=>{setNavOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+            <button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
               <div>🎙️ RP {rpPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rpPendingCount}</span>}</div>
               {rpPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{rpPendingCount} recording{rpPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-            <button onClick={()=>{setNavOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+            <button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
               <div>✍️ Writing {writingPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{writingPendingCount}</span>}</div>
               {writingPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{writingPendingCount} writing submission{writingPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="readingTheory"&&rtUnreadCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtUnreadCount}</span>}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}{id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
+          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="readingTheory"&&rtUnreadCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtUnreadCount}</span>}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}{id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
         </div>}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
         {tab==="overview" && <div>
-          <FirestoreReadBox/>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"9px",marginBottom:"13px"}}>
             <Stat icon="📋" label="Quizzes" value={myQuizzes.length} color={C.p}/><Stat icon="👥" label="Students" value={myStudents.length} color={C.pu}/><Stat icon="📝" label="Submissions" value={myResps.length} color={C.s}/><Stat icon="🚨" label="Need Help" value={flags.length} color={C.d}/>
           </div>
@@ -14677,7 +14700,17 @@ function App() {
       }
       setLoading(false);
       // V333: hydrate heavy collections only after the usable screen is already visible.
-      if(sess){ setTimeout(function(){ reload().catch(function(e){console.warn("V333 background hydrate failed",e);}); },700); }
+      if(sess){
+        // V385: Main still hydrates fully, but the roster already used for authentication/paint is reused.
+        // On a cached teacher session this removes the largest redundant startup read (users/classes).
+        setTimeout(function(){
+          const rosterBase=(cachedTeacherFast&&cached)?cached:d;
+          loadDashboardDataWithRoster(rosterBase).then(function(fresh){
+            setData(fresh);
+            try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);if(typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}
+          }).catch(function(e){console.warn("V385 background dashboard hydrate failed",e);});
+        },250);
+      }
     })();
   },[]);
 
