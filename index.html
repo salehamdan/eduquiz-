@@ -999,7 +999,7 @@ function FirestoreReadBox(){
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
     <b>Firestore reads — this device</b><br/>
     Total observed: {D.total} · {Math.round(D.total/mins)}/min
-    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}{window.__EQ_TIMING&&window.__EQ_TIMING.marks&&<React.Fragment><br/>Startup: login {window.__EQ_TIMING.marks.login||"-"} · main {window.__EQ_TIMING.marks.main||"-"} ms</React.Fragment>}
+    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}{window.__EQ_LOGIN_TO_MAIN_MS!=null&&<React.Fragment><br/>Login → Main: {window.__EQ_LOGIN_TO_MAIN_MS} ms</React.Fragment>}{window.__EQ_TIMING&&window.__EQ_TIMING.marks&&<React.Fragment><br/>Startup: login {window.__EQ_TIMING.marks.login||"-"} · main {window.__EQ_TIMING.marks.main||"-"} ms</React.Fragment>}
     {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
   </div>;
 }
@@ -1127,14 +1127,20 @@ async function loadLoginData() {
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
-    fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions")
+  // V390: Main-first hydrate. RP submissions arrive through the single realtime listener,
+  // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
+  const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
+    fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
+    fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
   ]);
-  const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
   if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
   const allData={
-    ...base, quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,
-    readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions
+    ...base, quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,
+    readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
+    readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
+    readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
+    readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
+    appSettings:Array.isArray(base.appSettings)?base.appSettings:[]
   };
   eqSaveFastDataCache(allData);
   return allData;
@@ -13749,7 +13755,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v389" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v390" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14817,6 +14823,7 @@ function App() {
       unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
         try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",first?(snap.size||0):changes.length);}catch(_e){}
+        const newForAI=(!first)?changes.filter(ch=>ch.type==="added").map(ch=>({id:ch.doc.id,...(ch.doc.data?ch.doc.data():{})})):[];
         setData(prev=>{
           if(!prev)return prev;
           let rows=Array.isArray(prev.readingSubmissions)?prev.readingSubmissions.slice():[];
@@ -14836,6 +14843,9 @@ function App() {
           return next;
         });
         first=false;
+        if(newForAI.length && typeof window.rpRunTeacherAutoRecord==="function"){
+          newForAI.forEach(r=>{try{window.rpRunTeacherAutoRecord(r);}catch(_e){}});
+        }
         try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
         try{const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(_e){}
       },e=>console.warn("V389 teacher RP live sync unavailable",e&&e.message));
@@ -14844,6 +14854,7 @@ function App() {
   },[user&&user.id,user&&user.role]);
 
     function handleLogin(u){
+      window.__EQ_LOGIN_CLICK_TS=performance.now();
       try{window.__eqMark&&window.__eqMark("login");}catch(_e){}
       setUser(fixAhmedStudent(u));
       // V388 STARTUP + RP SYNC FIX: Login has already fetched users/classes. Reuse that exact snapshot.
@@ -14855,6 +14866,7 @@ function App() {
         job.then(function(fresh){
           setData(fresh);
           window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
+          window.__EQ_LOGIN_TO_MAIN_MS=window.__EQ_LOGIN_CLICK_TS?Math.round(performance.now()-window.__EQ_LOGIN_CLICK_TS):window.__EQ_STARTUP_MS;
           try{window.__eqMark&&window.__eqMark("main");}catch(_e){}
           try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);}catch(e){}
           try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
@@ -17245,6 +17257,26 @@ document.addEventListener("click", function(e){
       lastErr=e&&e.message?e.message:String(e); window.__rpLastDirectAutoResult={ok,fail:fail+1,lastErr,at:new Date().toISOString()}; return window.__rpLastDirectAutoResult;
     }finally{ busy=false; }
   }
+  window.rpRunTeacherAutoRecord = async function(r){
+    if(!r || !r.id || !needs(r)) return {ok:0,skip:true};
+    if(!isTeacherOpen() || !key() || !(window.firebase&&firebase.firestore)) return {ok:0,skip:true};
+    try{
+      const db=firebase.firestore();
+      const transcript=await transcribe(r);
+      const ref=await getTaskText(db,r);
+      const seconds=await resolveAnalysisSeconds(r);
+      if(!seconds||seconds<=0) throw new Error('Could not read recording duration.');
+      const res=score(ref,transcript,seconds), now=new Date().toISOString();
+      const patch={...res,analysis:{...res,seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds},transcript,status:'pending_review',seconds,durationSeconds:seconds,readingSeconds:seconds,actualReadingSeconds:seconds,effectiveReadingSeconds:seconds,analyzedAt:now,updatedAt:now,teacherAutoAnalyzed:true,teacherAutoVersion:'targeted-v390'};
+      await db.collection('readingSubmissions').doc(r.id).set(patch,{merge:true});
+      updateLocal(r.id,patch);
+      return {ok:1};
+    }catch(e){
+      const msg=String(e&&e.message||e||'AI analysis failed');
+      try{await firebase.firestore().collection('readingSubmissions').doc(r.id).set({analysisStatus:'Waiting for teacher retry: '+msg.slice(0,160),lastAnalysisError:msg.slice(0,200),updatedAt:new Date().toISOString()},{merge:true});}catch(_e){}
+      return {ok:0,fail:1,lastErr:msg};
+    }
+  };
   window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
   window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
   // V378: disable idle full-collection RP auto scan. Teacher Analyze/Re-analyze remains available.
@@ -17279,9 +17311,15 @@ async function load(){
   // because retired rosters/classes were being resurrected after cleanup.
   try{
     if(typeof fsAll==="function"){
-      const res=await Promise.all([fsAll("appSettings"),fsAll("users"),fsAll("classes")]);
-      const arr=res[0]||[]; LIVE_WRITING_USERS=res[1]||[]; LIVE_WRITING_CLASSES=res[2]||[];
-      cloud=(arr||[]).find(x=>x.id===DOC||x._id===DOC)||null;
+      const snap=window.__EQ_CURRENT_DATA;
+      if(snap&&Array.isArray(snap.users)) LIVE_WRITING_USERS=snap.users;
+      if(snap&&Array.isArray(snap.classes)) LIVE_WRITING_CLASSES=snap.classes;
+      cloud=(typeof fsGetDoc==="function")?await fsGetDoc("appSettings",DOC):null;
+      // Only if Writing is opened before the app roster exists do we fetch its roster.
+      if(!LIVE_WRITING_USERS.length || !LIVE_WRITING_CLASSES.length){
+        const res=await Promise.all([LIVE_WRITING_USERS.length?Promise.resolve(LIVE_WRITING_USERS):fsAll("users"),LIVE_WRITING_CLASSES.length?Promise.resolve(LIVE_WRITING_CLASSES):fsAll("classes")]);
+        LIVE_WRITING_USERS=res[0]||[]; LIVE_WRITING_CLASSES=res[1]||[];
+      }
     }else if(typeof db!=="undefined"&&db){
       const d=await db.collection("appSettings").doc(DOC).get();
       cloud=d.exists?d.data():null;
