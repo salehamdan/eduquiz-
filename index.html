@@ -1124,26 +1124,46 @@ async function loadLoginData() {
 // V385 FAST TEACHER STARTUP: reuse the already loaded/cached roster during the first dashboard hydrate.
 // This avoids immediately downloading users/classes/deletion rosters a second time while preserving
 // every Main collection (quizzes, responses, RP, Reading Theory, Projects, settings, etc.).
+let __EQ_DASHBOARD_HYDRATE_PROMISE=null;
+let __EQ_DASHBOARD_HYDRATE_RESULT=null;
+let __EQ_DASHBOARD_HYDRATE_AT=0;
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
-  try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  // V390: Main-first hydrate. RP submissions arrive through the single realtime listener,
-  // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
-  const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
-    fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
-    fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
-  ]);
-  if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  const allData={
-    ...base, quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,
-    readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
-    readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
-    readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
-    readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
-    appSettings:Array.isArray(base.appSettings)?base.appSettings:[]
-  };
-  eqSaveFastDataCache(allData);
-  return allData;
+  // V393: startup single-flight. App mount and a near-simultaneous login/session path must share
+  // one Firebase hydrate instead of downloading the same Main collections twice.
+  const now=Date.now();
+  if(__EQ_DASHBOARD_HYDRATE_PROMISE){
+    try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:joined",0);}catch(_e){}
+    return __EQ_DASHBOARD_HYDRATE_PROMISE;
+  }
+  if(__EQ_DASHBOARD_HYDRATE_RESULT && now-__EQ_DASHBOARD_HYDRATE_AT<15000){
+    try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:reused",0);}catch(_e){}
+    return __EQ_DASHBOARD_HYDRATE_RESULT;
+  }
+  __EQ_DASHBOARD_HYDRATE_PROMISE=(async function(){
+    try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
+    // Main-first hydrate. RP submissions arrive through the single realtime listener,
+    // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
+    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
+      fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
+      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
+    ]);
+    if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
+    const allData={
+      ...base, quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,
+      readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
+      readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
+      readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
+      readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
+      appSettings:Array.isArray(base.appSettings)?base.appSettings:[]
+    };
+    eqSaveFastDataCache(allData);
+    __EQ_DASHBOARD_HYDRATE_RESULT=allData;
+    __EQ_DASHBOARD_HYDRATE_AT=Date.now();
+    return allData;
+  })();
+  try{ return await __EQ_DASHBOARD_HYDRATE_PROMISE; }
+  finally{ __EQ_DASHBOARD_HYDRATE_PROMISE=null; }
 }
 
 async function loadAllData() {
@@ -13758,7 +13778,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v392" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v393" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16156,7 +16176,9 @@ document.addEventListener("click", function(e){
     panelMade=true;
     // RP158: start live sync before the drawer is opened so new submissions can update badge/Overview.
     try{ rpStartRealtimeDrawerSync(); }catch(_e){}
-    try{ setTimeout(function(){ syncCloudIntoLocal().then(function(){ try{ if(typeof renderCards==="function") renderCards(); }catch(_e){} }); }, 600); }catch(_e){}
+    // V393: do not perform a second full readingSubmissions GET when the teacher RP panel is created.
+    // The app-level teacher onSnapshot is already the realtime source of truth and feeds RP_LIVE_CACHE.
+    try{ setTimeout(function(){ try{ if(typeof renderCards==="function") renderCards(); }catch(_e){} }, 600); }catch(_e){}
     const panel=document.createElement("div");
     panel.id="rp-v11-panel";
     panel.style.cssText="position:fixed;top:0;right:0;width:min(92vw,430px);height:100vh;overflow:auto;padding:14px;border-left:3px solid #2563eb;background:#fff;box-shadow:-14px 0 35px rgba(15,23,42,.22);font-family:system-ui;direction:ltr;z-index:99998;display:none";
