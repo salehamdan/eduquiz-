@@ -6053,7 +6053,7 @@ function StudentProjects({user,data,reload}){
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       submissionSaved=true;
       try{await projectFinishSubmissionGuard(submissionGuard,id);}catch(e){console.warn("submission guard finish failed",e&&e.message);}
-      setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); await reload(); setTimeout(()=>setOpenProject(null),700);
+      setMsg("✅ Project submitted. Waiting for teacher review."); setText(""); setFile(null); try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",submissionRow);}catch(_e){} setTimeout(()=>setOpenProject(null),700);
     }catch(e){
       console.error("Project submission failed:",e);
       if(!submissionSaved) await projectReleaseSubmissionGuard(submissionGuard);
@@ -6105,17 +6105,20 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const projects=(data.projects||[]).filter(p=>p.teacherId===user.id&&p.status!=="deleted").sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const subs=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&projects.some(p=>p.id===s.projectId));
   const visibleSubs=subs.filter(s=>{const p=projects.find(x=>x.id===s.projectId);const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return (!p?false:true) && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));});
-  async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; await fsSet("projects",p.id,{...p,status:"deleted",updatedAt:today()}); await reload(); }
-  async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); const fp=projectCheckFingerprintAgainstSubmissions(p,s,review,subs); const sim=fp||s.similarityCheck||null; await fsSet("projectSubmissions",s.id,{...s,aiReview:review,similarityCheck:sim,status:"ai_corrected",updatedAt:new Date().toISOString()}); setMsg(fp?"⚠️ AI correction completed. Similarity detected: "+fp.score+"% with "+fp.matchedStudentName+".":"✅ AI correction completed successfully. Review the suggested score, then approve or edit it."); await reload(); }catch(e){setMsg("❌ "+(e.message||e));} }
+  async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; const row={...p,status:"deleted",updatedAt:today()}; await fsSet("projects",p.id,row); try{window.eqProjectPatch&&window.eqProjectPatch("projects","upsert",row);}catch(_e){} }
+  async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); const fp=projectCheckFingerprintAgainstSubmissions(p,s,review,subs); const sim=fp||s.similarityCheck||null; const updated={...s,aiReview:review,similarityCheck:sim,status:"ai_corrected",updatedAt:new Date().toISOString()}; await fsSet("projectSubmissions",s.id,updated); try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",updated);}catch(_e){} setMsg(fp?"⚠️ AI correction completed. Similarity detected: "+fp.score+"% with "+fp.matchedStudentName+".":"✅ AI correction completed successfully. Review the suggested score, then approve or edit it."); }catch(e){setMsg("❌ "+(e.message||e));} }
   async function approve(p,s,score,feedback){
     const finalScore=Math.max(0,Math.min(10,Number(score)||0));
     const gbId="project_grade_"+p.id;
     const q={id:gbId,code:"PRJ"+String(p.id).slice(-4).toUpperCase(),teacherId:user.id,title:p.title,type:"Project",difficulty:"Project",subject:"Project",classIds:p.assignMode==="class"?p.classIds:[],assignedStudents:p.assignMode==="student"?p.studentIds:[],status:"closed",questions:[{id:1,text:p.title,options:["Project"],correct:0,skill:"Project",difficulty:"Project"}],mode:"normal",masteryThreshold:60,importedIncludeInAverage:true,projectId:p.id,createdAt:p.createdAt||today(),updatedAt:today()};
     await fsSet("quizzes",gbId,q);
     const respId="project_response_"+s.id;
-    await fsSet("responses",respId,{id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:new Date().toISOString()});
-    await fsSet("projectSubmissions",s.id,{...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-    setMsg("✅ AI score approved successfully and added to Gradebook."); await reload();
+    const respRow={id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:new Date().toISOString()};
+    await fsSet("responses",respId,respRow);
+    const approvedRow={...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    await fsSet("projectSubmissions",s.id,approvedRow);
+    try{window.eqProjectPatch&&window.eqProjectPatch("quizzes","upsert",q);window.eqProjectPatch&&window.eqProjectPatch("responses","upsert",respRow);window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",approvedRow);}catch(_e){}
+    setMsg("✅ AI score approved successfully and added to Gradebook.");
   }
   async function manualGrade(p,s){ const v=prompt("Final score out of 10:", s.finalScore!=null?s.finalScore:(s.aiReview&&s.aiReview.score)||""); if(v===null)return; const fb=prompt("Feedback for student:", s.teacherFeedback || (s.aiReview&&s.aiReview.studentFeedback)||"")||""; await approve(p,s,v,fb); setMsg("✅ Manual project grade saved successfully."); }
   async function deleteProjectAttempt(p,s){
@@ -6127,10 +6130,10 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       await fsDel("projectSubmissions",s.id);
       await projectAllowSubmissionAgain(p,s);
       setMsg("✅ Attempt deleted. Other submissions were preserved.");
-      await reload();
+      try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","delete",s.id);if(s.gradebookResponseId)window.eqProjectPatch&&window.eqProjectPatch("responses","delete",s.gradebookResponseId);}catch(_e){}
     }catch(e){setMsg("❌ Delete failed: "+(e.message||e));}
   }
-  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); await fsSet("projectSubmissions",s.id,{...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}); await projectAllowSubmissionAgain(p,s); setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+"."); await reload();}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
+  async function allowResubmit(p,s){ try{setMsg("⏳ Enabling project resubmission..."); const row={...s,status:"resubmit_allowed",resubmitAllowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}; await fsSet("projectSubmissions",s.id,row); await projectAllowSubmissionAgain(p,s); try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",row);}catch(_e){} setMsg("✅ Project resubmission enabled for "+(s.studentName||"student")+".");}catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));} }
   async function assignTopicsRandomly(p){
     const bank=projectTopicBank(data); if(!bank.length){setMsg("❌ Topic Bank is empty.");return;}
     const targets=projectTargetStudents(p,myStudents); if(!targets.length){setMsg("❌ No students are assigned to this project.");return;}
@@ -13755,7 +13758,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v390" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v391" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14689,6 +14692,30 @@ function App() {
     return ()=>window.removeEventListener("eq-rp-mutation",onRpMutation);
   },[]);
 
+  // V391: project actions patch the same React state instead of re-reading the whole database.
+  useEffect(()=>{
+    const onProjectMutation=(ev)=>{
+      const d=ev&&ev.detail||{}, col=String(d.collection||""); if(!["projectSubmissions","projects","responses","quizzes"].includes(col))return;
+      const id=String(d.id||(d.record&&d.record.id)||""); if(!id)return;
+      setData(prev=>{
+        if(!prev)return prev;
+        let rows=Array.isArray(prev[col])?prev[col].slice():[];
+        if(d.type==="delete") rows=rows.filter(r=>String(r&&(r.id||r._id)||"")!==id);
+        else if(d.record){const i=rows.findIndex(r=>String(r&&(r.id||r._id)||"")===id);if(i>=0)rows[i]={...rows[i],...d.record,id};else rows.push({...d.record,id});}
+        const next={...prev,[col]:rows}; window.__EQ_CURRENT_DATA=next; return next;
+      });
+    };
+    window.addEventListener("eq-project-mutation",onProjectMutation);
+    return ()=>window.removeEventListener("eq-project-mutation",onProjectMutation);
+  },[]);
+  window.eqProjectPatch=function(collection,type,recordOrId){
+    try{
+      const record=(recordOrId&&typeof recordOrId==="object")?recordOrId:null;
+      const id=record?String(record.id||record._id||""):String(recordOrId||"");
+      window.dispatchEvent(new CustomEvent("eq-project-mutation",{detail:{collection,type,id,record}}));
+    }catch(_e){}
+  };
+
   async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
@@ -14824,6 +14851,7 @@ function App() {
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
         try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",first?(snap.size||0):changes.length);}catch(_e){}
         const newForAI=(!first)?changes.filter(ch=>ch.type==="added").map(ch=>({id:ch.doc.id,...(ch.doc.data?ch.doc.data():{})})):[];
+        const initialForAI=first?changes.filter(ch=>ch.type==="added").map(ch=>({id:ch.doc.id,...(ch.doc.data?ch.doc.data():{})})).filter(r=>!r.aiReview&&!r.teacherAutoAnalyzed&&!r.analyzedAt).slice(-3):[];
         setData(prev=>{
           if(!prev)return prev;
           let rows=Array.isArray(prev.readingSubmissions)?prev.readingSubmissions.slice():[];
@@ -14843,8 +14871,9 @@ function App() {
           return next;
         });
         first=false;
-        if(newForAI.length && typeof window.rpRunTeacherAutoRecord==="function"){
-          newForAI.forEach(r=>{try{window.rpRunTeacherAutoRecord(r);}catch(_e){}});
+        const aiTargets=newForAI.length?newForAI:initialForAI;
+        if(aiTargets.length && typeof window.rpRunTeacherAutoRecord==="function"){
+          aiTargets.forEach(r=>{try{window.rpRunTeacherAutoRecord(r);}catch(_e){}});
         }
         try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
         try{const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(_e){}
