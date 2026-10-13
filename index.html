@@ -1048,15 +1048,18 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
 }
 
 async function fsSet(col, id, data) {
+  let ok=false;
   if (!FIREBASE_OK) {
     const arr = JSON.parse(localStorage.getItem("eq_"+col) || "[]");
     const i = arr.findIndex(x => x.id===id);
     if (i>=0) arr[i] = {...data, id}; else arr.push({...data, id});
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
-    return;
+    ok=true;
+  } else {
+    try { await db.collection(col).doc(id).set(data); ok=true; }
+    catch(e){ console.warn("Firestore write failed", col, e && e.message); }
   }
-  try { await db.collection(col).doc(id).set(data); }
-  catch(e){ console.warn("Firestore write failed", col, e && e.message); }
+  if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
@@ -1064,13 +1067,16 @@ async function fsSetStrict(col, id, data) {
   catch(e){ console.error("Firestore strict write failed", col, id, e); throw e; }
 }
 async function fsDel(col, id) {
+  let ok=false;
   if (!FIREBASE_OK) {
     const arr = JSON.parse(localStorage.getItem("eq_"+col) || "[]").filter(x => x.id!==id);
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
-    return;
+    ok=true;
+  } else {
+    try { await db.collection(col).doc(id).delete(); ok=true; }
+    catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
   }
-  try { await db.collection(col).doc(id).delete(); }
-  catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
+  if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
 }
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
@@ -13741,7 +13747,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v387" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v388" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14655,6 +14661,26 @@ function App() {
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
 
+  // V388: one in-memory source of truth for RP/Main/Sections. No refresh is required after a local RP mutation.
+  useEffect(()=>{ window.__EQ_CURRENT_DATA=data; },[data]);
+  useEffect(()=>{
+    const onRpMutation=(ev)=>{
+      const d=ev&&ev.detail||{}; const id=String(d.id||""); if(!id)return;
+      setData(prev=>{
+        if(!prev)return prev;
+        let rows=Array.isArray(prev.readingSubmissions)?prev.readingSubmissions.slice():[];
+        if(d.type==="delete") rows=rows.filter(r=>String(r&&(r.id||r._id)||"")!==id);
+        else if(d.record){const i=rows.findIndex(r=>String(r&&(r.id||r._id)||"")===id);if(i>=0)rows[i]={...rows[i],...d.record,id};else rows.push({...d.record,id});}
+        const next={...prev,readingSubmissions:rows}; window.__EQ_CURRENT_DATA=next;
+        try{window.rpV11MergeCloudRecords&&window.rpV11MergeCloudRecords(rows);}catch(_e){}
+        try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
+        return next;
+      });
+    };
+    window.addEventListener("eq-rp-mutation",onRpMutation);
+    return ()=>window.removeEventListener("eq-rp-mutation",onRpMutation);
+  },[]);
+
   async function reload(){const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;}
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
@@ -14780,9 +14806,28 @@ function App() {
     return ()=>{unsubs.forEach(u=>{try{u&&u();}catch(e){}});};
   },[user&&user.id,user&&user.role]);
 
+  // V388: exactly one teacher RP listener. It keeps badge, RP drawer and Main Pending Reviews synchronized.
+  // Initial snapshot is one collection read-set; subsequent changes are incremental. No polling/full refresh loop.
+  useEffect(()=>{
+    if(!user || String(user.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
+    let first=true;
+    let unsub=null;
+    try{
+      unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
+        try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",snap.size||0);}catch(_e){}
+        first=false;
+        const rows=[];snap.forEach(doc=>rows.push({id:doc.id,...(doc.data?doc.data():{})}));
+        setData(prev=>{if(!prev)return prev;const next={...prev,readingSubmissions:rows};window.__EQ_CURRENT_DATA=next;return next;});
+        try{window.rpV11MergeCloudRecords&&window.rpV11MergeCloudRecords(rows);}catch(_e){}
+        try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
+      },e=>console.warn("V388 teacher RP live sync unavailable",e&&e.message));
+    }catch(e){}
+    return ()=>{try{unsub&&unsub();}catch(e){}};
+  },[user&&user.id,user&&user.role]);
+
     function handleLogin(u){
       setUser(fixAhmedStudent(u));
-      // V387 ROOT STARTUP FIX: Login has already fetched users/classes. Reuse that exact snapshot.
+      // V388 STARTUP + RP SYNC FIX: Login has already fetched users/classes. Reuse that exact snapshot.
       // The old path called reload()->loadAllData(), downloading the full roster again before Main.
       setTimeout(function(){
         const started=performance.now();
@@ -16113,6 +16158,7 @@ document.addEventListener("click", function(e){
     fab.onclick=async()=>{panel.style.display="block";await renderCards();};
     // v288: Sections > RP opens this real recordings/Pending drawer.
     window.eqOpenRPDrawer=async function(){
+      try{const d=window.__EQ_CURRENT_DATA;if(d&&Array.isArray(d.readingSubmissions))window.rpV11MergeCloudRecords(d.readingSubmissions);}catch(_e){}
       panel.style.display="block";
       await renderCards();
     };
@@ -16316,7 +16362,10 @@ document.addEventListener("click", function(e){
     RP_LAST_ROSTER_LOAD=Date.now();
     try{
       let cls=[], users=[];
-      if(typeof fsAll==="function"){
+      const snap=window.__EQ_CURRENT_DATA;
+      if(snap && Array.isArray(snap.classes) && Array.isArray(snap.users)){
+        cls=snap.classes; users=snap.users;
+      }else if(typeof fsAll==="function"){
         const res=await Promise.all([fsAll("classes"),fsAll("users")]);
         cls=res[0]||[]; users=res[1]||[];
       }
@@ -16689,10 +16738,10 @@ document.addEventListener("click", function(e){
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
     // V334: preserve teacher typing even if another safe RP refresh occurs.
     rpCaptureTeacherDrafts(panel);
-    try{ if(typeof window.rpRunTeacherAutoNowSilent==="function" && (!window.__rpAutoLastRun || Date.now()-window.__rpAutoLastRun>8000)){ window.__rpAutoLastRun=Date.now(); setTimeout(function(){try{window.rpRunTeacherAutoNowSilent();}catch(e){}},80); } }catch(_e){}
-    try{ await rpRefreshRosters(true); }catch(_e){ try{ rpRefreshRosters(false); }catch(__e){} }
-    let allLocalRaw=recordsFastWithBackgroundSync();
-    try{ if(Date.now()-__rpLastCloudSyncAt>5000) allLocalRaw=await syncCloudIntoLocal(); }catch(_syncErr){ console.warn("RP119 initial cloud sync failed", _syncErr); }
+    // V388: opening RP must be instant and must not launch hidden full-collection reads/auto-analysis.
+    // Current React snapshot + the single teacher realtime listener are the source of truth.
+    try{ await rpRefreshRosters(false); }catch(_e){}
+    let allLocalRaw=recordsLive();
     const allLocal=allLocalRaw.filter(rpRecordVisible);
     const rpTasks=await rpLoadReadingTasks();
     rpPopulateFilterOptions(allLocal,rpTasks);
