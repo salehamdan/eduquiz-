@@ -971,39 +971,18 @@ async function forceUpdate(){
 }
 
 
-// V371_READ_OPTIMIZATION_20261013
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
 // Collections: users, classes, quizzes, responses, announcements, notes
-// V371 FIRESTORE READ OPTIMIZATION:
-// Coalesce simultaneous collection reads and keep a short in-memory cache.
-// This does not persist stale cloud data: writes/deletes invalidate the affected collection.
-const __eqFsAllCache = new Map();
-const __eqFsAllInflight = new Map();
-const EQ_FSALL_TTL_MS = 30000;
-function eqInvalidateFsReadCache(col){
-  try{ __eqFsAllCache.delete(String(col)); __eqFsAllInflight.delete(String(col)); }catch(_e){}
-}
 async function fsAll(col) {
   const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
   if (!FIREBASE_OK) return local();
-  const key=String(col||"");
-  const now=Date.now();
-  const cached=__eqFsAllCache.get(key);
-  if(cached && (now-cached.at)<EQ_FSALL_TTL_MS) return cached.rows;
-  if(__eqFsAllInflight.has(key)) return __eqFsAllInflight.get(key);
-  const req=(async()=>{
-    try {
-      const snap = await db.collection(key).get();
-      const rows=snap.docs.map(d => ({...d.data(), _id:d.id}));
-      __eqFsAllCache.set(key,{at:Date.now(),rows});
-      return rows;
-    } catch(e) {
-      console.warn("Firestore read failed", key, e && e.message);
-      return local();
-    } finally { __eqFsAllInflight.delete(key); }
-  })();
-  __eqFsAllInflight.set(key,req);
-  return req;
+  try {
+    const snap = await db.collection(col).get();
+    return snap.docs.map(d => ({...d.data(), _id:d.id}));
+  } catch(e) {
+    console.warn("Firestore read failed", col, e && e.message);
+    return local();
+  }
 }
 async function fsGetDoc(col, id) {
   const local = () => { try { return (JSON.parse(localStorage.getItem("eq_"+col) || "[]")||[]).find(x=>String(x.id||x._id||"")===String(id)) || null; } catch(e){ return null; } };
@@ -1042,12 +1021,12 @@ async function fsSet(col, id, data) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  try { await db.collection(col).doc(id).set(data); eqInvalidateFsReadCache(col); }
+  try { await db.collection(col).doc(id).set(data); }
   catch(e){ console.warn("Firestore write failed", col, e && e.message); }
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
-  try { await db.collection(col).doc(id).set(data, {merge:true}); eqInvalidateFsReadCache(col); }
+  try { await db.collection(col).doc(id).set(data, {merge:true}); }
   catch(e){ console.error("Firestore strict write failed", col, id, e); throw e; }
 }
 async function fsDel(col, id) {
@@ -1056,7 +1035,7 @@ async function fsDel(col, id) {
     localStorage.setItem("eq_"+col, JSON.stringify(arr));
     return;
   }
-  try { await db.collection(col).doc(id).delete(); eqInvalidateFsReadCache(col); }
+  try { await db.collection(col).doc(id).delete(); }
   catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
 }
 
@@ -5911,16 +5890,37 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
     <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
   </div>;
 }
-// V370: submission protection without a new Firestore collection.
-// The existing projectSubmissions collection remains the source of truth.
-// The in-page lock blocks repeated taps while a request is in flight; the remote
-// existing-submission check below blocks another attempt unless the teacher allowed resubmission.
-async function projectAcquireSubmissionGuard(p,st){
-  return {token:uid(),remote:false};
+// V369: DB-backed project submission idempotency. This prevents two slow/repeated submits
+// from creating two attempts, even when the second request starts before the first one finishes.
+function projectSubmissionGuardId(projectId,studentId){
+  return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
 }
-async function projectFinishSubmissionGuard(guard,submissionId){ return; }
-async function projectReleaseSubmissionGuard(guard){ return; }
-async function projectAllowSubmissionAgain(p,s){ return; }
+async function projectAcquireSubmissionGuard(p,st){
+  const token=uid();
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection&&db.runTransaction)) return {token,remote:false};
+  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id));
+  const now=Date.now(), staleMs=120000;
+  await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref); const row=snap&&snap.exists?snap.data():null;
+    if(row&&row.status==="submitted") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+    if(row&&row.status==="submitting"&&(now-Number(row.startedAtMs||0))<staleMs) throw new Error("Your project submission is already being processed. Please wait; do not submit it again.");
+    tx.set(ref,{projectId:p.id,studentId:st.id,studentNumber:st.studentId||"",status:"submitting",token,startedAtMs:now,updatedAt:new Date().toISOString()},{merge:true});
+  });
+  return {token,remote:true,ref};
+}
+async function projectFinishSubmissionGuard(guard,submissionId){
+  if(!guard||!guard.remote||!guard.ref) return;
+  await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"submitted",submissionId:submissionId||"",finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});});
+}
+async function projectReleaseSubmissionGuard(guard){
+  if(!guard||!guard.remote||!guard.ref) return;
+  try{await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"idle",token:"",updatedAt:new Date().toISOString()},{merge:true});});}catch(e){console.warn("submission guard release failed",e&&e.message);}
+}
+async function projectAllowSubmissionAgain(p,s){
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection)) return;
+  const sid=s.studentId||s.studentNumber||""; if(!sid)return;
+  try{await db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,sid)).set({projectId:p.id,studentId:sid,status:"allowed",token:"",allowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});}catch(e){console.warn("submission guard reset failed",e&&e.message);}
+}
 function StudentProjects({user,data,reload}){
   const [openProject,setOpenProject]=useState(null);
   const [mode,setMode]=useState("text");
@@ -5961,7 +5961,7 @@ function StudentProjects({user,data,reload}){
     setSubmitting(true);
     let submissionGuard=null; let submissionSaved=false;
     try{
-      // V370: local in-flight guard only; do not require permissions for a new Firestore collection.
+      // V369: acquire an atomic Firestore guard BEFORE upload/slow work.
       submissionGuard=await projectAcquireSubmissionGuard(p,user);
       // V359 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
@@ -6113,4 +6113,1004 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"10px"}}><Stat icon="🧩" label="Projects" value={projects.length} color={C.p}/><Stat icon="📥" label="Submitted" value={subs.length} color={C.s}/><Stat icon="⏳" label="Need Approval" value={subs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length} color={C.w}/><Stat icon="✅" label="Approved" value={subs.filter(s=>s.status==="approved").length} color={C.s}/></div>
     <Card style={{marginBottom:"10px"}}><div style={{display:"flex",gap:"7px",flexWrap:"wrap"}}><select value={fProject} onChange={e=>setFProject(e.target.value)} style={{flex:2,minWidth:"150px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}</select><select value={fClass} onChange={e=>setFClass(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">اختر الفصل لعرض الطلاب</option>{myClasses.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{flex:1,minWidth:"120px",padding:"9px",borderRadius:"8px",border:"1px solid "+C.br,fontFamily:F}}><option value="all">All Status</option><option value="submitted">Submitted</option><option value="ai_corrected">AI Corrected</option><option value="approved">Approved</option><option value="resubmit_allowed">Resubmission Allowed</option></select></div></Card>
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
-    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);const assignedCou
+    {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);const assignedCount=targets.filter(st=>projectTopicForStudent(p,st)).length;const bank=projectTopicBank(data);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Topics {assignedCount}/{targets.length} · Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.s} onClick={()=>assignTopicsRandomly(p)}>🎲 Assign Topics</Btn><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div>{targets.length>0&&<details style={{marginTop:"8px",borderTop:"1px solid "+C.br,paddingTop:"7px"}}><summary style={{cursor:"pointer",fontSize:"11px",fontWeight:900,color:C.p,fontFamily:F}}>Student Topics — view / change individually</summary><div style={{display:"grid",gap:"5px",marginTop:"7px",maxHeight:"300px",overflowY:"auto"}}>{targets.slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""))).map(st=>{const t=projectTopicForStudent(p,st);const cls=data.classes.find(c=>sameClassId(c.id,st.classId));return <div key={projectStudentKey(st)} style={{display:"grid",gridTemplateColumns:"minmax(110px,1fr) minmax(130px,2fr) 32px",gap:"6px",alignItems:"center",fontSize:"11px"}}><div><b>{st.name}</b><span style={{color:C.mu}}> · {cls?cls.name:""}</span></div><select value={t?t.id:""} onChange={e=>setStudentTopic(p,st,e.target.value)} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"7px",fontSize:"10px",fontFamily:F}}><option value="">Not assigned</option>{bank.map(x=><option key={x.id} value={x.id}>U{x.unit} · {x.title}</option>)}</select><button onClick={()=>randomizeStudentTopic(p,st)} title="Random topic for this student" style={{border:"1px solid "+C.br,borderRadius:"7px",padding:"6px",cursor:"pointer",background:"#eff6ff"}}>🎲</button></div>})}</div></details>}</Card>})}
+    <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
+    {visibleSubs.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No submissions for this filter.</p></Card>:myClasses.filter(c=>visibleSubs.some(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(c=>{const classSubs=visibleSubs.filter(s=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);});const newCount=classSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected").length;const approvedCount=classSubs.filter(s=>s.status==="approved").length;return <details key={c.id} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontSize:"12px",color:C.tx,fontFamily:F}}>{c.name} — {classSubs.length} Submitted · {newCount} New/Need Approval · {approvedCount} Approved</summary><div style={{marginTop:"9px"}}>{classSubs.map(renderSubmissionCard)}</div></details>})}
+    {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length>0&&<details style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontFamily:F}}>Other / Unmatched Class — {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length} submissions</summary>{visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(renderSubmissionCard)}</details>}
+
+  </div>;
+}
+
+function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
+  const [tab,setTab] = useState("home");
+  function quizAvailableToStudent(q){
+    if(!q || q.status!=="open" || (q.closeDate&&new Date(q.closeDate)<new Date())) return false;
+    const studentCid = canonicalClassId(user.classId || user.className || user.class || "");
+    const assigned = Array.isArray(q.assignedStudents) ? q.assignedStudents.map(x=>String(x||"")) : [];
+    const myStudentTokens = [user.id,user.studentId,user.email].filter(Boolean).map(x=>String(x));
+    if(assigned.length>0) return assigned.some(x=>myStudentTokens.includes(x));
+    const qClassIds = Array.isArray(q.classIds) ? q.classIds : (q.classIds ? [q.classIds] : []);
+    const canonicalQuizClasses = qClassIds.map(canonicalClassId).filter(Boolean);
+    // SAFE_DRAFT_268: empty audience is teacher-only. Direct links cannot bypass assignment.
+    if(canonicalQuizClasses.length===0) return false;
+    return canonicalQuizClasses.includes(studentCid) || qClassIds.map(x=>String(x||"")).includes(String(user.classId||""));
+  }
+  const [taking,setTaking] = useState(()=>directQuiz&&quizAvailableToStudent(directQuiz)?directQuiz:null);
+  const [profileOpen,setProfileOpen] = useState(false);
+  const [reviewResp,setReviewResp] = useState(null);
+  useEffect(()=>{
+    if(!directQuiz) return;
+    if(quizAvailableToStudent(directQuiz)) setTaking(directQuiz);
+    else if(clearDirect) clearDirect();
+  },[directQuiz&&directQuiz.id,directQuiz&&directQuiz.status,user&&user.id,user&&user.classId]);
+
+  const myResps = responsesForStudent(data.responses,user);
+  const myClass = data.classes.find(c=>c.id===user.classId);
+  const available = data.quizzes.filter(quizAvailableToStudent);
+  const myAnn = data.announcements.filter(a=>!a.classIds||a.classIds.length===0||a.classIds.includes(user.classId));
+  const skills = calcSkills(myResps,data.quizzes);
+  const badges = calcBadges(myResps,data.quizzes);
+  const board = data.users.filter(u=>u.role==="student").map(s=>{
+    const rs=responsesForStudent(data.responses,s);
+    return {...s,avg:rs.length?Math.round(rs.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/rs.length):0,total:rs.length};
+  }).filter(s=>s.total>0).sort((a,b)=>b.avg-a.avg||(b.total-a.total));
+  const allowedAttemptsForQuiz = q => {
+    const key=String(user.id||user._id||user.studentId||user.studentNumber||"");
+    const sid=String(user.studentId||user.studentNumber||"");
+    const extra=Math.max(0,Number((q.studentRetakeExtra||{})[key] ?? (q.studentRetakeExtra||{})[sid] ?? 0)||0);
+    return 1 + (q.allowRetake ? Math.max(0,Number(q.maxRetakes ?? 2)||0) : 0) + extra;
+  };
+  const canReviewQuizResponse = (q) => myResps.filter(r=>r.quizId===q.id).length >= allowedAttemptsForQuiz(q);
+
+  // V345: Student Home task center extends the EXISTING quiz-home logic; no duplicate task store.
+  const homeUserDigits=eqDigits(user.studentId||user.id||"");
+  const homeUserTokens=[user.id,user.studentId,user.studentNumber,user.email].filter(Boolean).map(String);
+  const homeMatchesStudentValue=v=>{const sv=String(v||"");return homeUserTokens.includes(sv)||!!(homeUserDigits&&eqDigits(sv)===homeUserDigits);};
+  const homeRpTasks=(data.readingTasks||[]).filter(t=>{
+    if(t.status==="closed"||!rpTaskDateVisible(t)) return false;
+    const cls=Array.isArray(t.classIds)?t.classIds.filter(Boolean):(t.classIds?[t.classIds]:[]);
+    const sts=Array.isArray(t.studentIds)?t.studentIds.filter(Boolean):(t.studentIds?[t.studentIds]:[]);
+    const cid=canonicalClassId(user.classId||user.className||user.class||"");
+    const classOk=cls.some(x=>{try{return sameClassId(x,cid);}catch(_e){return canonicalClassId(x)===cid;}});
+    const studentOk=sts.some(homeMatchesStudentValue);
+    return (!cls.length&&!sts.length)||classOk||studentOk;
+  });
+  const homeRpSubs=(data.readingSubmissions||[]).filter(x=>{
+    const vals=[x.studentId,x.studentNumber,x.studentUserId,x.userId,x.uid,x.studentEmail,x.ownerStudentId,x.ownerId].filter(Boolean);
+    return vals.some(homeMatchesStudentValue)||(homeUserDigits&&eqDigits(x.id||x.docId||"").includes(homeUserDigits));
+  });
+  const homePendingRp=homeRpTasks.filter(t=>!homeRpSubs.some(x=>String(x.taskId)===String(t.id)));
+
+  const homeProjects=(data.projects||[]).filter(p=>projectAssignedToStudent(p,user));
+  const homeProjectSubs=data.projectSubmissions||[];
+  const homePendingProjects=homeProjects.filter(p=>{
+    const mine=projectSubmissionsForStudent(homeProjectSubs,p.id,user);
+    const latest=mine&&mine[0];
+    return !latest || projectAllowedToResubmit(p,user,homeProjectSubs);
+  });
+
+  const homeWritingDoc=(data.appSettings||[]).find(x=>String(x.id||x._id||"")==="writing_independent_v12")||null;
+  const homeWritingTasks=(homeWritingDoc&&homeWritingDoc.tasks)||[];
+  const homeWritingSubs=(homeWritingDoc&&homeWritingDoc.submissions)||[];
+  const homeWritingStudents=(homeWritingDoc&&homeWritingDoc.students)||[];
+  const homeWritingSelected=homeWritingStudents.some(x=>[x.id,x.studentId,x.studentNumber].filter(Boolean).some(homeMatchesStudentValue));
+  const homeWritingAssigned=t=>{
+    const ids=[].concat(t.studentIds||[],t.students||[],t.assignedStudentIds||[]).filter(Boolean);
+    return ids.length?ids.some(homeMatchesStudentValue):homeWritingSelected;
+  };
+  const homePendingWriting=homeWritingTasks.filter(t=>homeWritingAssigned(t)&&String(t.status||"open")!=="closed").filter(t=>{
+    return !homeWritingSubs.some(s=>String(s.taskId)===String(t.id)&&[s.studentId,s.studentNumber,s.userId].filter(Boolean).some(homeMatchesStudentValue)&&!['retaken','cancelled'].includes(String(s.status||'')));
+  });
+
+  const homeRtAccess=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
+  const homeRtClassIds=(homeRtAccess.classIds||[]).map(canonicalClassId).filter(Boolean);
+  const homeRtStudentIds=(homeRtAccess.studentIds||[]).map(String);
+  const homeRtCid=canonicalClassId(user.classId||user.className||user.class||"");
+  const homeRtNoFilter=!homeRtClassIds.length&&!homeRtStudentIds.length;
+  const homeRtHasAccess=homeRtAccess.status==="open"&&(homeRtNoFilter||homeRtClassIds.includes(homeRtCid)||homeRtStudentIds.some(homeMatchesStudentValue));
+  const homeRtResps=(data.readingTheoryResponses||[]).filter(r=>responseBelongsToStudent(r,user));
+  const homeRtLevel=rtAdaptiveLevel(homeRtResps);
+  const homeRtProgress=rtReadingProgress(homeRtResps);
+
+  if(taking){
+    const TakeComponent = (taking.mode!=="game") ? TakeQuiz : GameQuiz;
+    return <TakeComponent quiz={taking} student={user} allResponses={data.responses} onSaved={reload} onDone={()=>{setTaking(null);if(clearDirect)clearDirect();}}/>;
+  }
+
+  const tabs=[{id:"home",icon:"🏠",label:"Home"},{id:"projects",icon:"🧩",label:"Projects"},{id:"reading",icon:"📖",label:"Reading"},{id:"readingTheory",icon:"📚",label:"Theory"},{id:"progress",icon:"📈",label:"Progress"},{id:"writing",icon:"✍️",label:"Writing"},{id:"mastery",icon:"🎯",label:"Mastery"},{id:"badges",icon:"🏆",label:"Badges"},{id:"board",icon:"👑",label:"Leaderboard"}];
+
+  return (
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
+      <HDR title={"Hi, "+user.name.split(" ")[0]+"! 👋"} sub={myClass?myClass.name:"ID: "+user.studentId}
+        right={<><Btn size="sm" onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}} color={C.mu}>🔄</Btn><Btn size="sm" onClick={()=>setProfileOpen(true)} color={C.p}>⚙️</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <TabBar tabs={tabs} active={tab} onChange={(next)=>{if(next==="writing"){try{if(typeof window.eqOpenWritingForStudent==="function")window.eqOpenWritingForStudent(user);}catch(e){console.error("Writing student route",e);}return;}setTab(next);}}/>
+      <div style={{flex:1,overflowY:"auto"}}>
+      <div style={{maxWidth:"780px",margin:"0 auto",padding:"14px"}}>
+        {tab==="home" && <div>
+          {(()=>{
+            const newQuizzes=available.filter(q=>!myResps.some(r=>r.quizId===q.id));
+            const cards=[];
+            if(newQuizzes.length) cards.push({key:"quiz",icon:"📝",title:newQuizzes.length+" new quiz"+(newQuizzes.length>1?"zes":"")+" for you!",sub:newQuizzes.map(q=>q.title).join(", "),count:newQuizzes.length,onClick:()=>setTaking(newQuizzes[0])});
+            if(homePendingProjects.length) cards.push({key:"projects",icon:"🧩",title:homePendingProjects.length+" project"+(homePendingProjects.length>1?"s":"")+" for you",sub:homePendingProjects.map(x=>x.title).join(", "),count:homePendingProjects.length,onClick:()=>setTab("projects")});
+            if(homePendingRp.length) cards.push({key:"rp",icon:"📖",title:homePendingRp.length+" Reading Progress task"+(homePendingRp.length>1?"s":"")+" for you",sub:homePendingRp.map(x=>x.title||"Reading Task").join(", "),count:homePendingRp.length,onClick:()=>setTab("reading")});
+            if(homePendingWriting.length) cards.push({key:"writing",icon:"✍️",title:homePendingWriting.length+" Writing task"+(homePendingWriting.length>1?"s":"")+" for you",sub:homePendingWriting.map(x=>x.title||"Writing Task").join(", "),count:homePendingWriting.length,onClick:()=>{try{if(typeof window.eqOpenWritingForStudent==="function")window.eqOpenWritingForStudent(user);}catch(e){console.error(e);}}});
+            return <>{cards.map(c=><button key={c.key} onClick={c.onClick} style={{width:"100%",background:"linear-gradient(135deg,#3b82f6,#2563eb)",border:"none",borderRadius:"11px",padding:"12px 15px",marginBottom:"9px",display:"flex",alignItems:"center",gap:"11px",cursor:"pointer",textAlign:"left"}}><div style={{fontSize:"24px"}}>{c.icon}</div><div style={{flex:1,minWidth:0}}><div style={{fontWeight:"800",fontSize:"13px",color:"#fff",fontFamily:F}}>{c.title}</div><div style={{fontSize:"11px",color:"#dbeafe",fontFamily:F,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.sub}</div></div><span style={{minWidth:"27px",height:"27px",padding:"0 7px",borderRadius:"999px",background:"#fff",color:"#1d4ed8",fontWeight:"900",display:"inline-flex",alignItems:"center",justifyContent:"center",fontFamily:F}}>{c.count}</span></button>)}</>;
+          })()}
+          {homeRtHasAccess&&<button onClick={()=>setTab("readingTheory")} style={{width:"100%",background:"#fff",border:"1px solid #bfdbfe",borderRadius:"11px",padding:"11px 13px",marginBottom:"11px",display:"flex",alignItems:"center",gap:"11px",cursor:"pointer",textAlign:"left"}}>
+            <div style={{fontSize:"24px"}}>📚</div><div style={{flex:1}}><div style={{fontWeight:"900",fontSize:"13px",color:C.tx,fontFamily:F}}>Reading Theory — {homeRtLevel.emoji} {homeRtLevel.name}</div><div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>Reading-level progress: {homeRtProgress}% · Passages completed: {homeRtResps.length}</div></div><span style={{fontSize:"11px",fontWeight:"900",color:C.p}}>Continue ›</span>
+          </button>}
+          {myAnn.map(a=><div key={a.id} style={{background:"#fffbeb",border:"1px solid #fbbf24",borderRadius:"9px",padding:"9px 13px",marginBottom:"9px"}}>
+            <div style={{fontWeight:"700",fontSize:"12px",color:"#92400e",fontFamily:F}}>📣 {a.title}</div>
+            <div style={{fontSize:"12px",color:"#78350f",marginTop:"2px",fontFamily:F}}>{a.text}</div>
+          </div>)}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px",marginBottom:"14px"}}>
+            <Stat icon="📝" label="Done" value={myResps.length} color={C.p}/>
+            <Stat icon="🎯" label="Avg" value={myResps.length?Math.round(myResps.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/myResps.length)+"%":"—"} color={C.s}/>
+            <Stat icon="🏅" label="Badges" value={badges.length+"/"+BADGE_DEFS.length} color={C.w}/>
+          </div>
+          <strong style={{fontSize:"13px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📚 Available Quizzes</strong>
+          {available.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No quizzes available yet.</p></Card>
+          :available.map((quiz,i)=>{
+            const done=myResps.filter(r=>r.quizId===quiz.id);
+            const last=done.length?pct(done[done.length-1].score,done[done.length-1].totalQ):null;
+            const totalAllowedAttempts=allowedAttemptsForQuiz(quiz);
+            const locked=done.length>=totalAllowedAttempts;
+            const col=COLORS[i%COLORS.length];
+            const icon=quiz.type==="Listening"?"🎧":quiz.type==="Grammar"?"✏️":quiz.type==="Vocabulary"?"📚":"📖";
+            return <Card key={quiz.id} style={{marginBottom:"8px",border:"1px solid "+col+"30",opacity:locked?0.6:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:"11px"}}>
+                <div style={{width:"38px",height:"38px",borderRadius:"9px",background:col+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"17px",flexShrink:0}}>{icon}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{quiz.mode==="game"&&<span style={{marginRight:"4px"}}>🎮</span>}{quiz.title}{done.length===0&&<span style={{marginLeft:"6px",fontSize:"9px",background:C.d,color:"#fff",padding:"1px 7px",borderRadius:"999px",fontWeight:"800",verticalAlign:"middle"}}>NEW</span>}</div>
+                  <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz.mode==="game"?"🎮 Game · ":""}{quiz.type} · {quiz.difficulty} · {quiz.questions.length}Q · Pass:{quiz.masteryThreshold??MASTERY_DEFAULT}% · Retakes:{quiz.allowRetake?(quiz.maxRetakes??2):0}</div>
+                  {last!==null && <div style={{fontSize:"10px",fontWeight:"600",color:gc(last),fontFamily:F}}>Last: {last}%{done.length>1?" · "+done.length+" attempts":""} · Attempts: {done.length}/{totalAllowedAttempts}</div>}
+                </div>
+                <Btn size="sm" onClick={()=>!locked&&setTaking(quiz)} color={locked?"#94a3b8":col} disabled={locked}>{locked?"Done":done.length?"Retry":"Start"}</Btn>
+              </div>
+            </Card>;
+          })}
+        </div>}
+
+        {tab==="reading" && <ReadingProgressStudent user={user} data={data} reload={reload} onHome={()=>setTab("home")} onReading={()=>setTab("reading")}/>}
+        {tab==="readingTheory" && <ReadingTheoryStudent user={user} data={data} reload={reload}/>}
+        {tab==="projects" && <StudentProjects user={user} data={data} reload={reload}/>}
+
+        {tab==="progress" && <div>
+          {myResps.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>Complete quizzes to see progress.</p></Card>:<>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px",marginBottom:"12px"}}>
+              <Stat icon="✅" label="Done" value={myResps.length} color={C.p}/>
+              <Stat icon="⭐" label="Best" value={Math.max(...myResps.map(r=>pct(r.score,r.totalQ)))+"%"} color={C.s}/>
+              <Stat icon="📊" label="Avg" value={Math.round(myResps.reduce((a,r)=>a+pct(r.score,r.totalQ),0)/myResps.length)+"%"} color={C.w}/>
+            </div>
+            <Card style={{marginBottom:"11px"}}>
+              <strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📈 Score History</strong>
+              <ResponsiveContainer width="100%" height={170}>
+                <LineChart data={myResps.map((r,i)=>({n:"#"+(i+1),s:pct(r.score,r.totalQ)}))}>
+                  <XAxis dataKey="n" tick={{fontSize:10,fill:C.mu}} axisLine={false} tickLine={false}/>
+                  <YAxis domain={[0,100]} tickFormatter={v=>v+"%"} tick={{fontSize:9,fill:C.mu}}/>
+                  <Tooltip formatter={v=>[v+"%"]}/>
+                  <Line type="monotone" dataKey="s" stroke={C.p} strokeWidth={2} dot={{fill:C.p,r:3}}/>
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+            <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📋 All Attempts</strong>
+              {[...myResps].reverse().map((r,i)=>{let quiz =data.quizzes.find(q=>q.id===r.quizId);const p=pct(r.score,r.totalQ);return(
+                <div key={r.id} onClick={()=>{if(!quiz)return;if(canReviewQuizResponse(quiz))setReviewResp({response:r,quiz});else alert("Answer review will open after your final allowed attempt.");}} style={{display:"flex",alignItems:"center",gap:"9px",padding:"9px 4px",borderBottom:i<myResps.length-1?"1px solid "+C.br:"none",cursor:quiz?"pointer":"default",borderRadius:"7px"}}>
+                  <div style={{width:"32px",height:"32px",borderRadius:"50%",background:gc(p)+"20",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{fontSize:"10px",fontWeight:"800",color:gc(p),fontFamily:F}}>{p}%</span></div>
+                  <div style={{flex:1}}><div style={{fontWeight:"600",fontSize:"12px",color:C.tx,fontFamily:F}}>{quiz?.title||"Unknown"}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{quiz?.type} · {r.completedAt} · #{r.attempt}</div></div>
+                  {r.selfRating>0&&<span style={{fontSize:"11px"}}>{Array(r.selfRating).fill("⭐").join("")}</span>}
+                  {quiz&&canReviewQuizResponse(quiz)&&<span style={{fontSize:"11px",color:C.p,fontWeight:"700",fontFamily:F}}>Review →</span>}
+                  {quiz&&!canReviewQuizResponse(quiz)&&<span style={{fontSize:"10px",color:C.w,fontWeight:"700",fontFamily:F}}>Locked</span>}
+                </div>
+              );})}
+            </Card>
+          </>}
+        </div>}
+
+        {tab==="mastery" && <div>
+          <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+            <strong style={{color:"#fff",fontSize:"14px",display:"block",marginBottom:"3px",fontFamily:F}}>🎯 Skill Mastery</strong>
+            <p style={{margin:0,color:C.mu,fontSize:"11px",fontFamily:F}}>80%+ = Mastered · 60–79% = Developing · below 60% = Needs Work</p>
+          </Card>
+          {skills.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"18px"}}>Complete quizzes to unlock your mastery map.</p></Card>:<>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px",marginBottom:"11px"}}>
+              <Stat icon="✅" label="Mastered" value={skills.filter(s=>s.score>=80).length} color={C.s}/>
+              <Stat icon="🟡" label="Developing" value={skills.filter(s=>s.score>=60&&s.score<80).length} color={C.w}/>
+              <Stat icon="🔴" label="Needs Work" value={skills.filter(s=>s.score<60).length} color={C.d}/>
+            </div>
+            <Card style={{marginBottom:"11px"}}>{skills.map(s=><SBar key={s.skill} {...s}/>)}</Card>
+            <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>🗺️ Skill Radar</strong>
+              <ResponsiveContainer width="100%" height={190}><RadarChart data={skills}><PolarGrid stroke={C.br}/><PolarAngleAxis dataKey="skill" tick={{fontSize:8,fill:C.mu}}/><Radar dataKey="score" stroke={C.p} fill={C.p} fillOpacity={0.25}/></RadarChart></ResponsiveContainer>
+            </Card>
+          </>}
+        </div>}
+
+        {tab==="badges" && <div>
+          <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+            <strong style={{color:"#fff",fontSize:"14px",display:"block",marginBottom:"2px",fontFamily:F}}>🏆 Badges</strong>
+            <p style={{margin:0,color:C.mu,fontSize:"11px",fontFamily:F}}>{badges.length} of {BADGE_DEFS.length} earned</p>
+          </Card>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"9px"}}>
+            {BADGE_DEFS.map(b=>{const e=badges.includes(b.id);return(
+              <div key={b.id} style={{background:e?"#fefce8":C.wh,border:"2px solid "+(e?"#fbbf24":C.br),borderRadius:"11px",padding:"11px",textAlign:"center",opacity:e?1:0.4}}>
+                <div style={{fontSize:"22px"}}>{b.icon}</div>
+                <div style={{fontWeight:"700",fontSize:"11px",color:C.tx,margin:"3px 0 2px",fontFamily:F}}>{b.label}</div>
+                <div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{b.desc}</div>
+                {e&&<div style={{fontSize:"9px",color:"#d97706",fontWeight:"700",marginTop:"2px",fontFamily:F}}>EARNED ✓</div>}
+              </div>
+            );})}
+          </div>
+        </div>}
+
+        {tab==="board" && <div>
+          <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
+            <strong style={{color:"#fff",fontSize:"14px",display:"block",marginBottom:"2px",fontFamily:F}}>👑 Leaderboard</strong>
+            <p style={{margin:0,color:C.mu,fontSize:"11px",fontFamily:F}}>Ranked by average score</p>
+          </Card>
+          {board.map((s,i)=>{
+            const isMe=s.id===user.id;const cls=eqResolveClassForStudent(s,data.classes);const medal=["🥇","🥈","🥉"][i]||"";
+            return <Card key={s.id} style={{marginBottom:"6px",border:isMe?"2px solid "+C.p:"2px solid transparent",background:isMe?"#eff6ff":C.wh}}>
+              <div style={{display:"flex",alignItems:"center",gap:"9px"}}>
+                <div style={{minWidth:"30px",textAlign:"center",fontWeight:"900",fontSize:i<3?"17px":"13px",fontFamily:F,color:i<3?["#f59e0b","#94a3b8","#b45309"][i]:C.mu}}>{medal||"#"+(i+1)}</div>
+                <div style={{flex:1}}><div style={{fontWeight:"700",color:C.tx,fontSize:"13px",fontFamily:F}}>{s.name}{isMe&&<span style={{fontSize:"10px",color:C.p,marginLeft:"5px"}}>(You)</span>}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{cls?.name||"—"} · {s.total} quizzes</div></div>
+                <div style={{fontWeight:"800",color:gc(s.avg),fontSize:"15px",fontFamily:F}}>{s.avg}%</div>
+              </div>
+            </Card>;
+          })}
+        </div>}
+      </div></div>
+      <ProfileModal user={user} classes={data.classes} open={profileOpen} onClose={()=>setProfileOpen(false)} onSaved={async()=>{await reload();}}/>
+      <ReviewModal open={!!reviewResp} response={reviewResp?.response} quiz={reviewResp?.quiz} onClose={()=>setReviewResp(null)}/>
+    </div>
+  );
+}
+
+// ── CREATE QUIZ ───────────────────────────────────────────────
+function CreateQuiz({teacher, classes, students, onSave, onBack, editQuiz}) {
+  const E = editQuiz || {};
+  const [title,setTitle]=useState(E.title||""),[type,setType]=useState(E.type||"Reading"),[diff,setDiff]=useState(E.difficulty||"Easy"),[subject,setSubject]=useState(E.subject||"");
+  const [classIds,setClassIds]=useState(E.classIds||[]),[timer,setTimer]=useState(E.timer||0),[thresh,setThresh]=useState(E.masteryThreshold??MASTERY_DEFAULT),[retake,setRetake]=useState(E.allowRetake!==false),[maxRetakes,setMaxRetakes]=useState(E.maxRetakes??2),[shuffle,setShuffle]=useState(E.shuffle!==false),[openDate,setOpenDate]=useState(E.openDate||E.startDate||""),[closeDate,setCloseDate]=useState(E.closeDate||""),[passage,setPassage]=useState(E.passage||"");
+  const [readingTimeMode,setReadingTimeMode]=useState(E.readingTimeMode||"auto");
+  const [readingCustomMinutes,setReadingCustomMinutes]=useState(E.readingCustomMinutes||1);
+  const [questions,setQuestions]=useState(E.questions&&E.questions.length?E.questions.map((q,i)=>({...q,id:i+1})):[{id:1,text:"",options:["","","",""],correct:0,skill:SKILLS[0],difficulty:"Easy"}]);
+  const [mode,setMode]=useState(E.mode||"normal");
+  const [instantFeedback,setInstantFeedback]=useState(E.instantFeedback!==false);
+  const [reviewAnswers,setReviewAnswers]=useState(E.reviewAnswers!==false);
+  const [gameTimerType,setGameTimerType]=useState(E.gameTimerType||"none");
+  const [gameTimerSec,setGameTimerSec]=useState(E.gameTimerSec||20);
+  const [visibility,setVisibility]=useState(E.assignmentMode==="classes"||((E.classIds||[]).length&&!E.assignmentMode)?"classes":"private");
+  const [assignedStudents,setAssignedStudents]=useState(E.assignedStudents||[]);
+  const [stuSearch,setStuSearch]=useState("");
+  const [labelImage,setLabelImage]=useState(E.labelImage||"");
+  const [labelAnswerMode,setLabelAnswerMode]=useState(E.labelAnswerMode||"number");
+  const labelFileRef = useRef();
+  const [audioFile,setAudioFile]=useState(E.audioFile||"");
+  const [ttsVoice,setTtsVoice]=useState(E.ttsVoice||"woman");
+  const [voiceMode,setVoiceMode]=useState(E.voiceMode || (E.audioFile ? "ai" : "device"));
+  const [ttsVoiceStyle,setTtsVoiceStyle]=useState(E.ttsVoiceStyle||"single");
+  const [ttsTone,setTtsTone]=useState(E.ttsTone||"natural");
+  const [ttsWorkerUrl,setTtsWorkerUrl]=useState(localStorage.getItem("eq_tts_worker_url")||"");
+  const [ttsBusy,setTtsBusy]=useState(false);
+  const [ttsMsg,setTtsMsg]=useState("");
+  const [listenLimit,setListenLimit]=useState(E.listenLimit||0);
+  const [listenMatch,setListenMatch]=useState(E.listenMatch||false);
+  const [matchShuffle,setMatchShuffle]=useState(E.matchShuffle||false);
+  const [matchAnswers,setMatchAnswers]=useState(E.matchAnswers&&E.matchAnswers.length?E.matchAnswers:["","",""]);
+  const addMatchAnswer=()=>setMatchAnswers(a=>[...a,""]);
+  const updMatchAnswer=(i,v)=>setMatchAnswers(a=>a.map((x,j)=>j===i?v:x));
+  const remMatchAnswer=(i)=>setMatchAnswers(a=>a.filter((_,j)=>j!==i));
+  const [audioControls,setAudioControls]=useState(E.audioControls||{seek:true,speed:true,pause:true,restart:true,skip10:true});
+  const audioFileRef = useRef();
+  const tPreviewRef = useRef();
+  const [tSpeed,setTSpeed]=useState(1);
+  const setAC=(k,v)=>setAudioControls(c=>({...c,[k]:v}));
+  function applyEasyMode(){ setAudioControls({seek:true,speed:true,pause:true,restart:true,skip10:true}); }
+  function applyHardMode(){ setAudioControls({seek:false,speed:false,pause:false,restart:false,skip10:false}); }
+  const [err,setErr]=useState(""),[preview,setPreview]=useState(null),[showImport,setShowImport]=useState(false),[showPaste,setShowPaste]=useState(false),[csvPaste,setCsvPaste]=useState("");
+  const [showModels,setShowModels]=useState(()=>{try{const x=sessionStorage.getItem("eq_open_multiple_models")==="1";sessionStorage.removeItem("eq_open_multiple_models");return x;}catch(_e){return false;}}),[modelBank,setModelBank]=useState([]),[modelMsg,setModelMsg]=useState("");
+  const [modelBusy,setModelBusy]=useState(false);
+  const [modelCountCQ,setModelCountCQ]=useState(4),[modelQuestionCount,setModelQuestionCount]=useState(20),[modelUnits,setModelUnits]=useState([]);
+  const modelFileRef=useRef();
+  const [showAI,setShowAI]=useState(false),[aiSource,setAiSource]=useState("topic"),[aiTopic,setAiTopic]=useState(""),[aiText,setAiText]=useState(""),[aiCount,setAiCount]=useState(8),[aiKey,setAiKeyState]=useState(getAIKey()),[aiLoading,setAiLoading]=useState(false),[aiMsg,setAiMsg]=useState("");
+  const [aiLength,setAiLength]=useState("medium");
+  const [aiListenType,setAiListenType]=useState("auto");
+  const [aiListenLevel,setAiListenLevel]=useState("auto");
+  const [aiAudioFile,setAiAudioFile]=useState("");
+  const [aiAudioUrl,setAiAudioUrl]=useState("");
+  const aiAudioRef=useRef();
+  const [aiTopicIdeas,setAiTopicIdeas]=useState([]);
+  const [aiReadingLevel,setAiReadingLevel]=useState("level1");
+  const [aiReadingWords,setAiReadingWords]=useState(120);
+  const [aiReadingQMode,setAiReadingQMode]=useState("auto");
+  const [aiReadingTypes,setAiReadingTypes]=useState(["Main Idea","Detail Recall","Vocabulary","Inference"]);
+  const readingTypeOptions=["Main Idea","Detail Recall","Vocabulary","Inference","Reference","Author Purpose","Sequencing","Summary / Best Title","True / False"];
+  function toggleReadingType(t){ setAiReadingTypes(xs=>xs.includes(t)?xs.filter(x=>x!==t):[...xs,t]); }
+  const [aiImage,setAiImage]=useState("");
+  const aiImageRef=useRef();
+  const [aiRule,setAiRule]=useState("");
+  const [aiQFormat,setAiQFormat]=useState("mcq");
+  async function handleAiImage(e){ const file=e.target.files[0]; if(e.target)e.target.value=""; if(!file)return; if(file.size>4000000){setAiMsg("Image too large (max ~4MB).");return;} const r=new FileReader(); r.onload=()=>setAiImage(r.result); r.readAsDataURL(file); }
+  async function handleAiAudio(e){ const file=e.target.files[0]; if(e.target)e.target.value=""; if(!file)return; if(file.size>700000){setAiMsg("⚠️ Audio too big to upload (max ~700KB). Use a shorter clip, or attach audio via a link in the Listening Script box instead.");return;} const r=new FileReader(); r.onload=()=>setAiAudioFile(r.result); r.readAsDataURL(file); }
+  const aiFileRef = useRef();
+  const allQuizClasses=(classes||[]).filter(c=>!c.deleted);
+  const myClasses=allQuizClasses;
+  function defaultSkillForType(t){
+    if(t==="Grammar") return "Grammar";
+    if(t==="Vocabulary") return "Vocabulary";
+    if(t==="Grammar & Vocabulary") return "Grammar";
+    if(t==="Listening") return "Listening Comprehension";
+    return "Main Idea";
+  }
+  const addQ=()=>setQuestions(q=>[...q,{id:q.length+1,text:"",options:["","","",""],correct:0,skill:defaultSkillForType(type),difficulty:diff}]);
+  const remQ=i=>setQuestions(q=>q.filter((_,j)=>j!==i).map((x,j)=>({...x,id:j+1})));
+  const updQ=(i,k,v)=>setQuestions(q=>{const n=[...q];n[i]={...n[i],[k]:v};return n;});
+  const updO=(qi,oi,v)=>setQuestions(q=>{const n=[...q];n[qi].options[oi]=v;return n;});
+  async function handleAudioUpload(e){
+    const file=e.target.files[0]; if(e.target)e.target.value="";
+    if(!file) return;
+    if(file.size>700000){ setErr("⚠️ This audio is too big to upload directly (max ~700KB). For longer audio, upload it to a site and paste the LINK in the box above instead."); return; }
+    const reader=new FileReader();
+    reader.onload=()=>setAudioFile(reader.result);
+    reader.readAsDataURL(file);
+  }
+  async function previewSpeak(){
+    try{
+      if(audioFile && String(audioFile).startsWith("worker-tts:")){
+        const url=await eqPlayWorkerTTS(audioFile, passage);
+        const a=tPreviewRef.current;
+        if(a){ a.src=url; a.playbackRate=tSpeed; await a.play(); }
+        return;
+      }
+      if(audioFile){ const a=tPreviewRef.current; if(a){a.playbackRate=tSpeed;await a.play();} return; }
+      if(!passage.trim()){setErr("Write or generate a script first.");return;}
+
+      // Preview before AI generation uses device voices, but NEVER reads Speaker A/B labels.
+      // Multi-Voice preview alternates two English device voices turn-by-turn.
+      window.speechSynthesis.cancel();
+      const allVoices=window.speechSynthesis.getVoices();
+      const english=allVoices.filter(v=>/en/i.test(v.lang||""));
+      const voiceA=english.find(v=>/(daniel|david|male|google uk english male|mark)/i.test(v.name||"")) || english[0] || allVoices[0];
+      const voiceB=english.find(v=>v!==voiceA && /(samantha|aria|libby|female|google uk english female|victoria|zira)/i.test(v.name||"")) || english.find(v=>v!==voiceA) || voiceA;
+      const turns=(ttsVoiceStyle==="multi"?eqParseDialogueTurns(passage):[{role:"Narrator",text:eqStripSpeakerLabels(passage)}]).filter(t=>String(t.text||"").trim());
+      if(!turns.length){setErr("The listening script has no speakable text.");return;}
+      setTtsMsg(ttsVoiceStyle==="multi"?"ℹ️ Preview uses device voices. Speaker labels are removed. Generate AI Voice for the natural emotional version.":"ℹ️ Preview uses device voice. Speaker labels are removed.");
+      let i=0;
+      const speakNext=()=>{
+        if(i>=turns.length) return;
+        const turn=turns[i++];
+        const u=new SpeechSynthesisUtterance(eqStripSpeakerLabels(turn.text));
+        u.rate=0.9*tSpeed;
+        u.pitch=1;
+        u.lang="en-US";
+        if(ttsVoiceStyle==="multi") u.voice=eqRoleKey(turn.role)==="a"?voiceA:voiceB;
+        else {
+          const preferred=ttsVoice==="man"?voiceA:voiceB;
+          if(preferred)u.voice=preferred;
+        }
+        u.onend=speakNext;
+        u.onerror=()=>{};
+        window.speechSynthesis.speak(u);
+      };
+      speakNext();
+    }catch(e){
+      setTtsMsg("⚠️ "+(e.message||"Could not play voice preview."));
+    }
+  }
+  function tStop(){ window.speechSynthesis.cancel(); if(tPreviewRef.current)tPreviewRef.current.pause(); }
+  function detectVoiceRoleMismatch(script, selectedVoice){
+    const s=String(script||"").toLowerCase();
+    const familyAge=/\b(dad|father|mom|mother|parent|child|kid|son|daughter|boy|girl)\b/i.test(s);
+    const male=/\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\s*:/i.test(script) || /\b(dad|father|grandfather|uncle|brother|son|boy|man|mr\.?|husband)\b/i.test(s);
+    const female=/\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\s*:/i.test(script) || /\b(mom|mother|grandmother|aunt|sister|daughter|girl|woman|mrs\.?|miss|wife)\b/i.test(s);
+    if(familyAge) return "Single Voice cannot use family/age roles such as Dad/Mom/child. Choose Multi-Voice Dialogue, then press Generate AI MP3 Voice again.";
+    if(selectedVoice==="woman" && male) return "The script includes male roles such as Dad/father/boy/man. Change the role labels to Speaker A/B or choose Man voice.";
+    if(selectedVoice==="man" && female) return "The script includes female roles such as Mom/mother/girl/woman. Change the role labels to Speaker A/B or choose Woman voice.";
+    return "";
+  }
+
+  async function handleGenerateAIVoice(){
+    setVoiceMode("ai");
+    if(!passage.trim()){ setErr("Write or generate a script first."); return; }
+    const isMultiVoice = String(ttsVoiceStyle||"").toLowerCase()==="multi";
+    const roleWarn = isMultiVoice ? "" : detectVoiceRoleMismatch(passage, ttsVoice);
+    if(roleWarn){ setTtsMsg("⚠️ "+roleWarn); return; }
+    if(isMultiVoice){ setTtsMsg(""); }
+    setTtsBusy(true); setTtsMsg(""); setErr("");
+    try{
+      if(ttsWorkerUrl && ttsWorkerUrl.trim()) localStorage.setItem("eq_tts_worker_url", ttsWorkerUrl.trim());
+      const voiceId = ttsVoice==="man" ? "cedar" : "marin";
+      const url = await eqGenerateTTS(passage, voiceId, "listening_audio/"+(E.id||uid())+"_"+Date.now()+".mp3", {quizId:E.id||"new-quiz", title:title||"listening", voiceStyle:ttsVoiceStyle, tone:ttsTone});
+      if(!url || !String(url).startsWith("http")) throw new Error("Generated MP3 URL is invalid.");
+      setVoiceMode("ai");
+      setAudioFile(url);
+      setTtsMsg("✅ AI Voice ready. Speaker labels were removed automatically. Save the quiz; students will hear the finished audio directly.");
+    }catch(e){
+      setTtsMsg("⚠️ "+(e.message||"Could not generate AI audio. Falling back to device voice."));
+    }finally{
+      setTtsBusy(false);
+    }
+  }
+  function tSeek(sec){ if(audioFile&&tPreviewRef.current)tPreviewRef.current.currentTime=Math.max(0,tPreviewRef.current.currentTime+sec); }
+  function tCycleSpeed(){ const speeds=[0.5,0.75,1,1.25,1.5]; const i=speeds.indexOf(tSpeed); const next=speeds[(i+1)%speeds.length]; setTSpeed(next); if(audioFile&&tPreviewRef.current)tPreviewRef.current.playbackRate=next; }
+  async function handleLabelImage(e){
+    const file=e.target.files[0]; if(e.target)e.target.value="";
+    if(!file) return;
+    if(file.size>600000){ setErr("⚠️ Image too big to upload directly (max ~600KB). Use a smaller image, or paste an image URL instead."); return; }
+    const reader=new FileReader();
+    reader.onload=()=>setLabelImage(reader.result);
+    reader.readAsDataURL(file);
+  }
+  // For Image Labeling: each "question" is a numbered part. text=part number label, options=choices, correct=index, correctLabel=the right name
+  const addLabelPart=()=>setQuestions(q=>[...q,{id:q.length+1,text:"Part "+(q.length+1),options:["","","",""],correct:0,correctNum:String(q.length+1),skill:"Labeling",difficulty:diff}]);
+
+  async function fetchTopicIdeas(){
+    setAiMsg(""); setErr("");
+    if(!aiKey.trim()){setAiMsg("Please enter your AI key first.");return;}
+    setAiLoading(true);
+    try{
+      setAIKey(aiKey.trim());
+      const topics = type==="Reading"
+        ? await suggestReadingTopics({apiKey:aiKey.trim(),difficulty:diff,readingLevel:aiReadingLevel})
+        : await suggestListeningTopics({apiKey:aiKey.trim(),difficulty:diff,listenType:aiListenType,listenLevel:aiListenLevel});
+      setAiTopicIdeas(topics);
+    }
+    catch(e){ setAiMsg("Could not get ideas: "+(e.message||e)); }
+    setAiLoading(false);
+  }
+  async function runAI() {
+    setAiMsg(""); setErr("");
+    if (!aiKey.trim()) { setAiMsg("Please enter your AI key first (see the help link below)."); return; }
+    let source = "", st = aiSource;
+    if (aiSource === "topic") { if(!aiTopic.trim()){setAiMsg("Please type a topic.");return;} source = aiTopic.trim(); }
+    else if (aiSource === "passage") { if(!aiText.trim()){setAiMsg("Please paste some text.");return;} source = aiText.trim(); }
+    else if (aiSource === "extract") { if(!aiText.trim()){setAiMsg("Please paste your questions.");return;} source = aiText.trim(); }
+    else if (aiSource === "photo") { if(!aiImage){setAiMsg("Please upload a photo first.");return;} source = "image"; }
+    else if (aiSource === "rule") { if(!aiRule.trim()){setAiMsg("Please type a grammar rule.");return;} source = aiRule.trim(); }
+    else { setAiMsg("Please choose a file below."); return; }
+    setAiLoading(true);
+    try {
+      setAIKey(aiKey.trim());
+      const wantMatch = type==="Listening" && listenMatch;
+      let result = await generateQuizAI({apiKey:aiKey.trim(), source, sourceType:st, count:aiCount, type, difficulty:diff, length:aiLength, listenType:aiListenType, listenLevel:aiListenLevel, image:aiSource==="photo"?aiImage:null, qFormat:aiQFormat, matchMode:wantMatch, readingLevel:aiReadingLevel, readingWords:aiReadingWords, readingQuestionMode:aiReadingQMode, readingQuestionTypes:aiReadingTypes});
+      const qs = result.questions || result;
+      const hasRealAudio = type==="Listening" && (aiAudioUrl.trim()||aiAudioFile);
+      // Matching: AI returns the answer bank too — load it into the editor
+      if (wantMatch && result.matchAnswers && result.matchAnswers.length) setMatchAnswers(result.matchAnswers);
+      if (type==="Listening" && result.script && !hasRealAudio) { setPassage(result.script); setErr("🎧 Listening script created! Review it in the '🎧 Listening Script' box above after saving these questions."); }
+      if (type==="Reading" && result.passage) { setPassage(result.passage); try { const old=JSON.parse(localStorage.getItem("eq_recent_reading_topics")||"[]"); localStorage.setItem("eq_recent_reading_topics", JSON.stringify([...old, source].slice(-30))); } catch(e){} if(!title.trim() && result.title) setTitle(result.title); }
+      // If teacher attached their own audio (URL or upload), use it (students hear the real audio, not TTS)
+      if (hasRealAudio) setAudioFile(aiAudioUrl.trim()||aiAudioFile);
+      setPreview(qs); setShowImport(true); setShowAI(false);
+      setAiMsg("");
+    } catch(e) {
+      setAiMsg("Generation failed: " + (e.message||e));
+    }
+    setAiLoading(false);
+  }
+  async function runAIQuestionsOnly(){
+    setAiMsg(""); setErr("");
+    if(type!=="Reading"){ setAiMsg("Regenerate Questions Only is for Reading quizzes."); return; }
+    if(!passage.trim()){ setAiMsg("Generate or paste a reading passage first."); return; }
+    if(!aiKey.trim()){ setAiMsg("Please enter your AI key first."); return; }
+    setAiLoading(true);
+    try{
+      setAIKey(aiKey.trim());
+      const result = await generateQuizAI({apiKey:aiKey.trim(), source:passage, sourceType:"passage", count:aiCount, type:"Reading", difficulty:diff, qFormat:"mcq", readingLevel:aiReadingLevel, readingWords:aiReadingWords, readingQuestionMode:aiReadingQMode, readingQuestionTypes:aiReadingTypes});
+      const qs=result.questions||result;
+      setPreview(qs); setShowImport(true); setShowAI(false);
+    }catch(e){ setAiMsg("Generation failed: "+(e.message||e)); }
+    setAiLoading(false);
+  }
+
+  async function runAIFile(e) {
+    const file = e.target.files[0]; e.target.value="";
+    if(!file) return;
+    setAiMsg(""); setErr("");
+    if (!aiKey.trim()) { setAiMsg("Please enter your AI key first."); return; }
+    setAiLoading(true);
+    try {
+      const txt = await extractFileText(file);
+      if (!txt || txt.trim().length < 20) { setAiMsg("Could not read text from this file. Try a .txt file or paste the text instead."); setAiLoading(false); return; }
+      setAIKey(aiKey.trim());
+      let result = await generateQuizAI({apiKey:aiKey.trim(), source:txt, sourceType:"file", count:aiCount, type, difficulty:diff, readingLevel:aiReadingLevel, readingWords:aiReadingWords, readingQuestionMode:aiReadingQMode, readingQuestionTypes:aiReadingTypes});
+      const qs = result.questions || result;
+      if (type==="Listening" && result.script) setPassage(result.script);
+      setPreview(qs); setShowImport(true); setShowAI(false);
+    } catch(e) {
+      setAiMsg("Generation failed: " + (e.message||e));
+    }
+    setAiLoading(false);
+  }
+
+  function parseRows(rows){
+    setErr("");
+    if(!rows||!rows.length){setErr("No rows found.");return;}
+
+    // Auto-detect skill. For Grammar/Vocab quiz types, FORCE the skill to match the type
+    // (ignore any "Main Idea" etc. that came from the file or AI).
+    function autoSkill(text, providedSkill) {
+      return detectSkill(text, providedSkill, type);
+    }
+
+    // Try to detect a header row and map columns by name
+    const first = rows[0] || [];
+    const headerText = first.map(c=>String(c||"").trim().toLowerCase());
+    const looksHeader = headerText.some(h => h.includes("question")||h.includes("option")||h.includes("answer")||h.includes("correct"));
+
+    let colMap = null;
+    if (looksHeader) {
+      colMap = {q:-1,a:-1,b:-1,c:-1,d:-1,correct:-1,skill:-1,diff:-1};
+      headerText.forEach((h,i)=>{
+        if (colMap.q<0 && (h==="question"||h.includes("question text")||(h.includes("question")&&!h.includes("no")&&!h.includes("type")&&!h.includes("number"))) ) colMap.q=i;
+        else if (h==="a"||h==="option a"||h.includes("option a")||h==="opt a") colMap.a=i;
+        else if (h==="b"||h==="option b"||h.includes("option b")||h==="opt b") colMap.b=i;
+        else if (h==="c"||h==="option c"||h.includes("option c")||h==="opt c") colMap.c=i;
+        else if (h==="d"||h==="option d"||h.includes("option d")||h==="opt d") colMap.d=i;
+        else if (h.includes("correct")||h.includes("answer")||h==="key") colMap.correct=i;
+        else if (h.includes("skill")) colMap.skill=i;
+        else if (h.includes("difficulty")||h.includes("level")) colMap.diff=i;
+      });
+      // If we couldn't find proper option columns by name, fall back to position
+      if (colMap.q<0||colMap.a<0||colMap.b<0) colMap = null;
+    }
+
+    let startRow = looksHeader ? 1 : 0;
+    let data = rows.slice(startRow).filter(r=>r&&r.length&&String(r[colMap?colMap.q:0]||"").trim());
+    if(!data.length){setErr("No question rows found. Each row needs a question, 4 options, and the correct answer.");return;}
+
+    let result =[],skipped=[];
+    data.forEach((r,i)=>{
+      let q,a,b,c,d,cl,sk,df;
+      if (colMap) {
+        q=String(r[colMap.q]||"").trim();
+        a=String(r[colMap.a]||"").trim();
+        b=String(r[colMap.b]||"").trim();
+        c=colMap.c>=0?String(r[colMap.c]||"").trim():"";
+        d=colMap.d>=0?String(r[colMap.d]||"").trim():"";
+        cl=colMap.correct>=0?String(r[colMap.correct]||"A").trim().toUpperCase():"A";
+        sk=colMap.skill>=0?String(r[colMap.skill]||"").trim():"";
+        df=colMap.diff>=0?String(r[colMap.diff]||"").trim():"";
+      } else {
+        q=String(r[0]||"").trim();a=String(r[1]||"").trim();b=String(r[2]||"").trim();c=String(r[3]||"").trim();d=String(r[4]||"").trim();
+        cl=String(r[5]||"A").trim().toUpperCase();sk=String(r[6]||"").trim();df=String(r[7]||"").trim();
+      }
+      if(!q||!a||!b||!c||!d){skipped.push(i+startRow+1);return;}
+      // correct can be a letter (A-D) or a number (1-4) or the answer text
+      let ci = ["A","B","C","D"].indexOf(cl);
+      if (ci<0) { const n=parseInt(cl); if(n>=1&&n<=4) ci=n-1; }
+      if (ci<0) { const opts=[a,b,c,d].map(x=>x.toLowerCase()); const f=opts.indexOf(cl.toLowerCase()); if(f>=0) ci=f; }
+      if (ci<0) ci=0;
+      result.push({id:result.length+1,text:q,options:[a,b,c,d],correct:ci,skill:autoSkill(q,sk),difficulty:DIFFICULTIES.includes(df)?df:diff});
+    });
+    if(!result.length){setErr("Could not read questions. Make sure your file has columns: Question, Option A, B, C, D, and Correct answer.");return;}
+    if(skipped.length)setErr("Imported "+result.length+". Skipped rows "+skipped.join(", ")+" (missing data).");
+    setPreview(result);setShowImport(true);
+  }
+  function downloadModelTemplate(){
+    const rows=[
+      {Unit:"Unit 1",Type:"Grammar",Question:"I ___ to school yesterday.",A:"go",B:"went",C:"gone",D:"going",Correct:"B"},
+      {Unit:"Unit 1",Type:"Vocabulary",Question:"Huge means ___.",A:"small",B:"enormous",C:"quiet",D:"weak",Correct:"B"}
+    ];
+    const ws=XLSX.utils.json_to_sheet(rows,{header:["Unit","Type","Question","A","B","C","D","Correct"]});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Question Bank");XLSX.writeFile(wb,"EduQuiz-Question-Bank-Template.xlsx");
+  }
+  async function handleModelBankFile(e){
+    const file=e.target.files&&e.target.files[0];if(!file)return;
+    try{
+      const ab=await file.arrayBuffer(),wb=XLSX.read(new Uint8Array(ab),{type:"array",cellText:true});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:"",raw:false}),good=[],bad=[];
+      rows.forEach((r,i)=>{
+        const g=(...ks)=>{for(const k of ks)if(r[k]!==undefined)return String(r[k]).trim();return""};
+        const unit=g("Unit","unit","UNIT"),rt=g("Type","type","TYPE"),typ=/^g/i.test(rt)?"Grammar":(/^v/i.test(rt)?"Vocabulary":"");
+        const text=g("Question","question","QUESTION"),opts=[g("A","a"),g("B","b"),g("C","c"),g("D","d")],cor=g("Correct","correct","CORRECT").toUpperCase();
+        if(!unit||!typ||!text||opts.some(x=>!x)||!["A","B","C","D"].includes(cor)){bad.push(i+2);return}
+        good.push({bankId:"cqbank_"+(i+2)+"_"+Date.now(),unit,type:typ,text,options:opts,correct:["A","B","C","D"].indexOf(cor)});
+      });
+      setModelBank(good);setModelUnits(Array.from(new Set(good.map(x=>x.unit))));
+      setModelMsg("✅ "+good.length+" questions loaded · "+good.filter(x=>x.type==="Grammar").length+" Grammar · "+good.filter(x=>x.type==="Vocabulary").length+" Vocabulary"+(bad.length?" · ⚠️ Invalid rows: "+bad.join(", "):""));
+    }catch(ex){setModelMsg("⚠️ Could not read this Excel file.");}
+    e.target.value="";
+  }
+  function balancedModelQuestions(pool,count,modelIndex,usage){
+    const half=count/2,units=modelUnits.slice(),result=[];
+    ["Grammar","Vocabulary"].forEach(typ=>{
+      const picked=[],used=new Set(),buckets=units.map(u=>pool.filter(x=>x.unit===u&&x.type===typ));
+      let cursor=modelIndex%Math.max(1,buckets.length),guard=0;
+      while(picked.length<half&&guard<10000){guard++;const b=buckets[cursor%buckets.length]||[];cursor++;const cand=b.filter(x=>!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)||Math.random()-.5);if(cand.length){const x=cand[0];picked.push(x);used.add(x.bankId);usage[x.bankId]=(usage[x.bankId]||0)+1;}if(buckets.every(z=>z.every(x=>used.has(x.bankId))))break;}
+      if(picked.length<half)pool.filter(x=>x.type===typ&&!used.has(x.bankId)).sort((a,b)=>(usage[a.bankId]||0)-(usage[b.bankId]||0)).slice(0,half-picked.length).forEach(x=>{picked.push(x);usage[x.bankId]=(usage[x.bankId]||0)+1;});
+      result.push(...picked);
+    });
+    return result;
+  }
+  async function createModelsFromCreateQuiz(){
+    if(editQuiz){setModelMsg("🔒 Existing forms are locked. Edit/Save cannot create more forms.");return;}
+    if(modelBusy)return;
+    if(!title.trim()){setModelMsg("⚠️ Add the Quiz Title above first.");return}
+    if(!modelBank.length){setModelMsg("⚠️ Import the Excel question bank first.");return}
+    if(!modelUnits.length){setModelMsg("⚠️ Select at least one Unit.");return}
+    const n=Math.max(1,Math.min(26,Number(modelCountCQ)||1)),qn=Math.max(2,Number(modelQuestionCount)||20);
+    if(qn%2){setModelMsg("⚠️ Use an even question count so Grammar and Vocabulary are equal.");return}
+    const pool=modelBank.filter(x=>modelUnits.includes(x.unit));
+    if(pool.filter(x=>x.type==="Grammar").length<qn/2||pool.filter(x=>x.type==="Vocabulary").length<qn/2){setModelMsg("⚠️ Not enough Grammar/Vocabulary questions in the selected Units.");return}
+    const groupId="modelgrp_"+uid(),usage={};
+    setModelBusy(true);
+    setModelMsg("Creating balanced models...");
+    try{
+    for(let mi=0;mi<n;mi++){
+      const label=String.fromCharCode(65+mi),chosen=balancedModelQuestions(pool,qn,mi,usage);
+      const assigned=[];
+      const qq=chosen.map((x,qi)=>({id:qi+1,text:x.text,options:x.options.slice(),correct:x.correct,skill:x.type,difficulty:"Easy",unit:x.unit,bankId:x.bankId}));
+      const quiz={id:uid(),code:shortCode(),teacherId:teacher.id,title:title.trim(),type:"Grammar & Vocabulary",difficulty:diff,subject:subject||"English",classIds:[],timer:Number(timer)||0,masteryThreshold:Number(thresh)||MASTERY_DEFAULT,allowRetake:retake,maxRetakes:retake?Number(maxRetakes)||0:0,shuffle:true,mode,instantFeedback,reviewAnswers,assignedStudents:assigned,openDate,closeDate,questions:qq,status:"draft",createdAt:today(),modelGroupId:groupId,modelGroupTitle:title.trim(),modelLabel:label,modelUnits:modelUnits.slice(),modelCount:n};
+      await fsSet("quizzes",quiz.id,quiz);
+    }
+    setModelMsg("✅ Saved "+n+" forms as one PRIVATE quiz. Nothing was published. Use تحديد الطلاب / Edit, choose the audience, then Save to publish.");
+    setTimeout(()=>{ if(onBack) onBack(); },700);
+    }catch(ex){
+      setModelMsg("⚠️ Save failed: "+(ex&&ex.message?ex.message:ex));
+    }finally{ setModelBusy(false); }
+  }
+  function handleFile(e){
+    const file=e.target.files[0];if(!file)return;setErr("");setPreview(null);
+    const isCSV=file.name.toLowerCase().endsWith(".csv");const reader=new FileReader();
+    reader.onerror=()=>setErr("Could not read file. Try CSV.");
+    reader.onload=ev=>{try{
+      let rows=[];
+      if(isCSV){const lines=ev.target.result.trim().split(/[\r\n]+/).filter(l=>l.trim());rows=lines.map(parseCsvLine);}
+      else{const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array",cellText:true});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:"",raw:false});}
+      parseRows(rows);
+    }catch(ex){setErr("Import failed: "+ex.message+". Try CSV.");}};
+    e.target.value="";if(isCSV)reader.readAsText(file);else reader.readAsArrayBuffer(file);
+  }
+  function parseCsvLine(line){const cols=[];let cur="",inQ=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')inQ=!inQ;else if(ch===","&&!inQ){cols.push(cur.trim());cur="";}else cur+=ch;}cols.push(cur.trim());return cols;}
+  function parsePaste(){
+    if(!csvPaste.trim()){setErr("Paste your questions first.");return;}
+    setErr("");setPreview(null);
+    const lines=csvPaste.trim().split(/[\r\n]+/).filter(l=>l.trim());
+    const useTab=lines[0].includes("\t");
+    const rows=lines.map(l=>useTab?l.split("\t").map(x=>x.trim()):parseCsvLine(l));
+    parseRows(rows);
+  }
+  function applyPreview(){setQuestions(preview);setPreview(null);setShowImport(false);setShowPaste(false);setCsvPaste("");}
+  function save(){
+    // v312: editing can never create/regenerate forms.
+    if(!editQuiz && showModels && modelBank.length){ createModelsFromCreateQuiz(); return; }
+    if(!title.trim()){setErr("⚠️ Add a quiz title.");window.scrollTo(0,0);return;}
+    let valid;
+    if(type==="Image Labeling"){
+      if(!labelImage){setErr("⚠️ Add an image first (upload or paste a URL).");window.scrollTo(0,0);return;}
+      // Each part needs a correct label. If choose-mode, options must be filled.
+      valid=questions.filter(q=>(q.correctLabel||"").trim());
+      if(!valid.length){setErr("⚠️ Add at least one word with its correct name.");return;}
+      if(labelAnswerMode==="number"){
+        const bad=valid.find(q=>!String(q.correctNum||"").trim());
+        if(bad){setErr("⚠️ Each word needs its number (the number it matches on the image).");return;}
+      }
+      if(labelAnswerMode==="choose"){
+        const bad=valid.find(q=>!q.options.every(o=>o.trim()));
+        if(bad){setErr("⚠️ In choose mode, fill all 4 options for each part.");return;}
+        // ensure correct index points to the correctLabel
+        valid=valid.map(q=>{const ci=q.options.findIndex(o=>o.trim().toLowerCase()===(q.correctLabel||"").trim().toLowerCase());return {...q,correct:ci>=0?ci:0};});
+      }
+    } else if(type==="Listening" && listenMatch){
+      const ans=matchAnswers.filter(a=>a.trim());
+      if(ans.length<2){setErr("⚠️ Add at least 2 answer choices (a, b, c…).");return;}
+      valid=questions.filter(q=>q.text.trim()&&String(q.correctLabel||"").trim());
+      if(!valid.length){setErr("⚠️ Add at least one question with its correct letter.");return;}
+      // normalize correct letter to lowercase
+      valid=valid.map(q=>({...q,correctLabel:String(q.correctLabel).trim().toLowerCase()}));
+    } else {
+      valid=questions.filter(q=>q.text.trim()&&q.options.every(o=>o.trim()));
+      if(!valid.length){setErr("⚠️ Add at least one complete question or import.");return;}
+      const incomplete=questions.filter(q=>q.text.trim()||q.options.some(o=>o.trim())).filter(q=>!q.text.trim()||q.options.some(o=>!o.trim()));
+      if(incomplete.length){setErr("⚠️ Some questions are incomplete.");return;}
+    }
+    // Safety: block oversized embedded audio (Firestore limit ~1MB per quiz)
+    if(type==="Listening" && audioFile && audioFile.startsWith("data:") && audioFile.length>900000){
+      setErr("⚠️ The uploaded audio is too large to save. Paste a ready MP3 link like your old tests.");window.scrollTo(0,0);return;
+    }
+    // Do not save worker-tts for students. It causes slow loading because it calls Worker/OpenAI every time.
+    if(type==="Listening" && audioFile && String(audioFile).startsWith("worker-tts:")){
+      setErr("⚠️ This old temporary AI voice cannot be saved. Generate AI Voice again to create a ready MP3 link, or use Device Voice.");window.scrollTo(0,0);return;
+    }
+    const saveClassIds=visibility==="classes"?(classIds||[]).map(canonicalClassId).filter(Boolean):[];
+    const saveAssignedStudents=visibility==="private"?assignedStudents:[];
+    const hasAudience=saveAssignedStudents.length>0 || (visibility==="classes" && saveClassIds.length>0);
+    const saveStatus=hasAudience?((E.status==="closed")?"closed":"open"):"draft";
+    onSave({id:E.id||uid(),code:E.code||shortCode(),teacherId:teacher.id,title:title.trim(),type,difficulty:diff,subject,classIds:saveClassIds,timer,masteryThreshold:thresh,allowRetake:retake,maxRetakes:retake?Math.max(0,Number(maxRetakes)||0):0,shuffle,mode,instantFeedback,reviewAnswers,gameTimerType,gameTimerSec,assignedStudents:saveAssignedStudents,openDate,startDate:openDate,closeDate,passage,readingTimeMode:type==="Reading"?readingTimeMode:"auto",readingCustomMinutes:type==="Reading"?Math.max(0,Number(readingCustomMinutes)||0):0,labelImage:type==="Image Labeling"?labelImage:"",labelAnswerMode:type==="Image Labeling"?labelAnswerMode:"",audioFile:type==="Listening"&&audioFile&&!String(audioFile).startsWith("worker-tts:")?audioFile:"",voiceMode:type==="Listening"?voiceMode:"device",ttsVoice:type==="Listening"?ttsVoice:"",ttsVoiceStyle:type==="Listening"?ttsVoiceStyle:"single",ttsTone:type==="Listening"?ttsTone:"natural",listenLimit:type==="Listening"?listenLimit:0,listenMatch:type==="Listening"?listenMatch:false,matchShuffle:type==="Listening"&&listenMatch?matchShuffle:false,matchAnswers:type==="Listening"&&listenMatch?matchAnswers.filter(a=>a.trim()):[],audioControls:type==="Listening"?audioControls:null,questions:valid,status:saveStatus,createdAt:E.createdAt||today(),modelGroupId:E.modelGroupId||"",modelGroupTitle:E.modelGroupTitle||"",modelLabel:E.modelLabel||"",modelUnits:Array.isArray(E.modelUnits)?E.modelUnits:[],modelCount:Number(E.modelCount)||0,assignmentMode:visibility});
+  }
+  const inp={width:"100%",padding:"8px 10px",borderRadius:"7px",border:"1px solid "+C.br,fontSize:"12px",outline:"none",background:"#f8fafc",color:C.tx,fontFamily:F,boxSizing:"border-box"};
+
+  return (
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
+      <HDR title={editQuiz?"Edit Quiz":"Create Quiz"} sub="Teacher" left={<button onClick={onBack} style={{background:"none",border:"none",color:C.mu,cursor:"pointer",fontSize:"18px",padding:0}}>←</button>} right={<Btn color={C.s} onClick={save}>💾 Save</Btn>}/>
+      <div style={{flex:1,overflowY:"auto"}}>
+      <div style={{maxWidth:"720px",margin:"0 auto",padding:"14px"}}>
+        {err && <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:"8px",padding:"9px 12px",color:"#991b1b",fontSize:"12px",marginBottom:"11px",fontFamily:F}}>{err}</div>}
+        {editQuiz && <div style={{background:"#fffbeb",border:"1px solid #fbbf24",borderRadius:"8px",padding:"9px 12px",color:"#92400e",fontSize:"12px",marginBottom:"11px",fontFamily:F}}>⏸️ This quiz is paused while you edit. It will reopen automatically when you tap Save (if it was open before).</div>}
+        <Card style={{marginBottom:"11px"}}>
+          <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"10px"}}>📋 Quiz Details</strong>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px"}}>
+            <div><Label text="Title *"/><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Quiz title" style={inp}/></div>
+            <div><Label text="Type"/><select value={type} onChange={e=>{const nt=e.target.value;setType(nt);setQuestions(qs=>qs.map(q=>({...q,skill:(nt==="Grammar")?"Grammar":(nt==="Vocabulary")?"Vocabulary":(nt==="Grammar & Vocabulary")?(q.skill==="Grammar"||q.skill==="Vocabulary"?q.skill:"Grammar"):(nt==="Listening")?"Listening Comprehension":q.skill})));}} style={inp}>{QUIZ_TYPES.map(t=><option key={t}>{t}</option>)}</select></div>
+            <div><Label text="Difficulty"/><select value={diff} onChange={e=>setDiff(e.target.value)} style={inp}>{DIFFICULTIES.map(d=><option key={d}>{d}</option>)}</select></div>
+            <div><Label text="Subject"/><input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="e.g. English" style={inp}/></div>
+            <div><Label text="Timer (min,0=off)"/><input type="number" value={timer} onChange={e=>setTimer(Number(e.target.value))} style={inp}/></div>
+            <div><Label text="Pass Mark (%)"/><input type="number" value={thresh} onChange={e=>setThresh(Number(e.target.value))} style={inp}/></div>
+            <div><Label text="Start Date"/><input type="date" value={openDate} onChange={e=>setOpenDate(e.target.value)} style={inp}/></div>
+            <div><Label text="Close Date"/><input type="date" value={closeDate} onChange={e=>setCloseDate(e.target.value)} style={inp}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={retake} onChange={e=>setRetake(e.target.checked)} id="rt"/><label htmlFor="rt" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>Allow retakes</label></div>
+            <div><Label text="Max retakes"/><input type="number" min="0" max="10" value={maxRetakes} onChange={e=>setMaxRetakes(Math.max(0,Number(e.target.value)||0))} disabled={!retake} style={{...inp,opacity:retake?1:.55}}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={reviewAnswers} onChange={e=>setReviewAnswers(e.target.checked)} id="ra"/><label htmlFor="ra" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>🔍 Allow answer review (after all attempts used)</label></div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px",paddingTop:"17px"}}><input type="checkbox" checked={shuffle} onChange={e=>setShuffle(e.target.checked)} id="sh"/><label htmlFor="sh" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>🔀 Shuffle for students</label></div>
+          </div>
+          <div style={{marginTop:"11px"}}>
+            <Label text="Quiz Mode"/>
+            <div style={{display:"flex",gap:"8px",marginBottom:"8px"}}>
+              <button onClick={()=>setMode("normal")} style={{flex:1,padding:"11px",borderRadius:"9px",border:"2px solid "+(mode==="normal"?C.p:C.br),background:mode==="normal"?"#eff6ff":"#fff",cursor:"pointer",fontFamily:F}}>
+                <div style={{fontSize:"18px"}}>📝</div><div style={{fontSize:"12px",fontWeight:"700",color:mode==="normal"?C.p:C.mu}}>Normal</div><div style={{fontSize:"9px",color:C.mu}}>All on one page</div>
+              </button>
+              <button onClick={()=>setMode("game")} style={{flex:1,padding:"11px",borderRadius:"9px",border:"2px solid "+(mode==="game"?C.pu:C.br),background:mode==="game"?"#faf5ff":"#fff",cursor:"pointer",fontFamily:F}}>
+                <div style={{fontSize:"18px"}}>🎮</div><div style={{fontSize:"12px",fontWeight:"700",color:mode==="game"?C.pu:C.mu}}>Game</div><div style={{fontSize:"9px",color:C.mu}}>One by one + points</div>
+              </button>
+            </div>
+            {mode==="game" && <div style={{display:"flex",alignItems:"center",gap:"6px",background:"#faf5ff",padding:"9px 11px",borderRadius:"8px",marginBottom:"8px"}}><input type="checkbox" checked={instantFeedback} onChange={e=>setInstantFeedback(e.target.checked)} id="if"/><label htmlFor="if" style={{fontSize:"12px",color:C.tx,fontFamily:F}}>✅ Show correct/wrong instantly after each answer (off = show only at the end)</label></div>}
+            {mode==="game" && <div style={{background:"#faf5ff",padding:"10px 11px",borderRadius:"8px"}}>
+              <Label text="⏱️ Game Timer (optional)"/>
+              <div style={{display:"flex",gap:"6px",marginBottom:gameTimerType!=="none"?"8px":"0",flexWrap:"wrap"}}>
+                {[{v:"none",l:"No timer"},{v:"perQ",l:"Per question"},{v:"whole",l:"Whole quiz"}].map(o=>(
+                  <button key={o.v} onClick={()=>setGameTimerType(o.v)} style={{padding:"6px 12px",borderRadius:"8px",border:"2px solid "+(gameTimerType===o.v?C.pu:C.br),background:gameTimerType===o.v?"#fff":"#fff",color:gameTimerType===o.v?C.pu:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{o.l}</button>
+                ))}
+              </div>
+              {gameTimerType==="perQ" && <div style={{display:"flex",alignItems:"center",gap:"8px"}}><input type="number" value={gameTimerSec} onChange={e=>setGameTimerSec(Math.max(5,Number(e.target.value)))} style={{...inp,width:"80px",marginBottom:0}}/><span style={{fontSize:"12px",color:C.mu,fontFamily:F}}>seconds per question</span></div>}
+              {gameTimerType==="whole" && <div style={{display:"flex",alignItems:"center",gap:"8px"}}><input type="number" value={gameTimerSec} onChange={e=>setGameTimerSec(Math.max(10,Number(e.target.value)))} style={{...inp,width:"80px",marginBottom:0}}/><span style={{fontSize:"12px",color:C.mu,fontFamily:F}}>seconds for whole quiz</span></div>}
+            </div>}
+          </div>
+          <div style={{marginTop:"11px"}}>
+            <Label text="Who can see this quiz?"/>
+            <div style={{display:"flex",gap:"6px",marginBottom:"9px",flexWrap:"wrap"}}>
+              <button onClick={()=>setVisibility("classes")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(visibility==="classes"?C.p:C.br),background:visibility==="classes"?"#eff6ff":"#fff",color:visibility==="classes"?C.p:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>👥 اختر الفصول</button>
+              <button onClick={()=>setVisibility("private")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(visibility==="private"?C.pu:C.br),background:visibility==="private"?"#faf5ff":"#fff",color:visibility==="private"?C.pu:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>🔒 Private (pick students)</button>
+            </div>
+            {visibility==="classes" && <div>
+              {myClasses.length>0 ? <>
+                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 6px",fontFamily:F}}>اختر فصلًا أو أكثر. إذا لم تحدد أي فصل فسيبقى الاختبار عندك فقط ولن يظهر لأي طالب.</p>
+                <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
+                  {myClasses.map(c=>{const sel=classIds.includes(c.id);return <button key={c.id} onClick={()=>setClassIds(sel?classIds.filter(x=>x!==c.id):[...classIds,c.id])} style={{padding:"4px 11px",borderRadius:"7px",border:"2px solid "+(sel?C.p:C.br),background:sel?"#eff6ff":"#f8fafc",color:sel?C.p:C.mu,fontWeight:"600",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{c.name}</button>;})}
+                </div>
+              </> : <p style={{fontSize:"11px",color:C.mu,fontFamily:F}}>لا توجد فصول متاحة حاليًا — سيبقى الاختبار عندك فقط.</p>}
+            </div>}
+            {((visibility==="classes" && (classIds||[]).length===0) || (visibility==="private" && assignedStudents.length===0)) && <div style={{marginTop:"8px",padding:"8px 10px",borderRadius:"8px",background:"#fffbeb",border:"1px solid #fde68a",color:"#92400e",fontSize:"11px",fontWeight:"800",fontFamily:F}}>🔒 محفوظ عند المعلم فقط — لن يظهر للطلاب حتى تحدد فصلًا أو طالبًا ثم تحفظ.</div>}
+            {visibility==="private" && <div style={{background:"#faf5ff",borderRadius:"9px",padding:"10px"}}>
+              <p style={{fontSize:"10px",color:"#6b21a8",margin:"0 0 7px",fontFamily:F}}>Pick whole classes and/or individual students from any class. ({assignedStudents.length} selected)</p>
+              {classes.length>0 && <div style={{marginBottom:"9px"}}>
+                <p style={{fontSize:"10px",color:C.mu,margin:"0 0 5px",fontFamily:F,fontWeight:"600"}}>Quick add by class:</p>
+                <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+                  {classes.map(c=>{
+                    const clsStudents=(students||[]).filter(s=>s.classId===c.id);
+                    const allSel=clsStudents.length>0 && clsStudents.every(s=>assignedStudents.includes(s.id));
+                    return <button key={c.id} onClick={()=>{
+                      if(allSel){ setAssignedStudents(assignedStudents.filter(id=>!clsStudents.some(s=>s.id===id))); }
+                      else { const ids=clsStudents.map(s=>s.id); setAssignedStudents([...new Set([...assignedStudents,...ids])]); }
+                    }} style={{padding:"5px 11px",borderRadius:"999px",border:"2px solid "+(allSel?C.pu:C.br),background:allSel?C.pu:"#fff",color:allSel?"#fff":C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{allSel?"✓ ":""}{c.name} ({clsStudents.length})</button>;
+                  })}
+                </div>
+              </div>}
+              <input value={stuSearch} onChange={e=>setStuSearch(e.target.value)} placeholder="🔍 Search name or ID…" style={{...inp,marginBottom:"8px"}}/>
+              {(students||[]).length===0 ? <p style={{fontSize:"11px",color:C.mu,fontFamily:F}}>No students yet. Add or import students first.</p> :
+                <div style={{maxHeight:"220px",overflowY:"auto"}}>
+                  {(students||[]).filter(s=>{const q=stuSearch.toLowerCase();return !q||s.name.toLowerCase().includes(q)||(s.studentId||"").toLowerCase().includes(q);}).map(s=>{const sel=assignedStudents.includes(s.id);const cls=classes.find(c=>c.id===s.classId);return(
+                    <div key={s.id} onClick={()=>setAssignedStudents(sel?assignedStudents.filter(x=>x!==s.id):[...assignedStudents,s.id])} style={{display:"flex",alignItems:"center",gap:"9px",padding:"7px 8px",borderRadius:"7px",cursor:"pointer",background:sel?"#f3e8ff":"transparent",marginBottom:"3px"}}>
+                      <div style={{width:"20px",height:"20px",borderRadius:"5px",border:"2px solid "+(sel?C.pu:C.br),background:sel?C.pu:"#fff",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"12px",flexShrink:0}}>{sel?"✓":""}</div>
+                      <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"600",color:C.tx,fontFamily:F}}>{s.name}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>ID: {s.studentId}{cls?" · "+cls.name:""}</div></div>
+                    </div>
+                  );})}
+                </div>}
+              <div style={{display:"flex",gap:"6px",marginTop:"8px"}}>
+                <Btn size="sm" color={C.mu} onClick={()=>setAssignedStudents([])}>Clear all</Btn>
+                <Btn size="sm" color={C.p} onClick={()=>setAssignedStudents((students||[]).map(s=>s.id))}>Select all</Btn>
+              </div>
+            </div>}
+          </div>
+        </Card>
+
+        {(type==="Reading"||type==="Listening") && <Card style={{marginBottom:"11px"}}>
+          <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>{type==="Listening"?"🎧 Listening Script":"📖 Reading Passage"}</strong>
+          <textarea value={passage} onChange={e=>setPassage(e.target.value)} rows={4} placeholder={type==="Listening"?"Type the script students will hear (or let AI write it below)…":"Paste the reading passage…"} style={{...inp,resize:"vertical",lineHeight:"1.7"}}/>
+          {type==="Listening" && <>
+            <p style={{fontSize:"11px",color:C.mu,margin:"6px 0 9px",fontFamily:F}}>🔊 Students will HEAR this (they won't see the text).</p>
+             <div style={{background:"#dcfce7",border:"2px solid #22c55e",borderRadius:"9px",padding:"8px 10px",marginBottom:"9px",fontSize:"12px",fontWeight:"900",color:"#166534",fontFamily:F}}>
+               ✅ AI VOICE v270: Speaker labels are never spoken. Multi-Voice uses separate dialogue turns and natural emotion.
+             </div>
+             <div style={{background:"#f8fafc",border:"1px solid "+C.br,borderRadius:"9px",padding:"9px",marginBottom:"9px"}}>
+               <Label text="🔊 Voice Mode"/>
+               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+                 <button onClick={()=>{setVoiceMode("device");setAudioFile("");setTtsMsg("⚡ Device Voice selected — instant for students.");}} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(voiceMode==="device"?C.p:C.br),background:voiceMode==="device"?"#eff6ff":"#fff",color:voiceMode==="device"?C.p:C.tx,fontWeight:"800",fontFamily:F}}>⚡ Device Voice<br/><span style={{fontSize:"10px",fontWeight:"600"}}>Instant</span></button>
+                 <button onClick={()=>setVoiceMode("ai")} style={{padding:"10px",borderRadius:"9px",border:"2px solid "+(voiceMode==="ai"?C.pu:C.br),background:voiceMode==="ai"?"#faf5ff":"#fff",color:voiceMode==="ai"?C.pu:C.tx,fontWeight:"800",fontFamily:F}}>🎙️ AI Voice<br/><span style={{fontSize:"10px",fontWeight:"600"}}>Natural</span></button>
+               </div>
+             </div>
+            <div style={{display:"flex",gap:"6px",marginBottom:"9px",flexWrap:"wrap",alignItems:"center"}}>
+              {audioFile && <Btn size="sm" color={C.mu} onClick={()=>tSeek(-10)}>⏪ 10s</Btn>}
+              <Btn size="sm" color={C.p} onClick={previewSpeak}>▶ Preview</Btn>
+              <Btn size="sm" color={C.mu} onClick={tStop}>⏹ Stop</Btn>
+              {audioFile && <Btn size="sm" color={C.mu} onClick={()=>tSeek(10)}>10s ⏩</Btn>}
+              <Btn size="sm" color={C.pu} onClick={tCycleSpeed}>⚡ {tSpeed}x</Btn>
+            </div>
+            {voiceMode==="ai" && <div style={{background:"#f5f3ff",border:"1px solid #ddd6fe",borderRadius:"7px",padding:"10px 11px",marginBottom:"9px"}}>
+              <p style={{fontSize:"11px",color:"#5b21b6",margin:"0 0 8px",fontFamily:F,fontWeight:"700"}}>🎙️ AI Voice → Ready natural audio for students</p>
+              <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}>
+                <button onClick={()=>setTtsVoice("woman")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="woman"?"#7c3aed":C.br),background:ttsVoice==="woman"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👩 Woman</button>
+                <button onClick={()=>setTtsVoice("man")} style={{flex:1,padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoice==="man"?"#7c3aed":C.br),background:ttsVoice==="man"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"12px",fontFamily:F,cursor:"pointer"}}>👨 Man</button>
+              </div>
+              <Label text="🎭 Voice style"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"8px"}}>
+                <button onClick={()=>{setTtsVoiceStyle("single");setTtsMsg("");}} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="single"?"#7c3aed":C.br),background:ttsVoiceStyle==="single"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Single Voice</button>
+                <button onClick={()=>{setTtsVoiceStyle("multi");setTtsMsg("");}} style={{padding:"8px",borderRadius:"7px",border:"1.5px solid "+(ttsVoiceStyle==="multi"?"#7c3aed":C.br),background:ttsVoiceStyle==="multi"?"#ede9fe":"#fff",fontWeight:"700",fontSize:"11px",fontFamily:F,cursor:"pointer"}}>Multi‑Voice Dialogue</button>
+              </div>
+              <Label text="😊 Tone / Emotion"/>
+              <select value={ttsTone} onChange={e=>{setTtsTone(e.target.value);setTtsMsg("");}} style={{...inp,marginBottom:"8px",fontSize:"11px"}}>
+                <option value="natural">Natural conversation</option>
+                <option value="expressive">Expressive dialogue — emotion follows each sentence</option>
+                <option value="exam">Exam listening — clear, neutral, moderate pace</option>
+                <option value="happy">Happy / cheerful</option>
+                    <option value="mixed">Mixed Emotions / مشاعر متنوعة</option>
+                <option value="sad">Sad / disappointed</option>
+                <option value="afraid">Afraid / worried</option>
+                <option value="angry">Angry / upset</option>
+                <option value="excited">Excited</option>
+                <option value="funny">Funny / light laughter</option>
+                <option value="calm">Calm / clear</option>
+              </select>
+                  <div style={{fontSize:"11px",color:"#64748b",marginTop:"5px"}}>Expressive/Mixed analyzes each dialogue turn separately: questions, excitement, worry, reassurance, sadness, controlled anger, and joy can sound different in the same conversation.</div>
+              <div style={{fontSize:"10px",color:"#6b21a8",margin:"-3px 0 8px",fontFamily:F}}>Multi‑Voice accepts labels inline or on separate lines (Speaker A:, Speaker B:, etc.). Labels are used only to choose voices and are NEVER spoken.</div>
+              <input value={ttsWorkerUrl} onChange={e=>{setTtsWorkerUrl(e.target.value);localStorage.setItem("eq_tts_worker_url",e.target.value.trim());}} placeholder="🔗 AI Voice Worker URL" style={{...inp,marginBottom:"8px",fontSize:"11px"}}/>
+              <Btn size="sm" color={C.pu} onClick={handleGenerateAIVoice} disabled={ttsBusy}>{ttsBusy?"⏳ Creating natural audio…":"✨ Generate Natural AI Voice"}</Btn>
+              {ttsMsg && <p style={{fontSize:"11px",color:ttsMsg.startsWith("✅")?"#166534":"#92400e",margin:"8px 0 0",fontFamily:F}}>{ttsMsg}</p>}
+            </div>}
+            <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px",marginTop:"4px"}}>
+              <Label text="🎙️ Ready MP3 audio link/file (fastest for students)"/>
+              <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#92400e",marginBottom:"8px",fontFamily:F}}>💡 Fastest for students: use a ready MP3 link/file like your old tests. This plays directly without Worker/OpenAI delay. Upload only works for small clips (under ~700KB).</div>
+              <input value={audioFile.startsWith("data:")?"":audioFile} onChange={e=>setAudioFile(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"8px"}}/>
+              <label htmlFor="audioUp" style={{display:"block",padding:"10px",background:audioFile.startsWith("data:")?"#f0fdf4":"#f3e8ff",color:audioFile.startsWith("data:")?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F,marginBottom:"7px"}}>{audioFile.startsWith("data:")?"✅ Small audio uploaded — tap to replace":"📤 Or upload a small clip (under ~700KB)"}</label>
+              <input id="audioUp" type="file" accept="audio/*" ref={audioFileRef} onChange={handleAudioUpload} style={{display:"none"}}/>
+              {audioFile && <div style={{marginBottom:"8px"}}><audio ref={tPreviewRef} controls src={String(audioFile||"").startsWith("worker-tts:")?"":audioFile} style={{display:"none"}}/><div><Btn size="sm" color={C.d} onClick={()=>setAudioFile("")}>Remove audio</Btn></div></div>}
+              <Label text="How many times can a student listen? (0 = unlimited)"/>
+              <input type="number" min="0" value={listenLimit} onChange={e=>setListenLimit(Math.max(0,Number(e.target.value)))} style={{...inp,marginBottom:"11px"}}/>
+              <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px"}}>
+                <Label text="🎛️ Audio controls students can use"/>
+                <div style={{display:"flex",gap:"6px",marginBottom:"9px",flexWrap:"wrap"}}>
+                  <Btn size="sm" color={C.s} onClick={applyEasyMode}>🟢 Easy (all controls)</Btn>
+                  <Btn size="sm" color={C.d} onClick={applyHardMode}>🔴 Hard (no controls)</Btn>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px"}}>
+                  {[{k:"pause",l:"⏸ Pause"},{k:"restart",l:"🔁 Restart"},{k:"seek",l:"⏪⏩ Skip 10s"},{k:"speed",l:"⚡ Speed"}].map(o=>(
+                    <label key={o.k} style={{display:"flex",alignItems:"center",gap:"7px",fontSize:"12px",color:C.tx,fontFamily:F,background:"#f8fafc",padding:"8px 10px",borderRadius:"8px",cursor:"pointer"}}>
+                      <input type="checkbox" checked={!!audioControls[o.k]} onChange={e=>setAC(o.k,e.target.checked)} style={{width:"16px",height:"16px"}}/>
+                      {o.l}
+                    </label>
+                  ))}
+                </div>
+                <p style={{fontSize:"10px",color:C.mu,margin:"7px 0 0",fontFamily:F}}>💡 For top students, use 🔴 Hard to make listening more challenging (play once, no pausing or slowing down).</p>
+              </div>
+              <div style={{borderTop:"1px solid "+C.br,paddingTop:"10px",marginTop:"10px"}}>
+                <label style={{display:"flex",alignItems:"center",gap:"9px",cursor:"pointer",marginBottom:listenMatch?"10px":"0"}}>
+                  <input type="checkbox" checked={listenMatch} onChange={e=>setListenMatch(e.target.checked)} style={{width:"18px",height:"18px"}}/>
+                  <span style={{fontSize:"13px",fontWeight:"700",color:C.tx,fontFamily:F}}>🔗 Matching mode (students write a letter for each question)</span>
+                </label>
+                {listenMatch && <div style={{background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:"9px",padding:"11px"}}>
+                  <p style={{fontSize:"11px",color:"#1e40af",margin:"0 0 9px",fontFamily:F}}>Add the answer choices (a, b, c…). You can add MORE answers than questions (extra ones become distractors). Below, for each question type the correct letter.</p>
+                  <Label text="Answer choices"/>
+                  {matchAnswers.map((ans,i)=>(
+                    <div key={i} style={{display:"flex",gap:"6px",alignItems:"center",marginBottom:"6px"}}>
+                      <span style={{minWidth:"24px",height:"24px",borderRadius:"6px",background:"#1e40af",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"800",fontSize:"12px",flexShrink:0,fontFamily:F}}>{String.fromCharCode(97+i)}</span>
+                      <input value={ans} onChange={e=>updMatchAnswer(i,e.target.value)} placeholder={"Answer "+String.fromCharCode(97+i)+" (e.g. A margherita pizza)"} style={inp}/>
+                      {matchAnswers.length>1 && <button onClick={()=>remMatchAnswer(i)} style={{background:"none",border:"none",color:C.d,fontSize:"16px",cursor:"pointer",flexShrink:0}}>✕</button>}
+                    </div>
+                  ))}
+                  <button onClick={addMatchAnswer} style={{width:"100%",padding:"8px",background:"#fff",color:"#1e40af",border:"2px dashed #bae6fd",borderRadius:"8px",fontSize:"12px",fontWeight:"700",cursor:"pointer",fontFamily:F}}>+ Add answer choice</button>
+                  <label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer",marginTop:"10px",paddingTop:"10px",borderTop:"1px solid #bae6fd"}}>
+                    <input type="checkbox" checked={matchShuffle} onChange={e=>setMatchShuffle(e.target.checked)} style={{width:"16px",height:"16px"}}/>
+                    <span style={{fontSize:"12px",color:"#1e40af",fontFamily:F}}>🔀 Shuffle the answer choices for each student (recommended for exams)</span>
+                  </label>
+                </div>}
+              </div>
+            </div>
+          </>}
+        </Card>}
+
+        {type==="Reading" && <Card style={{marginBottom:"11px",border:"1px solid "+C.br,background:"#f8fafc"}}>
+          <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"9px"}}>⏱️ Minimum reading time before Submit</strong>
+          <div style={{display:"flex",gap:"6px",marginBottom:"9px"}}>
+            <button onClick={()=>setReadingTimeMode("auto")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(readingTimeMode==="auto"?C.p:C.br),background:readingTimeMode==="auto"?"#eff6ff":"#fff",color:readingTimeMode==="auto"?C.p:C.mu,fontWeight:"800",fontSize:"12px",cursor:"pointer",fontFamily:F}}>Auto by text length</button>
+            <button onClick={()=>setReadingTimeMode("manual")} style={{flex:1,padding:"9px",borderRadius:"8px",border:"2px solid "+(readingTimeMode==="manual"?C.p:C.br),background:readingTimeMode==="manual"?"#eff6ff":"#fff",color:readingTimeMode==="manual"?C.p:C.mu,fontWeight:"800",fontSize:"12px",cursor:"pointer",fontFamily:F}}>Manual</button>
+          </div>
+          {readingTimeMode==="manual" && <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",alignItems:"end"}}>
+            <div><Label text="Minutes before Submit"/><input type="number" min="0" step="0.5" value={readingCustomMinutes} onChange={e=>setReadingCustomMinutes(Math.max(0,Math.min(15,Number(e.target.value)||0)))} style={inp}/></div>
+            <div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>الطالب يستطيع الحل مباشرة، لكن لا يستطيع التسليم إلا بعد هذا الوقت.</div>
+          </div>}
+          {readingTimeMode==="auto" && <div style={{fontSize:"11px",color:C.mu,fontFamily:F}}>Auto يحسب الوقت حسب عدد كلمات النص. الطالب يستطيع الحل مباشرة، والوقت فقط يمنع التسليم المبكر.</div>}
+        </Card>}
+
+        <Card style={{marginBottom:"11px",border:"2px solid "+C.pu,background:"#faf5ff"}}>
+          <div onClick={()=>setShowAI(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <strong style={{fontSize:"13px",color:C.pu,fontFamily:F}}>🤖 Generate with AI</strong><span style={{color:C.pu}}>{showAI?"▲":"▼"}</span>
+          </div>
+          {showAI && <div style={{marginTop:"10px"}}>
+            {aiMsg && <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:"7px",padding:"8px 11px",color:"#991b1b",fontSize:"11px",marginBottom:"9px",fontFamily:F}}>{aiMsg}</div>}
+            <div style={{background:"#f3e8ff",borderRadius:"7px",padding:"9px 11px",marginBottom:"10px",fontSize:"11px",color:"#6b21a8",fontFamily:F}}>AI creates questions for you automatically. It uses the <strong>Type</strong> & <strong>Difficulty</strong> you chose above. Cost: about 1–2 cents per quiz.</div>
+
+            <Label text="Create questions from:"/>
+            <div style={{display:"flex",gap:"6px",marginBottom:"10px",flexWrap:"wrap"}}>
+              {[{v:"topic",l:"📝 A Topic"},{v:"passage",l:"📄 Pasted Text"},{v:"extract",l:"📋 Extract My Questions"},{v:"photo",l:"📷 From a Photo"},{v:"rule",l:"✍️ Suggest on a Rule"},{v:"file",l:"📂 A File"}].map(o=>(
+                <button key={o.v} onClick={()=>setAiSource(o.v)} style={{padding:"6px 12px",borderRadius:"8px",border:"2px solid "+(aiSource===o.v?C.pu:C.br),background:aiSource===o.v?"#f3e8ff":"#fff",color:aiSource===o.v?C.pu:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{o.l}</button>
+              ))}
+            </div>
+
+            {type==="Listening" && <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#1e40af",marginBottom:"9px",fontFamily:F}}>🎧 Listening options: <b>A Topic</b> = AI writes script + questions. Choose text type, length, and difficulty. <b>Pasted Text</b> = paste the script + attach your audio, AI makes questions. <b>Extract My Questions</b> = attach your audio + paste your ready questions.{listenMatch && <span><br/><b>🔗 Matching is ON:</b> AI will build the answer bank (a, b, c…) + questions automatically.</span>}</div>}
+            {aiSource==="topic" && <div style={{marginBottom:"10px"}}>
+              <input value={aiTopic} onChange={e=>setAiTopic(e.target.value)} placeholder={type==="Listening"?"e.g. Lost Bag at Airport":type==="Reading"?"Choose a short title, e.g. Smart Homes":"e.g. Present perfect tense, or Animals vocabulary"} style={inp}/>
+              {type==="Reading" && <>
+                <div style={{marginTop:"8px"}}>
+                  <Btn size="sm" color={C.p} onClick={fetchTopicIdeas} disabled={aiLoading}>💡 Suggest 10 short reading titles</Btn>
+                </div>
+                {aiTopicIdeas.length>0 && <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px"}}>
+                  {aiTopicIdeas.map((t,i)=><button key={i} onClick={()=>setAiTopic(t)} style={{padding:"6px 11px",borderRadius:"999px",border:"1px solid "+C.pu,background:aiTopic===t?C.pu:"#fff",color:aiTopic===t?"#fff":C.pu,fontSize:"11px",fontWeight:"600",cursor:"pointer",fontFamily:F}}>{t}</button>)}
+                </div>}
+              </> }
+              {type==="Listening" && <>
+                <div style={{marginTop:"8px"}}>
+                  <Btn size="sm" color={C.p} onClick={fetchTopicIdeas} disabled={aiLoading}>💡 Suggest listening topics</Btn>
+                </div>
+                {aiTopicIdeas.length>0 && <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px"}}>
+                  {aiTopicIdeas.map((t,i)=><button key={i} onClick={()=>setAiTopic(t)} style={{padding:"6px 11px",borderRadius:"999px",border:"1px solid "+C.pu,background:aiTopic===t?C.pu:"#fff",color:aiTopic===t?"#fff":C.pu,fontSize:"11px",fontWeight:"600",cursor:"pointer",fontFamily:F}}>{t}</button>)}
+                </div>}
+                <div style={{marginTop:"10px"}}>
+                  <Label text="🎚️ Listening level"/>
+                  <select value={aiListenLevel} onChange={e=>setAiListenLevel(e.target.value)} style={{...inp,marginBottom:"8px"}}>
+                    <option value="auto">Auto – use quiz difficulty ({diff})</option>
+                    <option value="easy">Easy / A1-A2</option>
+                    <option value="intermediate">Intermediate / B1</option>
+                    <option value="advanced">Advanced / B2</option>
+                  </select>
+                  <Label text="🎭 Listening text type"/>
+                  <select value={aiListenType} onChange={e=>setAiListenType(e.target.value)} style={{...inp,marginBottom:"8px"}}>
+                    <option value="auto">Auto – choose best style</option>
+                    <option value="dialogue">Dialogue – two speakers</option>
+                    <option value="phone_call">Phone Call</option>
+                    <option value="announcement">Announcement</option>
+                    <option value="interview">Interview</option>
+                    <option value="instructions">Instructions</option>
+                    <option value="story">Short Story / Narrative</option>
+                    <option value="public_conversation">Public Conversation</option>
+                  </select>
+                  <div style={{fontSize:"10px",color:"#475569",fontFamily:F,marginBottom:"8px"}}>
+                    Difficulty used now: <b>{aiListenLevel==="auto"?diff:aiListenLevel}</b> — Hard = Advanced. Titles are kept short: 3–7 words.
+                    <br/>Voice mode now: <b>Single Voice</b>. Multi‑Voice for Dad/Mom/Boy/Girl dialogues will be added next.
+                  </div>
+                  <Label text="🎧 Listening length"/>
+                  <div style={{display:"flex",gap:"6px"}}>
+                    {[{v:"short",l:"Short ~30s"},{v:"medium",l:"Medium ~60s"},{v:"long",l:"Long ~90s"}].map(o=>(
+                      <button key={o.v} onClick={()=>setAiLength(o.v)} style={{flex:1,padding:"9px 6px",borderRadius:"8px",border:"2px solid "+(aiLength===o.v?C.pu:C.br),background:aiLength===o.v?"#f3e8ff":"#fff",color:aiLength===o.v?C.pu:C.mu,fontWeight:"700",fontSize:"11px",cursor:"pointer",fontFamily:F}}>{o.l}</button>
+                    ))}
+                  </div>
+                </div>
+              </>}
+            </div>}
+            {aiSource==="passage" && <div style={{marginBottom:"10px"}}>
+              {type==="Listening" && <div style={{marginBottom:"9px"}}>
+                <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#1e40af",marginBottom:"8px",fontFamily:F}}>📝 Paste the SCRIPT (what is said in the audio). AI makes questions from it. Then attach your real audio below so students hear it.</div>
+                <Label text="🎙️ Attach the listening audio (students will hear this)"/>
+                <input value={aiAudioUrl} onChange={e=>setAiAudioUrl(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"7px"}}/>
+                <label htmlFor="aiAudioUp2" style={{display:"block",padding:"10px",background:aiAudioFile?"#f0fdf4":"#f3e8ff",color:aiAudioFile?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F}}>{aiAudioFile?"✅ Audio uploaded — tap to replace":"📤 Or upload small clip (under ~700KB)"}</label>
+                <input id="aiAudioUp2" type="file" accept="audio/*" onChange={handleAiAudio} style={{display:"none"}}/>
+                {(aiAudioUrl.trim()||aiAudioFile) && <audio controls src={aiAudioUrl.trim()||aiAudioFile} style={{display:"none"}}/>}
+              </div>}
+              <textarea value={aiText} onChange={e=>setAiText(e.target.value)} rows={4} placeholder={type==="Listening"?"Paste the audio script (what is said) here. AI will make listening questions from it.":"Paste a reading passage or any text. AI will make questions from it."} style={{...inp,resize:"vertical",lineHeight:"1.6"}}/>
+            </div>}
+            {aiSource==="extract" && <div style={{marginBottom:"10px"}}>
+              <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:"7px",padding:"8px 11px",fontSize:"11px",color:"#166534",marginBottom:"8px",fontFamily:F}}>📋 Paste your questions (with A B C D options). The AI keeps them exactly as written and just finds the correct answer for each.</div>
+              {type==="Listening" && <div style={{marginBottom:"9px"}}>
+                <Label text="🎙️ Attach the listening audio (students will hear this)"/>
+                <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:"7px",padding:"7px 10px",fontSize:"10px",color:"#92400e",marginBottom:"7px",fontFamily:F}}>💡 Best: paste an audio LINK (no size limit). Or upload a small clip under ~700KB.</div>
+                <input value={aiAudioUrl} onChange={e=>setAiAudioUrl(e.target.value)} placeholder="🔗 Paste audio URL (https://…)" style={{...inp,marginBottom:"7px"}}/>
+                <label htmlFor="aiAudioUp" style={{display:"block",padding:"10px",background:aiAudioFile?"#f0fdf4":"#f3e8ff",color:aiAudioFile?"#166534":C.pu,borderRadius:"8px",fontWeight:"700",fontSize:"12px",cursor:"pointer",textAlign:"center",fontFamily:F}}>{aiAudioFile?"✅ Audio uploaded — tap to replace":"📤 Or upload small clip (under ~700KB)"}</label>
+                <input 
