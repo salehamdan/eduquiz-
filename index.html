@@ -212,6 +212,7 @@ try{
 <meta name="eduquiz-safe-cleanup" content="264-results-only">
 <!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
+<!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -1166,6 +1167,53 @@ async function loadDashboardDataWithRoster(base) {
   finally{ __EQ_DASHBOARD_HYDRATE_PROMISE=null; }
 }
 
+
+// V394 STUDENT TARGETED HYDRATE:
+// Student login must never call loadAllData(). It reuses the authenticated roster and loads only
+// student-facing collections. Large per-student result collections are queried by student identity.
+async function eqQueryStudentRows(col, st){
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) return [];
+  const vals=[st&&st.id,st&&st.studentId,st&&st.studentNumber,st&&st.email].filter(Boolean).map(String);
+  const fields=["studentId","studentUserId","userId","studentNumber","studentEmail"];
+  const out=new Map();
+  for(const field of fields){
+    for(const v of vals){
+      try{
+        const snap=await db.collection(col).where(field,"==",v).get();
+        try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field,snap.size||0);}catch(_e){}
+        snap.forEach(function(doc){out.set(String(doc.id),{...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id});});
+      }catch(_e){}
+    }
+  }
+  return Array.from(out.values());
+}
+async function loadStudentDataWithRoster(base, st){
+  if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) base=await loadLoginData();
+  // Public task definitions are small and needed to decide assignment. Student-owned result rows are scoped.
+  const [quizzes,announcements,readingTasks,projects,writingDoc,rtAccess,responses,rtResponses,projectSubs] = await Promise.all([
+    fsAll("quizzes"),
+    fsAll("announcements"),
+    fsAll("readingTasks"),
+    fsAll("projects"),
+    fsGetDoc("appSettings","writing_independent_v12"),
+    fsGetDoc("appSettings","rt_access"),
+    eqQueryStudentRows("responses",st),
+    eqQueryStudentRows("readingTheoryResponses",st),
+    eqQueryStudentRows("projectSubmissions",st)
+  ]);
+  const appSettings=(base.appSettings||[]).filter(function(x){
+    const id=String(x&& (x.id||x._id) ||"");
+    return id!=="writing_independent_v12" && id!=="rt_access";
+  });
+  if(writingDoc) appSettings.push({...writingDoc,id:"writing_independent_v12"});
+  if(rtAccess) appSettings.push({...rtAccess,id:"rt_access"});
+  const d={...base,quizzes,announcements,readingTasks,projects,
+    responses:responses||[],readingTheoryResponses:rtResponses||[],projectSubmissions:projectSubs||[],
+    appSettings,notes:[],readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
+    readingAttemptResets:[],readingTheoryItems:[]};
+  window.__EQ_CURRENT_DATA=d;
+  return d;
+}
 async function loadAllData() {
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
   const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses] = await Promise.all([
@@ -13778,7 +13826,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v393" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v394" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14920,7 +14968,7 @@ function App() {
       setTimeout(function(){
         const started=performance.now();
         const base=(data&&Array.isArray(data.users)&&Array.isArray(data.classes))?data:null;
-        const job=(String(u&&u.role||"")==="teacher"&&base)?loadDashboardDataWithRoster(base):loadAllData();
+        const role=String(u&&u.role||""); const job=(role==="teacher"&&base)?loadDashboardDataWithRoster(base):(role==="student"?loadStudentDataWithRoster(base,u):loadAllData());
         job.then(function(fresh){
           setData(fresh);
           window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
