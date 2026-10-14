@@ -213,7 +213,7 @@ try{
 <!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
-<!-- V397_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
+<!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -2684,7 +2684,7 @@ async function rpUploadAudio(blob, path){
   // demo fallback: store small data URL. For real class use, Firebase Storage is required.
   return await rpBlobToDataUrl(blob);
 }
-async function rpSetReadingSubmissionStrict(id, data){ // V397: strict RP write + in-memory mutation; no full app reload needed.
+async function rpSetReadingSubmissionStrict(id, data){ // V398: strict RP write + in-memory mutation; no full app reload needed.
 if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
   await db.collection("readingSubmissions").doc(id).set(data);
   try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
@@ -10743,14 +10743,23 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     });
     const payload={id:"rt_access",status:s,classIds:cleanClassIds,studentIds:cleanStudentIds,updatedAt:new Date().toISOString()};
     setSelStudents(cleanStudentIds);
-    await fsSet("appSettings","rt_access",payload);
-    // V397: publish the single rt_access document into App memory immediately.
-    // Never use the global reload path for this setting.
-    try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:payload}}));}catch(_e){}
-    rtLastSyncRef.current=JSON.stringify({status:payload.status,classIds:[...payload.classIds].sort(),studentIds:[...payload.studentIds].sort(),updatedAt:payload.updatedAt});
-    setRtDirty(false);
-    setAccessMsg("✅ Saved!");
-    setTimeout(()=>setAccessMsg(""),2500);
+    try{
+      await fsSetStrict("appSettings","rt_access",payload);
+      const verified=await fsGetDoc("appSettings","rt_access");
+      if(!verified || String(verified.status||"")!==String(payload.status||"")) throw new Error("rt_access verification mismatch");
+      const live={...verified,id:"rt_access"};
+      setStatus(live.status||"closed");
+      setSelClasses((live.classIds||[]).map(canonicalClassId).filter(Boolean));
+      setSelStudents((live.studentIds||[]).map(String).filter(Boolean));
+      try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}
+      rtLastSyncRef.current=JSON.stringify({status:live.status||"closed",classIds:[...(live.classIds||[])].map(canonicalClassId).filter(Boolean).sort(),studentIds:[...(live.studentIds||[])].map(String).filter(Boolean).sort(),updatedAt:live.updatedAt||""});
+      setRtDirty(false); setAccessMsg("✅ Saved & verified"); setTimeout(()=>setAccessMsg(""),2500);
+    }catch(e){
+      const previous=(data.appSettings||[]).find(d=>String(d&&d.id||"")==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
+      setStatus(previous.status||"closed");
+      setAccessMsg("⚠️ Reading Theory access was NOT saved to Firebase.");
+      console.error("V398 rt_access save/verify failed",e);
+    }
   }
 
   function toggleClass(id){
@@ -10995,7 +11004,7 @@ function ReadingTheoryStudent({user,data,reload}){
   const [badgeModal,setBadgeModal]=useState(null);
   const readingStartedAtRef=useRef(null);
 
-  // V397: use the in-memory setting immediately, then refresh ONLY rt_access (one document).
+  // V398: use the in-memory setting immediately, then refresh ONLY rt_access (one document).
   // This prevents stale View-as-Student state without ever loading global collections.
   const rtAccessFromData=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
   const [rtAccessLive,setRtAccessLive]=useState(rtAccessFromData);
@@ -11004,7 +11013,7 @@ function ReadingTheoryStudent({user,data,reload}){
     (async()=>{
       try{
         const fresh=await fsGetDoc("appSettings","rt_access");
-        if(alive&&fresh) setRtAccessLive({...fresh,id:"rt_access"});
+        if(alive&&fresh){const live={...fresh,id:"rt_access"};setRtAccessLive(live);try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}}
       }catch(_e){}
     })();
     return ()=>{alive=false;};
@@ -13838,7 +13847,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v397" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v398" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14789,7 +14798,7 @@ function App() {
     window.addEventListener("eq-project-mutation",onProjectMutation);
     return ()=>window.removeEventListener("eq-project-mutation",onProjectMutation);
   },[]);
-  // V397: keep appSettings/rt_access synchronized in memory after teacher saves it.
+  // V398: keep appSettings/rt_access synchronized in memory after teacher saves it.
   React.useEffect(()=>{
     const onAppSettingMutation=(ev)=>{
       const d=ev&&ev.detail||{}; if(String(d.id||"")!=="rt_access"||!d.record)return;
@@ -14814,7 +14823,7 @@ function App() {
   };
 
   async function reload(){
-    // V397: never let a student-view refresh fall through to the global 16-collection loader.
+    // V398: never let a student-view refresh fall through to the global 16-collection loader.
     // Teacher impersonation already has the required data in memory, so it must be zero-read.
     if(parkedTeacher && user && String(user.role||"")==="student" && window.__EQ_CURRENT_DATA){
       try{window.__eqReadDiag&&window.__eqReadDiag("reload:student-view-memory",0);}catch(_e){}
@@ -14839,14 +14848,14 @@ function App() {
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   function viewAsStudent(studentUser){
-    // V397: switching identity is a local UI operation. Never download the whole database here.
+    // V398: switching identity is a local UI operation. Never download the whole database here.
     setParkedTeacher(user);
     setUser(studentUser);
     try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:memory-only",0);}catch(_e){}
   }
   function backToTeacher(){
     if(parkedTeacher){
-      // V397: restore the parked teacher from memory; no global reload.
+      // V398: restore the parked teacher from memory; no global reload.
       setUser(parkedTeacher);
       setParkedTeacher(null);
       try{window.__eqReadDiag&&window.__eqReadDiag("back-to-teacher:memory-only",0);}catch(_e){}
@@ -14944,7 +14953,7 @@ function App() {
   },[user&&user.id,user&&user.role]);
 
   useEffect(()=>{
-    if(!user || String(user.role||"")!=="student" || !FIREBASE_OK || !(db&&db.collection)) return;
+    if(parkedTeacher || !user || String(user.role||"")!=="student" || !FIREBASE_OK || !(db&&db.collection)) return;
     let unsubs=[];
     function applyCollection(col, arr){
       try{
@@ -14975,7 +14984,8 @@ function App() {
   // V389: one teacher RP listener, but React data remains the only source of truth.
   // Initial snapshot seeds the same state; later docChanges patch that same array immediately.
   useEffect(()=>{
-    if(!user || String(user.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
+    const realtimeTeacher=parkedTeacher||user;
+    if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
     let first=true,unsub=null;
     try{
       unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
@@ -15011,7 +15021,7 @@ function App() {
       },e=>console.warn("V389 teacher RP live sync unavailable",e&&e.message));
     }catch(e){}
     return ()=>{try{unsub&&unsub();}catch(e){}};
-  },[user&&user.id,user&&user.role]);
+  },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
     function handleLogin(u){
       window.__EQ_LOGIN_CLICK_TS=performance.now();
