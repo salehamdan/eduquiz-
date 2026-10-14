@@ -213,6 +213,7 @@ try{
 <!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
+<!-- V395_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -2683,17 +2684,12 @@ async function rpUploadAudio(blob, path){
   // demo fallback: store small data URL. For real class use, Firebase Storage is required.
   return await rpBlobToDataUrl(blob);
 }
-async function rpSetReadingSubmissionStrict(id, data){
-  // RP_FAST_AUDIO_PENDING_BUTTONS_FIX_20260701
-  // fsSet intentionally swallows Firestore errors globally. For RP audio submissions
-  // we need strict feedback so a failed cloud write does not look like success.
-  if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
-    await db.collection("readingSubmissions").doc(id).set(data);
-  }else{
-    await fsSet("readingSubmissions", id, data);
-  }
-}
-function rpSafeAudioDataUrlAllowed(blob){
+async function rpSetReadingSubmissionStrict(id, data){ // V395: strict RP write + in-memory mutation; no full app reload needed.
+if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
+  await db.collection("readingSubmissions").doc(id).set(data);
+  try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
+}else{ await fsSet("readingSubmissions", id, data); }
+} function rpSafeAudioDataUrlAllowed(blob){
   // Keep the main submission document under Firestore limits; larger recordings are saved as chunks.
   return !!(blob && Number(blob.size||0)>0 && Number(blob.size||0)<850000);
 }
@@ -8045,7 +8041,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         setMsg("⚠️ Submitted to teacher, but audio save failed. Please press Try Again and record once more.");
         stopModelAudio();
         setTask(null);
-        try{reload();}catch(_e){}
+        try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
         return;
       }
       finalSubmission={...baseSubmission,audioUrl:url||"",audioDataUrl:audioDataUrl||"",audioChunked:(!audioDataUrl && chunkInfo.ok),audioChunkCount:chunkInfo.count||0,uploadStatus:url?"storage_url_saved":(audioDataUrl?"firestore_audio_saved":"firestore_audio_chunks_saved"),analysisStatus:"queued_for_analysis",updatedAt:new Date().toISOString()};
@@ -8057,7 +8053,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       setMsg("✅ Submitted + Pending Review. Audio saved for teacher.");
       stopModelAudio();
       setTask(null);
-      try{ reload(); }catch(_e){}
+      try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
     }catch(e){
       console.warn("RP strict submit failed", e);
       setMsg("⚠️ Submitted on this device, but cloud sync failed. Try again if teacher cannot see it.");
@@ -13826,7 +13822,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v394" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v395" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
