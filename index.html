@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v409</title>
+<title>EduQuiz — Smart Assessment v410</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V409_READ_GUARD_TESTED_20261014 -->
+<!-- EDUQUIZ_V410_FOLLOWUP_SCOPED_READS_20261014 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -1093,7 +1093,7 @@ function eqStudentReadFirewallRows(col){
 }
 async function fsAll(col) {
   const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
-  // V409: enforce the existing student firewall for legacy/hidden callers too.
+  // V410: enforce the existing student firewall for legacy/hidden callers too.
   // Student bootstrap uses targeted queries for these collections, so a later fsAll() must reuse memory rather than read the whole collection.
   const studentFirewallRows=eqStudentReadFirewallRows(col);
   if(studentFirewallRows!==null) return studentFirewallRows;
@@ -1117,6 +1117,50 @@ async function fsGetDoc(col, id) {
   } catch(e) {
     console.warn("Firestore doc read failed", col, id, e && e.message);
     return local();
+  }
+}
+
+// V410: Follow-up collections can grow into thousands of documents.
+// Read only the current teacher/term/period/class scope. Never fall back to a full collection GET.
+function eqFollowupScopeMatch(row, teacherId, term, period, classId){
+  if(!row) return false;
+  if(teacherId && String(row.teacherId||"")!==String(teacherId)) return false;
+  if(term && String(row.term||"")!==String(term)) return false;
+  if(period && String(row.period||"")!==String(period)) return false;
+  if(classId && String(classId)!=="all" && !sameClassId(row.classId||"",classId)) return false;
+  return true;
+}
+async function eqFollowupScopedRows(col, teacherId, term, period, classId){
+  const filterRows=(rows)=>(rows||[]).filter(r=>eqFollowupScopeMatch(r,teacherId,term,period,classId));
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
+    try{return filterRows(await fsAll(col));}catch(_e){return [];}
+  }
+  const mapSnap=(snap)=>snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
+  try{
+    let q=db.collection(col);
+    if(teacherId) q=q.where("teacherId","==",String(teacherId));
+    if(term) q=q.where("term","==",String(term));
+    if(period) q=q.where("period","==",String(period));
+    if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
+    const snap=await q.get();
+    try{window.__eqReadDiag&&window.__eqReadDiag("followup-scope:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
+    return filterRows(mapSnap(snap));
+  }catch(e){
+    // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
+    // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
+    console.warn("V410 scoped follow-up query fallback",col,e&&e.message);
+    try{
+      let q=db.collection(col);
+      if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
+      else if(teacherId) q=q.where("teacherId","==",String(teacherId));
+      else return [];
+      const snap=await q.get();
+      try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
+      return filterRows(mapSnap(snap));
+    }catch(e2){
+      console.warn("V410 follow-up fallback failed",col,e2&&e2.message);
+      return [];
+    }
   }
 }
 async function projectSubmissionsForStudentRemote(projectId, st) {
@@ -1352,7 +1396,7 @@ async function eqQueryStudentAssignedDefs(col, st){
   }catch(e){
     // Compatibility fallback only when Firestore rejects the targeted query.
     // Never fallback merely because the student has zero assigned work.
-    console.warn("V409 targeted student definitions failed",col,e&&e.message);
+    console.warn("V410 targeted student definitions failed",col,e&&e.message);
     return await fsAll(col);
   }
 }
@@ -9238,7 +9282,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
 // FOLLOWUP208_PARTICIPATION_MODAL_SAFE_FIX_20260706
 // FOLLOWUP205_DAILY_PARTICIPATION_PHASE1_20260706
 // Phase 1: Daily follow-up / participation only. It is isolated from RP, Quizzes, Projects, Accept/Reject/Delete.
-function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
+function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralAlertCount}){
   const isoToday=()=>{const d=new Date(); const z=n=>String(n).padStart(2,"0"); return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate());};
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [term,setTerm]=useState("term1");
@@ -9411,8 +9455,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     if(!confirm("حذف الملاحظة التالية من متابعة الطالب؟\n\n"+(item.label||"")+" — "+(item.date||"")))return;
     setMsg("⏳ جاري حذف الملاحظة…");
     try{
-      const all=await fsAll("dailyFollowup");
-      const matches=(all||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId)) && String(r.date||"")===String(item.date||"") && followupRowMatchesStudent(r,st));
+      const all=await eqFollowupScopedRows("dailyFollowup",user&&user.id,term,period,classId);
+      const matches=(all||[]).filter(r=>String(r.date||"")===String(item.date||"") && followupRowMatchesStudent(r,st));
       if(!matches.length){
         setPeriodRows(prev=>(prev||[]).filter(r=>!(String(r.date||"")===String(item.date||"")&&followupRowMatchesStudent(r,st))));
         try{localStorage.removeItem(draftKey(item.date));}catch(_e){}
@@ -9478,19 +9522,35 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
   async function loadFollowupDay(){
     setLoading(true); setMsg("");
     try{
-      const all=await fsAll("dailyFollowup");
-      const mine=(all||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId)));
+      const mine=await eqFollowupScopedRows("dailyFollowup",user&&user.id,term,period,classId);
       setPeriodRows(mine);
+      let scopedRefs=[];
       try{
-        const refsAll=await fsAll("followupReferrals");
-        setReferralRows((refsAll||[]).filter(r=>String(r.teacherId||"")===String(user.id||"") && r.term===term && r.period===period && (classId==="all" || String(r.classId||"")===String(classId))));
-      }catch(refErr){ setReferralRows([]); }
+        scopedRefs=await eqFollowupScopedRows("followupReferrals",user&&user.id,term,period,classId);
+        setReferralRows(scopedRefs);
+      }catch(refErr){ scopedRefs=[]; setReferralRows([]); }
+      // Reuse the already-loaded Follow-up rows for the referral badge; no second dailyFollowup GET.
       try{
-        const tasksAll=await fsAll("followupHomeworkTasks");
-        const tasks=(tasksAll||[]).filter(t=>String(t.teacherId||"")===String(user.id||"") && t.term===term && t.period===period && (classId==="all" || String(t.classId||"")===String(classId)) && t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
+        const lastRef={}; (scopedRefs||[]).forEach(r=>{const k=String(r.studentId||""); const d=String(r.date||r.createdAt||"").slice(0,10); if(!lastRef[k]||d>lastRef[k])lastRef[k]=d;});
+        const counts=new Map();
+        (mine||[]).forEach(r=>{
+          const st=(classStudents||[]).find(x=>String(x.id||"")===String(r.studentId||"") || (eqDigits(x.studentId||"")&&eqDigits(x.studentId||"")===eqDigits(r.studentNumber||r.studentId||"")));
+          if(!st)return; const sid=String(st.id||""); const d=String(r.date||""); if(lastRef[sid]&&d<=lastRef[sid])return;
+          let n=0; if(r.attendance==="absent"||r.attendance==="late")n++; if(r.book)n++; if(r.behavior)n++; if(r.exit)n++; if(r.dailyHomework==="missing"||r.dailyHomework==="partial")n++;
+          if(String(r.note||"").trim() && String(r.noteTone||"negative")!=="positive")n++;
+          const tags=Array.isArray(r.noteTags)?r.noteTags:[]; const positives=["مشاركة مميزة","تعاون إيجابي","انضباط مميز","تحسن ملحوظ","أداء متميز"];
+          n+=tags.filter(t=>!positives.includes(String(t||"").trim())).length;
+          counts.set(sid,(counts.get(sid)||0)+n);
+        });
+        const c=(classStudents||[]).filter(st=>(counts.get(String(st.id||""))||0)>=5).length;
+        if(typeof onReferralAlertCount==="function") onReferralAlertCount(c);
+      }catch(_e){}
+      try{
+        const tasksAll=await eqFollowupScopedRows("followupHomeworkTasks",user&&user.id,term,period,classId);
+        const tasks=(tasksAll||[]).filter(t=>t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
         setHomeworkTasks(tasks);
         const taskIds=new Set(tasks.map(t=>String(t.id)));
-        const scoresAll=await fsAll("followupHomeworkScores");
+        const scoresAll=await eqFollowupScopedRows("followupHomeworkScores",user&&user.id,term,period,classId);
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
@@ -9695,7 +9755,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     if(!ok)return;
     setLoading(true); setMsg("⏳ جاري حذف المهمة...");
     try{
-      const scoreRows=await fsAll("followupHomeworkScores");
+      const scoreRows=await eqFollowupScopedRows("followupHomeworkScores",user&&user.id,term,period,classId);
       await Promise.all((scoreRows||[]).filter(x=>String(x.taskId||"")===String(task.id)).map(x=>fsDel("followupHomeworkScores",x.id||x._id)));
       await fsDel("followupHomeworkTasks",task.id);
       setHomeworkTasks(prev=>(prev||[]).filter(x=>String(x.id)!==String(task.id)));
@@ -9724,7 +9784,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents}){
     setLoading(true); setMsg("⏳ جاري تعديل بيانات المهمة...");
     try{
       await fsSet("followupHomeworkTasks",task.id,updated);
-      const scoreRows=await fsAll("followupHomeworkScores");
+      const scoreRows=await eqFollowupScopedRows("followupHomeworkScores",user&&user.id,term,period,classId);
       const related=(scoreRows||[]).filter(x=>String(x.taskId||"")===String(task.id));
       await Promise.all(related.map(x=>{const sid=x.id||x._id; const raw=x.score; const capped=(raw===""||raw===null||raw===undefined)?"":Math.min(weight,Math.max(0,safeNum(raw,0))); return fsSet("followupHomeworkScores",sid,{...x,id:sid,score:capped,maxScore:weight,updatedAt:new Date().toISOString()});}));
       setHomeworkTasks(prev=>(prev||[]).map(x=>String(x.id)===String(task.id)?updated:x));
@@ -12827,31 +12887,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     calc();window.addEventListener("eq-rt-seen",calc);return()=>window.removeEventListener("eq-rt-seen",calc);
   },[data.readingTheoryResponses,myStudents.length,user.id]);
 
-  useEffect(()=>{
-    let alive=true;
-    // V381: dailyFollowup can exceed 1,000 documents. Do not download the full history on Dashboard/login.
-    // Follow-up loads its own data when opened; keep the last badge value until then.
-    if(String(tab||"")!=="followup") return ()=>{alive=false;};
-    (async()=>{try{
-      const rows=await fsAll("dailyFollowup"), refs=await fsAll("followupReferrals");
-      const mineStudents=(myStudents||[]); const byStudent={};
-      mineStudents.forEach(st=>{byStudent[String(st.id||"")]={st,count:0}; if(st.studentId)byStudent["n:"+eqDigits(st.studentId)]={st,count:0};});
-      const lastRef={}; (refs||[]).filter(r=>String(r.teacherId||"")===String(user.id||"")).forEach(r=>{const k=String(r.studentId||""); const d=String(r.date||r.createdAt||"").slice(0,10); if(!lastRef[k]||d>lastRef[k])lastRef[k]=d;});
-      const counts=new Map();
-      (rows||[]).filter(r=>String(r.teacherId||"")===String(user.id||"")).forEach(r=>{
-        const st=mineStudents.find(x=>String(x.id||"")===String(r.studentId||"") || (eqDigits(x.studentId||"")&&eqDigits(x.studentId||"")===eqDigits(r.studentNumber||r.studentId||"")));
-        if(!st)return; const sid=String(st.id||""); const d=String(r.date||""); if(lastRef[sid]&&d<=lastRef[sid])return;
-        let n=0; if(r.attendance==="absent"||r.attendance==="late")n++; if(r.book)n++; if(r.behavior)n++; if(r.exit)n++; if(r.dailyHomework==="missing"||r.dailyHomework==="partial")n++;
-        if(String(r.note||"").trim() && String(r.noteTone||"negative")!=="positive")n++;
-        const tags=Array.isArray(r.noteTags)?r.noteTags:[]; const positives=["مشاركة مميزة","تعاون إيجابي","انضباط مميز","تحسن ملحوظ","أداء متميز"];
-        n+=tags.filter(t=>!positives.includes(String(t||"").trim())).length;
-        counts.set(sid,(counts.get(sid)||0)+n);
-      });
-      const c=mineStudents.filter(st=>(counts.get(String(st.id||""))||0)>=5).length;
-      if(alive)setReferralAlertCount(c);
-    }catch(e){if(alive)setReferralAlertCount(0);}})();
-    return ()=>{alive=false;};
-  },[tab, myStudents.length]);
+  // V410: referral badge is calculated inside DailyFollowupTeacher from its already-scoped rows.
+  // This removes the second full dailyFollowup GET that previously doubled Follow-up reads.
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
   const myResps=data.responses.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -14037,7 +14074,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V409" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V410" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14126,7 +14163,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>}
         </div>}
 
-        {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
+        {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents} onReferralAlertCount={setReferralAlertCount}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
@@ -15059,7 +15096,7 @@ function App() {
       try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(e){}
       return d;
     }
-    // V409: a teacher-side refresh must not fall back to the global 16-collection loader.
+    // V410: a teacher-side refresh must not fall back to the global 16-collection loader.
     // Reuse the current roster and refresh only dashboard collections; the RP realtime listener remains the single source for readingSubmissions.
     const teacherBase=window.__EQ_CURRENT_DATA||data;
     if(teacherBase && Array.isArray(teacherBase.users) && Array.isArray(teacherBase.classes)){
