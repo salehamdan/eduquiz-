@@ -1163,32 +1163,49 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
-async function loadLoginData() {
-  // V329: login must never wait for quizzes, responses, RP audio/submissions, projects or gradebook data.
-  // Only the collections required to authenticate and build the class selector are fetched here.
-  // V359 SAFE SPEED: login only needs the Google-registration policy, not the entire appSettings collection.
-  const [usersRaw,classesRaw,googlePolicyRow,deletedStudents,deletedClasses] = await Promise.all([
-    fsAll("users"),fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy"),fsAll("deletedStudents"),fsAll("deletedClasses")
-  ]);
-  const appSettings=googlePolicyRow?[googlePolicyRow]:[];
-  const activeUserKeySet=new Set();
-  (usersRaw||[]).forEach(function(u){
-    if(u && String(u.role||"")==="student" && !isStudentTombstone(u)){
-      adminStudentDeleteKeys(u).forEach(function(k){ if(k) activeUserKeySet.add(String(k)); });
+async function eqFetchLoginUser(role, identifier){
+  if(!FIREBASE_OK || !db || !db.collection) return null;
+  const raw=String(identifier||"").trim();
+  if(!raw) return null;
+  if(role==="student"){
+    const sid=eqDigits(raw);
+    // Current imported students normally use student_<school-number> as the document id: one document read.
+    if(sid){
+      try{
+        const doc=await db.collection("users").doc("student_"+sid).get();
+        try{window.__eqReadDiag&&window.__eqReadDiag("DOC:login-student",1);}catch(_e){}
+        if(doc.exists){const x={id:doc.id,...doc.data()}; if(String(x.role||"")==="student" && !isStudentTombstone(x)) return x;}
+      }catch(_e){}
+      // Narrow legacy fallback for older imported ids.
+      try{
+        const snap=await db.collection("users").where("studentId","==",sid).limit(2).get();
+        try{window.__eqReadDiag&&window.__eqReadDiag("QUERY:login-studentId",Math.max(1,Number(snap.size||0)));}catch(_e){}
+        let found=null; snap.forEach(doc=>{if(!found){const x={id:doc.id,...doc.data()};if(String(x.role||"")==="student"&&!isStudentTombstone(x))found=x;}}); if(found)return found;
+      }catch(_e){}
     }
-  });
-  const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true})).filter(function(x){
-    return !adminStudentDeleteKeys(x).some(function(k){ return activeUserKeySet.has(String(k)); });
-  });
-  const deletedClassRows=(deletedClasses||[]).map(x=>({...x,deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true}));
-  const users=mergePreloadedRows([].concat(usersRaw||[],deletedStudentRows),[]);
-  const classes=normalizeClassRows([].concat(classesRaw||[],deletedClassRows));
-  const firebaseUsers=(usersRaw||[]).filter(function(u){return u && !isStudentTombstone(u);});
-  const firebaseClasses=(classesRaw||[]).filter(function(c){return c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;});
-  return {users,classes,firebaseUsers,firebaseClasses,appSettings:appSettings||[],deletedStudents:deletedStudents||[],deletedClasses:deletedClasses||[],
+    return null;
+  }
+  // Teacher login is rare; query only the entered email instead of downloading every student.
+  try{
+    const snap=await db.collection("users").where("email","==",raw.toLowerCase()).limit(3).get();
+    try{window.__eqReadDiag&&window.__eqReadDiag("QUERY:login-teacher",Math.max(1,Number(snap.size||0)));}catch(_e){}
+    let found=null; snap.forEach(doc=>{if(!found){const x={id:doc.id,...doc.data()};if(String(x.role||"")==="teacher")found=x;}}); return found;
+  }catch(_e){return null;}
+}
+async function loadLoginData(sessionHint) {
+  // V402: logged-out/student startup must NOT download the whole users collection.
+  // Only classes + one policy document are needed to paint Login. If a saved student session exists,
+  // validate that ONE student document. The teacher roster is loaded once only after teacher authentication.
+  const [classesRaw,googlePolicyRow] = await Promise.all([
+    fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy")
+  ]);
+  let hintedUser=null;
+  if(sessionHint && String(sessionHint.role||"")==="student") hintedUser=await eqFetchLoginUser("student",sessionHint.studentId||sessionHint.id||"");
+  const users=hintedUser?[hintedUser]:[];
+  const classes=normalizeClassRows(classesRaw||[]);
+  return {users,classes,firebaseUsers:users.slice(),firebaseClasses:(classesRaw||[]).filter(c=>c&&!c.deleted&&c.status!=="deleted"&&!c.hidePreloaded&&!c.permanentDeleted),appSettings:googlePolicyRow?[{...googlePolicyRow,id:"student_google_registration_policy"}]:[],deletedStudents:[],deletedClasses:[],loginLight:true,
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
 }
-
 // V385 FAST TEACHER STARTUP: reuse the already loaded/cached roster during the first dashboard hydrate.
 // This avoids immediately downloading users/classes/deletion rosters a second time while preserving
 // every Main collection (quizzes, responses, RP, Reading Theory, Projects, settings, etc.).
@@ -1197,6 +1214,13 @@ let __EQ_DASHBOARD_HYDRATE_RESULT=null;
 let __EQ_DASHBOARD_HYDRATE_AT=0;
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
+  // V402: the Login screen intentionally has no student roster. A teacher needs it once after authentication.
+  if(base.loginLight){
+    const [usersRaw,deletedStudents,deletedClasses]=await Promise.all([fsAll("users"),fsAll("deletedStudents"),fsAll("deletedClasses")]);
+    const activeUserKeySet=new Set(); (usersRaw||[]).forEach(u=>{if(u&&String(u.role||"")==="student"&&!isStudentTombstone(u))adminStudentDeleteKeys(u).forEach(k=>{if(k)activeUserKeySet.add(String(k));});});
+    const deletedStudentRows=(deletedStudents||[]).map(x=>({...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true})).filter(x=>!adminStudentDeleteKeys(x).some(k=>activeUserKeySet.has(String(k))));
+    base={...base,users:mergePreloadedRows([].concat(usersRaw||[],deletedStudentRows),[]),firebaseUsers:(usersRaw||[]).filter(u=>u&&!isStudentTombstone(u)),deletedStudents:deletedStudents||[],deletedClasses:deletedClasses||[],loginLight:false};
+  }
   // V393: startup single-flight. App mount and a near-simultaneous login/session path must share
   // one Firebase hydrate instead of downloading the same Main collections twice.
   const now=Date.now();
@@ -4090,11 +4114,13 @@ function Landing({onLogin, prefillQuiz, loginData}) {
       d = await loadLoginData();
       loginDataRef.current=d;
     }
-    const users = d.users;
-    const firebaseUsers = Array.isArray(d.firebaseUsers) ? d.firebaseUsers : (FIREBASE_OK ? [] : users);
+    let users = Array.isArray(d.users)?d.users:[];
+    let firebaseUsers = Array.isArray(d.firebaseUsers)?d.firebaseUsers:[];
     const id = f.email.trim().toLowerCase();
-    // Teachers log in by email + password
-    const teacher = users.find(u=>u.role==="teacher" && (u.email||"").toLowerCase()===id && u.password===f.password);
+    // V402: authenticate only the entered account; never download all 489 users on every student device.
+    let teacher = users.find(u=>u.role==="teacher" && (u.email||"").toLowerCase()===id);
+    if(!teacher && id.includes("@")) teacher=await eqFetchLoginUser("teacher",id);
+    if(teacher && teacher.password!==f.password) teacher=null;
     if(teacher){
       saveLoginMemory({mode:"login",email:f.email.trim().toLowerCase(),studentId:"",password:f.password,name:teacher.name||f.name||"",classId:"",code:f.code||"",role:"teacher"});
       saveSession(teacher); onLogin(teacher); setLoading(false); return;
@@ -4128,6 +4154,8 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     }
     // Student login is allowed only for active Firebase students, not PRELOADED_USERS.
     let u = activeReimportedStudent || firebaseUsers.find(u=>u.role==="student" && !isStudentTombstone(u) && eqDigits(u.studentId||u.studentNumber||u.id||"")===idDigits);
+    if(!u) u=await eqFetchLoginUser("student",idDigits||id);
+    if(u){ users=[...users.filter(x=>String(x.id)!==String(u.id)),u]; firebaseUsers=[...firebaseUsers.filter(x=>String(x.id)!==String(u.id)),u]; d={...d,users,firebaseUsers}; loginDataRef.current=d; }
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
     // v302: after Move/Reorder, the CURRENT 4-digit school number is authoritative for the class.
     // Example 32xx => class_3_2. Repair a stale old classId instead of rejecting the student.
@@ -10753,15 +10781,18 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   // V401: Reading Theory history is lazy-loaded ONCE when the teacher opens this section.
   // This restores saved attempts without putting the collection back into Main/startup polling.
   React.useEffect(()=>{
+    // V402: restore the persisted access selection from the single settings document whenever teacher opens RT.
+    let settingsAlive=true;
+    fsGetDoc("appSettings","rt_access").then(fresh=>{if(settingsAlive&&fresh){const live={...fresh,id:"rt_access"};try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}}}).catch(e=>console.warn("V402 RT access restore failed",e&&e.message));
     let alive=true;
-    if(window.__EQ_RT_HISTORY_LOADED||window.__EQ_RT_HISTORY_LOADING)return ()=>{alive=false;};
+    if(window.__EQ_RT_HISTORY_LOADED||window.__EQ_RT_HISTORY_LOADING)return ()=>{alive=false;settingsAlive=false;};
     window.__EQ_RT_HISTORY_LOADING=true;
     fsAll("readingTheoryResponses").then(rows=>{
       if(!alive)return;
       window.__EQ_RT_HISTORY_LOADED=true;
       try{window.dispatchEvent(new CustomEvent("eq-rt-history-loaded",{detail:{rows:rows||[]}}));}catch(_e){}
     }).catch(e=>console.warn("V401 RT history load failed",e&&e.message)).finally(()=>{window.__EQ_RT_HISTORY_LOADING=false;});
-    return ()=>{alive=false;};
+    return ()=>{alive=false;settingsAlive=false;};
   },[]);
   const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
 
@@ -10856,21 +10887,17 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     const nSet=new Set(n.map(canonicalClassId).filter(Boolean));
     setRtDirty(true);
     setSelClasses(n);
-    setSelStudents(prev=>{
-      const liveById=new Map((myStudents||[]).map(x=>[String(x.id),x]));
-      return (prev||[]).map(String).filter(sid=>{
-        const stu=liveById.get(sid);
-        if(!stu) return false;
-        if(nSet.size===0) return true;
-        return nSet.has(canonicalClassId(stu.classId||stu.className||stu.class||""));
-      });
-    });
+    const liveById=new Map((myStudents||[]).map(x=>[String(x.id),x]));
+    const kept=(selStudents||[]).map(String).filter(sid=>{const stu=liveById.get(sid);if(!stu)return false;if(nSet.size===0)return true;return nSet.has(canonicalClassId(stu.classId||stu.className||stu.class||""));});
+    setSelStudents(kept);
+    saveAccess(undefined,n,kept);
   }
   function toggleStudent(id){
     const sid=String(id);
     const n=selStudents.map(String).includes(sid)?selStudents.filter(x=>String(x)!==sid):[...selStudents,sid];
     setRtDirty(true);
     setSelStudents(n);
+    saveAccess(undefined,selClasses,n);
   }
 
   const filtered = filterClass==="all" ? myResps : myResps.filter(r=>{
@@ -13144,7 +13171,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function exportExamWord(){
     if(!examExport)return;setExamExportBusy("Word");
     try{
-      const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${examStyles()}</style></head><body>${examHtml(examExport,examExportForm)}</body></html>`;
+      const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${examStyles()}</style></head><body>${examHtml(examExport,examExportForm)}
+</body></html>`;
       const blob=new Blob(["\ufeff",html],{type:"application/msword;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=safeExamFileName(examExportForm.quiz)+".doc";document.body.appendChild(a);a.click();setTimeout(()=>{try{a.remove();URL.revokeObjectURL(url)}catch(_e){}},1200);
     }catch(e){alert("Word export failed: "+(e.message||e));}finally{setExamExportBusy("");}
   }
@@ -13935,7 +13963,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v399" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v402" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15013,7 +15041,7 @@ function App() {
       // V381: a valid cached teacher session already has the roster needed to paint/login.
       // Avoid a second full users/classes read before the background dashboard refresh.
       const cachedTeacherFast = !!(cached && sess && String(sess.role||"")!=="student");
-      const d = cachedTeacherFast ? cached : await loadLoginData();
+      const d = cachedTeacherFast ? cached : await loadLoginData(sess);
       // V334: when a valid teacher session already has a cached dashboard, keep that usable
       // dashboard on screen. The lightweight auth snapshot is only for validation; full data
       // refreshes in the background. This removes the long blank/login wait without touching data.
@@ -15155,11 +15183,13 @@ function App() {
       window.__EQ_LOGIN_CLICK_TS=performance.now();
       try{window.__eqMark&&window.__eqMark("login");}catch(_e){}
       setUser(fixAhmedStudent(u));
+      // V402: keep the authenticated account in the light login snapshot so student validation and scoped hydrate work without a roster download.
+      if(data&&Array.isArray(data.users)){const merged={...data,users:[...data.users.filter(x=>String(x.id)!==String(u.id)),u],firebaseUsers:[...(Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).filter(x=>String(x.id)!==String(u.id)),u]};setData(merged);window.__EQ_CURRENT_DATA=merged;}
       // V388 STARTUP + RP SYNC FIX: Login has already fetched users/classes. Reuse that exact snapshot.
       // The old path called reload()->loadAllData(), downloading the full roster again before Main.
       setTimeout(function(){
         const started=performance.now();
-        const base=(data&&Array.isArray(data.users)&&Array.isArray(data.classes))?data:null;
+        const base=(data&&Array.isArray(data.users)&&Array.isArray(data.classes))?{...data,users:[...data.users.filter(x=>String(x.id)!==String(u.id)),u],firebaseUsers:[...(Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).filter(x=>String(x.id)!==String(u.id)),u]}:null;
         const role=String(u&&u.role||""); const job=(role==="teacher"&&base)?loadDashboardDataWithRoster(base):(role==="student"?loadStudentDataWithRoster(base,u):loadAllData());
         job.then(function(fresh){
           setData(fresh);
@@ -17844,6 +17874,7 @@ setTimeout(function(){fab();},1500);
 <!-- QUIZ_RESULTS_ASSIGNMENT_SCOPE_FIX_20260919 -->
 <!-- CLEANUP_RED_FLOATING_BUTTON_REMOVED_20260919 -->
 <!-- STUDENT_LOGIN_LIVE_CLASSES_ROSTER_FALLBACK_267_20260919 -->
+
 </body>
 </html>
 
@@ -18073,5 +18104,6 @@ setTimeout(function(){fab();},1500);
 <!-- QUIZ_CREATE_USES_LIVE_MYCLASSES_FIX_20260919 -->
 
 <!-- V400_FULL_FIRESTORE_AUDIT_20261014: preserves v398/v399 zero-global-reload, Projects, RP, Writing, Quizzes, RT assignments/history. Student-owned lookup query fan-out reduced from up to 20 probes/collection to canonical-first narrow fallback. No background polling added. -->
+
 </body>
 </html>
