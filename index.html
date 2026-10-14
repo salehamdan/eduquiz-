@@ -13847,7 +13847,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v398" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v399" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14847,11 +14847,40 @@ function App() {
   }
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
-  function viewAsStudent(studentUser){
-    // V398: switching identity is a local UI operation. Never download the whole database here.
+  async function eqLoadStudentReadingTheoryHistory(studentUser){
+    // V399: one targeted query first; only use the legacy studentNumber key as a fallback.
+    // This restores historical Reading Theory attempts without reading the whole collection.
+    if(!FIREBASE_OK || !db || !db.collection || !studentUser) return [];
+    const out=new Map();
+    async function run(field,value){
+      if(value===undefined||value===null||String(value).trim()==="") return;
+      const snap=await db.collection("readingTheoryResponses").where(field,"==",String(value)).get();
+      try{window.__eqReadDiag&&window.__eqReadDiag("query:readingTheoryResponses:"+field,snap.size||0);}catch(_e){}
+      snap.forEach(function(doc){const row={...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id};out.set(String(doc.id),row);});
+    }
+    try{await run("studentId",studentUser.id);}catch(_e){}
+    if(out.size===0){try{await run("studentNumber",studentUser.studentId||studentUser.studentNumber);}catch(_e){}}
+    return Array.from(out.values());
+  }
+  async function viewAsStudent(studentUser){
+    // V399: preserve the stable zero-global-reload path, but restore this student's RT history.
     setParkedTeacher(user);
+    try{
+      const history=await eqLoadStudentReadingTheoryHistory(studentUser);
+      if(history.length){
+        setData(prev=>{
+          if(!prev)return prev;
+          const merged=new Map((prev.readingTheoryResponses||[]).map(r=>[String(r&&(r.id||r._id)||""),r]));
+          history.forEach(r=>merged.set(String(r&&(r.id||r._id)||""),r));
+          const next={...prev,readingTheoryResponses:Array.from(merged.values())};
+          window.__EQ_CURRENT_DATA=next;
+          try{__eqRespStudentMemo.clear();if(responsesForStudent.__cache)responsesForStudent.__cache.clear();}catch(_e){}
+          return next;
+        });
+      }
+    }catch(_e){}
     setUser(studentUser);
-    try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:memory-only",0);}catch(_e){}
+    try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:rt-history-targeted",0);}catch(_e){}
   }
   function backToTeacher(){
     if(parkedTeacher){
