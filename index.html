@@ -10785,13 +10785,9 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     let settingsAlive=true;
     fsGetDoc("appSettings","rt_access").then(fresh=>{if(settingsAlive&&fresh){const live={...fresh,id:"rt_access"};try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}}}).catch(e=>console.warn("V402 RT access restore failed",e&&e.message));
     let alive=true;
-    if(window.__EQ_RT_HISTORY_LOADED||window.__EQ_RT_HISTORY_LOADING)return ()=>{alive=false;settingsAlive=false;};
-    window.__EQ_RT_HISTORY_LOADING=true;
-    fsAll("readingTheoryResponses").then(rows=>{
-      if(!alive)return;
-      window.__EQ_RT_HISTORY_LOADED=true;
-      try{window.dispatchEvent(new CustomEvent("eq-rt-history-loaded",{detail:{rows:rows||[]}}));}catch(_e){}
-    }).catch(e=>console.warn("V401 RT history load failed",e&&e.message)).finally(()=>{window.__EQ_RT_HISTORY_LOADING=false;});
+  // V404: do not read every student's Reading Theory history merely by opening the section.
+  // Existing in-memory history remains untouched; targeted history is loaded only when a specific student is inspected.
+  try{window.__eqReadDiag&&window.__eqReadDiag("readingTheoryResponses:auto-full-load-disabled",0);}catch(_e){}
     return ()=>{alive=false;settingsAlive=false;};
   },[]);
   const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
@@ -13963,7 +13959,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V403" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V404" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14990,26 +14986,12 @@ function App() {
     return Array.from(out.values());
   }
   async function viewAsStudent(studentUser){
-    // V400: preserve the stable zero-global-reload path and restore this student's RT history without global reads.
-    setParkedTeacher(user);
-    try{
-      const history=await eqLoadStudentReadingTheoryHistory(studentUser);
-      if(history.length){
-        setData(prev=>{
-          if(!prev)return prev;
-          const merged=new Map((prev.readingTheoryResponses||[]).map(r=>[String(r&&(r.id||r._id)||""),r]));
-          history.forEach(r=>merged.set(String(r&&(r.id||r._id)||""),r));
-          const next={...prev,readingTheoryResponses:Array.from(merged.values())};
-          window.__EQ_CURRENT_DATA=next;
-          try{__eqRespStudentMemo.clear();if(responsesForStudent.__cache)responsesForStudent.__cache.clear();}catch(_e){}
-          return next;
-        });
-      }
-    }catch(_e){}
-    setUser(studentUser);
-    try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:rt-history-targeted",0);}catch(_e){}
-  }
-  function backToTeacher(){
+      // V404: instant memory-only impersonation. Do not block the eye action on RT history queries.
+      setParkedTeacher(user);
+      setUser(studentUser);
+      try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:instant-memory",0);}catch(_e){}
+    }
+    function backToTeacher(){
     if(parkedTeacher){
       // V398: restore the parked teacher from memory; no global reload.
       setUser(parkedTeacher);
@@ -15025,7 +15007,9 @@ function App() {
       const sess=loadSession();
       // Show cached dashboard immediately when available, then refresh Firebase in the background.
       const cached=eqLoadFastDataCache();
-      const useCachedStartup = cached && !data;
+      // V404: teacher dashboard cache belongs only to a teacher session.
+      // Never paint it for a real student; that caused 11/161/120 and RP cards to flash, then disappear.
+      const useCachedStartup = cached && !data && (!sess || String(sess.role||"")!=="student");
       if(useCachedStartup){
         try{
           setData(cached);
@@ -15049,7 +15033,18 @@ function App() {
       if(!keepCachedTeacher) setData(d);
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
-      if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d))setUser(fixAhmedStudent(u));else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
+      if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d)){
+          const fixedU=fixAhmedStudent(u);
+          if(String(fixedU.role||"")==="student"){
+            // V404: one deterministic student hydrate before StudentApp mounts.
+            // This prevents RT access/tasks from appearing seconds later and avoids empty-state flicker.
+            try{
+              const studentFresh=await loadStudentDataWithRoster(d,fixedU);
+              setData(studentFresh); window.__EQ_CURRENT_DATA=studentFresh;
+            }catch(_e){}
+          }
+          setUser(fixedU);
+        }else { if(sess.role==="student"){ clearSession(); try{localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} setUser(null); } else if(sess.id)setUser(fixAhmedStudent(sess)); }}
       else if(FIREBASE_OK && auth && auth.currentUser){
         const au=auth.currentUser;
         const linked=d.users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(au.uid));
@@ -15069,17 +15064,10 @@ function App() {
           }).catch(function(e){console.warn("V403 teacher dashboard hydrate failed",e);});
         },250);
       } else if(sess && String(sess.role||"")==="student"){
-        // V403: real student startup hydrates only student-facing/scoped data.
-        const sid2=eqDigits(sess.studentId||sess.id||"");
-        const list2=Array.isArray(d.firebaseUsers)?d.firebaseUsers:d.users;
-        const stu2=(list2||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sid2 && eqDigits(x.studentId||x.id||"")===sid2)) || fixAhmedStudent(sess);
-        setTimeout(function(){
-          const started=performance.now();
-          loadStudentDataWithRoster(d,stu2).then(function(fresh){
-            setData(fresh); window.__EQ_CURRENT_DATA=fresh; window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
-            try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
-          }).catch(function(e){console.warn("V403 student targeted hydrate failed",e);});
-        },250);
+        // V404: no second background hydrate here.
+        // A saved student session is validated by one user document, and student data is loaded once below
+        // after the account is resolved. Avoid duplicate queries and delayed state replacement.
+        try{window.__eqReadDiag&&window.__eqReadDiag("student-startup:single-hydrate",0);}catch(_e){}
       }
     })();
   },[]);
