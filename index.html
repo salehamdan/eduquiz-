@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v338</title>
+<title>EduQuiz — Smart Assessment v408</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V407_STUDENT_READ_FIREWALL_20261014 -->
+<!-- EDUQUIZ_V408_TARGETED_STUDENT_BOOTSTRAP_20261014 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -1311,6 +1311,40 @@ async function eqQueryStudentRows(col, st){
   return Array.from(out.values());
 }
 
+
+// V408 TARGETED STUDENT TASK DEFINITIONS:
+// Never download the complete quizzes/projects collections for a real student.
+// Query only rows explicitly assigned to this student or class. Empty audience quizzes are teacher-only.
+async function eqQueryStudentAssignedDefs(col, st){
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection || !st) return [];
+  const out=new Map();
+  const sidTokens=Array.from(new Set([st.id,st.studentId,st.studentNumber,st.email].filter(Boolean).map(String)));
+  const rawCid=String(st.classId||st.className||st.class||"").trim();
+  const canonCid=canonicalClassId(rawCid);
+  const classTokens=Array.from(new Set([rawCid,canonCid].filter(Boolean).map(String)));
+  async function runArray(field,value){
+    if(!value) return;
+    const snap=await db.collection(col).where(field,"array-contains",value).get();
+    try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field+":assigned",Math.max(1,Number(snap.size||0)));}catch(_e){}
+    snap.forEach(function(doc){const x=doc.data()||{};out.set(String(doc.id),{...x,_id:doc.id,id:x.id||doc.id});});
+  }
+  try{
+    if(col==="quizzes"){
+      for(const v of sidTokens) await runArray("assignedStudents",v);
+      for(const v of classTokens) await runArray("classIds",v);
+    }else if(col==="projects"){
+      for(const v of sidTokens) await runArray("studentIds",v);
+      for(const v of classTokens) await runArray("classIds",v);
+    }
+    return Array.from(out.values());
+  }catch(e){
+    // Compatibility fallback only when Firestore rejects the targeted query.
+    // Never fallback merely because the student has zero assigned work.
+    console.warn("V408 targeted student definitions failed",col,e&&e.message);
+    return await fsAll(col);
+  }
+}
+
 let __EQ_STUDENT_HYDRATE_PROMISES = new Map();
 async function loadStudentDataWithRoster(base, st){
   const studentKey=String(st&&(st.id||st.studentId)||"student");
@@ -1323,10 +1357,10 @@ async function loadStudentDataWithRoster(base, st){
     // Student bootstrap: task definitions once + student-owned result rows only.
     // rt_access was already fetched in loadLoginData, so never read it twice here.
     const [quizzes,announcements,readingTasks,projects,writingDoc,responses,rtResponses,projectSubs] = await Promise.all([
-      fsAll("quizzes"),
+      eqQueryStudentAssignedDefs("quizzes",st),
       fsAll("announcements"),
       fsAll("readingTasks"),
-      fsAll("projects"),
+      eqQueryStudentAssignedDefs("projects",st),
       fsGetDoc("appSettings","writing_independent_v12"),
       eqQueryStudentRows("responses",st),
       eqQueryStudentRows("readingTheoryResponses",st),
