@@ -213,7 +213,7 @@ try{
 <!-- V350_PROJECT_FIRESTORE_DIRECT_20261009 -->
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
-<!-- V395_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
+<!-- V396_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -2684,7 +2684,7 @@ async function rpUploadAudio(blob, path){
   // demo fallback: store small data URL. For real class use, Firebase Storage is required.
   return await rpBlobToDataUrl(blob);
 }
-async function rpSetReadingSubmissionStrict(id, data){ // V395: strict RP write + in-memory mutation; no full app reload needed.
+async function rpSetReadingSubmissionStrict(id, data){ // V396: strict RP write + in-memory mutation; no full app reload needed.
 if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
   await db.collection("readingSubmissions").doc(id).set(data);
   try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
@@ -13822,7 +13822,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v395" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v396" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14782,6 +14782,20 @@ function App() {
   };
 
   async function reload(){
+    // V396: never let a student-view refresh fall through to the global 16-collection loader.
+    // Teacher impersonation already has the required data in memory, so it must be zero-read.
+    if(parkedTeacher && user && String(user.role||"")==="student" && window.__EQ_CURRENT_DATA){
+      try{window.__eqReadDiag&&window.__eqReadDiag("reload:student-view-memory",0);}catch(_e){}
+      return window.__EQ_CURRENT_DATA;
+    }
+    // A real student refresh uses the scoped student loader only.
+    if(user && String(user.role||"")==="student"){
+      const base=window.__EQ_CURRENT_DATA||data;
+      const d=await loadStudentDataWithRoster(base,user);
+      setData(d); window.__EQ_CURRENT_DATA=d;
+      try{window.__eqReadDiag&&window.__eqReadDiag("reload:student-targeted",0);}catch(_e){}
+      return d;
+    }
     if(window.__EQ_LAST_RP_MUTATION_AT && Date.now()-window.__EQ_LAST_RP_MUTATION_AT<8000 && window.__EQ_CURRENT_DATA){
       try{window.__eqReadDiag&&window.__eqReadDiag("reload:rp-suppressed",0);}catch(_e){}
       const d=window.__EQ_CURRENT_DATA;
@@ -14792,8 +14806,20 @@ function App() {
   }
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
-  function viewAsStudent(studentUser){ setParkedTeacher(user); setUser(studentUser); reload(); }
-  function backToTeacher(){ if(parkedTeacher){ setUser(parkedTeacher); setParkedTeacher(null); reload(); } }
+  function viewAsStudent(studentUser){
+    // V396: switching identity is a local UI operation. Never download the whole database here.
+    setParkedTeacher(user);
+    setUser(studentUser);
+    try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:memory-only",0);}catch(_e){}
+  }
+  function backToTeacher(){
+    if(parkedTeacher){
+      // V396: restore the parked teacher from memory; no global reload.
+      setUser(parkedTeacher);
+      setParkedTeacher(null);
+      try{window.__eqReadDiag&&window.__eqReadDiag("back-to-teacher:memory-only",0);}catch(_e){}
+    }
+  }
 
   useEffect(()=>{
     (async()=>{
