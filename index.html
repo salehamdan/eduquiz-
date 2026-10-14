@@ -1153,7 +1153,7 @@ async function fsDel(col, id) {
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
 const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_login";
 function eqSaveFastDataCache(d){
-  try{ localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:d})); }catch(e){}
+  try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){}
 }
 function eqLoadFastDataCache(){
   try{
@@ -1236,18 +1236,20 @@ async function loadDashboardDataWithRoster(base) {
     try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
     // Main-first hydrate. RP submissions arrive through the single realtime listener,
     // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
-    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
+    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey,rtAccess] = await Promise.all([
       fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
-      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
+      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key"),fsGetDoc("appSettings","rt_access")
     ]);
     if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
+    const baseSettings=Array.isArray(base.appSettings)?base.appSettings.filter(x=>String(x&&(x.id||x._id)||"")!=="rt_access"):[];
+    if(rtAccess) baseSettings.push({...rtAccess,id:"rt_access"});
     const allData={
       ...base, quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,
-      readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
+      readingSubmissions:[],
       readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
       readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
       readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
-      appSettings:Array.isArray(base.appSettings)?base.appSettings:[]
+      appSettings:baseSettings
     };
     eqSaveFastDataCache(allData);
     __EQ_DASHBOARD_HYDRATE_RESULT=allData;
@@ -10781,10 +10783,9 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   // V401: Reading Theory history is lazy-loaded ONCE when the teacher opens this section.
   // This restores saved attempts without putting the collection back into Main/startup polling.
   React.useEffect(()=>{
-    // V402: restore the persisted access selection from the single settings document whenever teacher opens RT.
-    let settingsAlive=true;
-    fsGetDoc("appSettings","rt_access").then(fresh=>{if(settingsAlive&&fresh){const live={...fresh,id:"rt_access"};try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}}}).catch(e=>console.warn("V402 RT access restore failed",e&&e.message));
-    let alive=true;
+    // V405: rt_access is already loaded during teacher bootstrap; opening RT adds no access read.
+  let settingsAlive=true;
+  let alive=true;
   // V404: do not read every student's Reading Theory history merely by opening the section.
   // Existing in-memory history remains untouched; targeted history is loaded only when a specific student is inspected.
   try{window.__eqReadDiag&&window.__eqReadDiag("readingTheoryResponses:auto-full-load-disabled",0);}catch(_e){}
@@ -11119,16 +11120,7 @@ function ReadingTheoryStudent({user,data,reload}){
   // This prevents stale View-as-Student state without ever loading global collections.
   const rtAccessFromData=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
   const [rtAccessLive,setRtAccessLive]=useState(rtAccessFromData);
-  React.useEffect(()=>{
-    let alive=true;
-    (async()=>{
-      try{
-        const fresh=await fsGetDoc("appSettings","rt_access");
-        if(alive&&fresh){const live={...fresh,id:"rt_access"};setRtAccessLive(live);try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}}
-      }catch(_e){}
-    })();
-    return ()=>{alive=false;};
-  },[String(user&&user.id||"")]);
+  // V405: student bootstrap already fetched rt_access once; no duplicate mount read.
   React.useEffect(()=>{setRtAccessLive(rtAccessFromData);},[rtAccessFromData.status,JSON.stringify(rtAccessFromData.classIds||[]),JSON.stringify(rtAccessFromData.studentIds||[]),rtAccessFromData.updatedAt]);
   const rtAccess=rtAccessLive||rtAccessFromData;
   const isOpen=rtAccess.status==="open";
@@ -11197,7 +11189,7 @@ function ReadingTheoryStudent({user,data,reload}){
         studentId:user.id,studentNumber:user.studentId,studentName:user.name,
         classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()
       });
-      await reload();
+      try{window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
     }catch(e){console.warn("Save failed",e);}
   }
 
@@ -13959,7 +13951,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V404" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V405" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14932,6 +14924,10 @@ function App() {
     window.addEventListener("eq-appsetting-mutation",onAppSettingMutation);
     return ()=>window.removeEventListener("eq-appsetting-mutation",onAppSettingMutation);
   },[]);
+  useEffect(()=>{
+    const onRtResponseMutation=(ev)=>{const rec=ev&&ev.detail&&ev.detail.record;if(!rec||!rec.id)return;setData(prev=>{if(!prev)return prev;const rows=Array.isArray(prev.readingTheoryResponses)?prev.readingTheoryResponses.slice():[];const i=rows.findIndex(x=>String(x&&(x.id||x._id)||"")===String(rec.id));if(i>=0)rows[i]={...rows[i],...rec};else rows.push(rec);const next={...prev,readingTheoryResponses:rows};window.__EQ_CURRENT_DATA=next;return next;});};
+    window.addEventListener("eq-rt-response-mutation",onRtResponseMutation);return ()=>window.removeEventListener("eq-rt-response-mutation",onRtResponseMutation);
+  },[]);
 
   window.eqProjectPatch=function(collection,type,recordOrId){
     try{
@@ -15012,9 +15008,10 @@ function App() {
       const useCachedStartup = cached && !data && (!sess || String(sess.role||"")!=="student");
       if(useCachedStartup){
         try{
-          setData(cached);
-          if(code){const cq=(cached.quizzes||[]).find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(cq)setDirectQuiz(cq);}
-          if(sess){const cu=(cached.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cached))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));else if(sess.role==="student"){ try{clearSession();localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} }}
+          const cachedPaint={...cached,readingSubmissions:[]};
+          setData(cachedPaint); window.__EQ_CURRENT_DATA=cachedPaint;
+          if(code){const cq=(cachedPaint.quizzes||[]).find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(cq)setDirectQuiz(cq);}
+          if(sess){const cu=(cachedPaint.users||[]).find(x=>x.id===sess.id);if(cu&&activeStudentInData(cu,cachedPaint))setUser(fixAhmedStudent(cu));else if(sess.role!=="student"&&sess.id)setUser(fixAhmedStudent(sess));else if(sess.role==="student"){ try{clearSession();localStorage.removeItem(EQ_LOGIN_MEMORY_KEY);}catch(e){} }}
           setLoading(false);
         }catch(e){}
       }
