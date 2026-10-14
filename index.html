@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V409_TARGETED_TEACHER_READS_20261014 -->
+<!-- EDUQUIZ_V408_TARGETED_STUDENT_BOOTSTRAP_20261014 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -1233,21 +1233,6 @@ async function loadLoginData(sessionHint) {
 let __EQ_DASHBOARD_HYDRATE_PROMISE=null;
 let __EQ_DASHBOARD_HYDRATE_RESULT=null;
 let __EQ_DASHBOARD_HYDRATE_AT=0;
-// V409 TARGETED TEACHER COLLECTION READS
-async function eqQueryRowsByIds(col, field, ids){
-  const vals=Array.from(new Set((ids||[]).filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="").map(v=>String(v))));
-  if(!vals.length) return [];
-  if(!FIREBASE_OK || !db || !db.collection) return fsAll(col);
-  const out=new Map();
-  for(let i=0;i<vals.length;i+=30){
-    const chunk=vals.slice(i,i+30);
-    const snap=await db.collection(col).where(field,"in",chunk).get();
-    try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
-    snap.forEach(doc=>{const d=doc.data()||{};out.set(String(doc.id),{...d,_id:doc.id,id:d.id||doc.id});});
-  }
-  return Array.from(out.values());
-}
-
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
   // V402: the Login screen intentionally has no student roster. A teacher needs it once after authentication.
@@ -1272,16 +1257,9 @@ async function loadDashboardDataWithRoster(base) {
     try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
     // Main-first hydrate. RP submissions arrive through the single realtime listener,
     // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
-    const [quizzes,announcements,notes,readingTasks,projects,cloudKey] = await Promise.all([
-      fsAll("quizzes"),fsAll("announcements"),fsAll("notes"),
-      fsAll("readingTasks"),fsAll("projects"),fsGetDoc("appSettings","ai_key")
-    ]);
-    const teacherIds=new Set((base.users||[]).filter(u=>u&&String(u.role||"")==="teacher").map(u=>String(u.id||"")));
-    const teacherQuizIds=(quizzes||[]).filter(q=>!q.teacherId||teacherIds.has(String(q.teacherId))).map(q=>q.id).filter(Boolean);
-    const teacherProjectIds=(projects||[]).filter(p=>!p.teacherId||teacherIds.has(String(p.teacherId))).map(p=>p.id).filter(Boolean);
-    const [responses,projectSubmissions] = await Promise.all([
-      eqQueryRowsByIds("responses","quizId",teacherQuizIds),
-      eqQueryRowsByIds("projectSubmissions","projectId",teacherProjectIds)
+    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
+      fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
+      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
     ]);
     if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
     const baseSettings=Array.isArray(base.appSettings)?base.appSettings.slice():[];
@@ -14047,7 +14025,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V409" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V407" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15069,10 +15047,7 @@ function App() {
       try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(e){}
       return d;
     }
-    // V409: teacher refresh never falls back to the global 16-collection loader.
-    const teacherBase=window.__EQ_CURRENT_DATA||data;
-    __EQ_DASHBOARD_HYDRATE_RESULT=null; __EQ_DASHBOARD_HYDRATE_AT=0;
-    const d=await loadDashboardDataWithRoster(teacherBase);setData(d);window.__EQ_CURRENT_DATA=d;try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;
+    const d=await loadAllData();setData(d);try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}return d;
   }
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
@@ -15270,12 +15245,7 @@ function App() {
     if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
     let first=true,unsub=null;
     try{
-      const teacherTaskIds=(data.readingTasks||[]).filter(t=>t&&String(t.teacherId||"")===String(realtimeTeacher.id||"")).map(t=>String(t.id||"")).filter(Boolean);
-      if(!teacherTaskIds.length){try{window.__eqReadDiag&&window.__eqReadDiag("snapshot:teacher-readingSubmissions:no-tasks",0);}catch(_e){} return;}
-      const rpQuery=teacherTaskIds.length<=30
-        ? db.collection("readingSubmissions").where("taskId","in",teacherTaskIds)
-        : db.collection("readingSubmissions").where("teacherId","==",String(realtimeTeacher.id||""));
-      unsub=rpQuery.onSnapshot(snap=>{
+      unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
         try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",first?(snap.size||0):changes.length);}catch(_e){}
         const newForAI=(!first)?changes.filter(ch=>ch.type==="added").map(ch=>({id:ch.doc.id,...(ch.doc.data?ch.doc.data():{})})):[];
@@ -15308,7 +15278,7 @@ function App() {
       },e=>console.warn("V389 teacher RP live sync unavailable",e&&e.message));
     }catch(e){}
     return ()=>{try{unsub&&unsub();}catch(e){}};
-  },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role),(data.readingTasks||[]).map(t=>String(t&&t.id||"")).join("|")]);
+  },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
     function handleLogin(u){
       window.__EQ_LOGIN_CLICK_TS=performance.now();
