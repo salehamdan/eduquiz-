@@ -918,6 +918,67 @@ try {
     FIREBASE_OK = true;
   }
 } catch(e) { console.error("Firebase init failed:", e); }
+
+// V401 FIRESTORE LIVE TRACE — instruments the Firebase SDK itself, including direct reads
+// that bypass EduQuiz wrappers. It performs no Firestore reads of its own.
+window.__EQ_FS_TRACE = window.__EQ_FS_TRACE || {startedAt:Date.now(), total:0, by:{}, events:[]};
+window.__eqFsTraceAdd = function(kind,label,count){
+  try{
+    count=Math.max(0,Number(count)||0);
+    const T=window.__EQ_FS_TRACE;
+    T.total+=count;
+    const key=String(kind||"read")+":"+String(label||"unknown");
+    T.by[key]=(T.by[key]||0)+count;
+    T.events.push({t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count});
+    if(T.events.length>300)T.events.splice(0,T.events.length-300);
+    window.dispatchEvent(new CustomEvent("eq-read-diag-update"));
+  }catch(_e){}
+};
+(function eqInstallFirestoreTrace(){
+  if(!FIREBASE_OK||!db||!db.collection||window.__EQ_FS_TRACE_INSTALLED)return;
+  window.__EQ_FS_TRACE_INSTALLED=true;
+  function labelOf(x){
+    try{
+      if(x&&x.path)return String(x.path);
+      if(x&&x._key&&x._key.path&&x._key.path.canonicalString)return x._key.path.canonicalString();
+      if(x&&x._query&&x._query.path&&x._query.path.canonicalString)return x._query.path.canonicalString();
+      if(x&&x._query&&x._query.path)return String(x._query.path);
+    }catch(_e){}
+    return "unknown";
+  }
+  try{
+    const q=db.collection("__eq_trace_probe__");
+    const qp=Object.getPrototypeOf(q);
+    if(qp&&qp.get&&!qp.get.__eqWrapped){
+      const old=qp.get;
+      const wrapped=function(){
+        const self=this, lab=labelOf(self), p=old.apply(self,arguments);
+        return Promise.resolve(p).then(s=>{const n=Math.max(1,Number(s&&s.size||0));window.__eqFsTraceAdd("GET",lab,n);return s;});
+      }; wrapped.__eqWrapped=true; qp.get=wrapped;
+    }
+    if(qp&&qp.onSnapshot&&!qp.onSnapshot.__eqWrapped){
+      const old=qp.onSnapshot;
+      const wrapped=function(){
+        const self=this,lab=labelOf(self),args=[...arguments];
+        let idx=args.findIndex(a=>typeof a==="function");
+        if(idx>=0){const userNext=args[idx];let first=true;args[idx]=function(s){let n=0;try{n=first?Math.max(1,Number(s&&s.size||0)):Math.max(0,(s&&s.docChanges?s.docChanges().length:0));}catch(_e){}first=false;if(n)window.__eqFsTraceAdd("SNAPSHOT",lab,n);return userNext.apply(this,arguments);};}
+        else if(args[0]&&typeof args[0]==="object"&&typeof args[0].next==="function"){const obs=args[0],userNext=obs.next,copy={...obs};let first=true;copy.next=function(s){let n=0;try{n=first?Math.max(1,Number(s&&s.size||0)):Math.max(0,(s&&s.docChanges?s.docChanges().length:0));}catch(_e){}first=false;if(n)window.__eqFsTraceAdd("SNAPSHOT",lab,n);return userNext.apply(this,arguments);};args[0]=copy;}
+        return old.apply(self,args);
+      }; wrapped.__eqWrapped=true; qp.onSnapshot=wrapped;
+    }
+    const d=q.doc("__probe__"), dp=Object.getPrototypeOf(d);
+    if(dp&&dp.get&&!dp.get.__eqWrapped){
+      const old=dp.get;
+      const wrapped=function(){const self=this,lab=labelOf(self),p=old.apply(self,arguments);return Promise.resolve(p).then(s=>{window.__eqFsTraceAdd("DOC",lab,1);return s;});};
+      wrapped.__eqWrapped=true;dp.get=wrapped;
+    }
+    if(dp&&dp.onSnapshot&&!dp.onSnapshot.__eqWrapped){
+      const old=dp.onSnapshot;
+      const wrapped=function(){const self=this,lab=labelOf(self),args=[...arguments];let idx=args.findIndex(a=>typeof a==="function");if(idx>=0){const userNext=args[idx];args[idx]=function(s){window.__eqFsTraceAdd("DOC-SNAPSHOT",lab,1);return userNext.apply(this,arguments);};}return old.apply(self,args);};
+      wrapped.__eqWrapped=true;dp.onSnapshot=wrapped;
+    }
+  }catch(e){console.warn("V401 Firestore live trace install failed",e&&e.message);}
+})();
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -993,16 +1054,21 @@ function FirestoreReadBox(){
   useEffect(()=>{
     const fn=()=>setTick(x=>x+1);
     window.addEventListener("eq-read-diag-update",fn);
-    return ()=>window.removeEventListener("eq-read-diag-update",fn);
+    const timer=setInterval(fn,1000);
+    return ()=>{window.removeEventListener("eq-read-diag-update",fn);clearInterval(timer);};
   },[]);
   const D=window.__EQ_READ_DIAG||{startedAt:Date.now(),total:0,by:{}};
-  const mins=Math.max(1/60,(Date.now()-Number(D.startedAt||Date.now()))/60000);
-  const top=Object.entries(D.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
-    <b>Firestore reads — this device</b><br/>
-    Total observed: {D.total} · {Math.round(D.total/mins)}/min
-    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}{window.__EQ_LOGIN_TO_MAIN_MS!=null&&<React.Fragment><br/>Login → Main: {window.__EQ_LOGIN_TO_MAIN_MS} ms</React.Fragment>}{window.__EQ_TIMING&&window.__EQ_TIMING.marks&&<React.Fragment><br/>Startup: login {window.__EQ_TIMING.marks.login||"-"} · main {window.__EQ_TIMING.marks.main||"-"} ms</React.Fragment>}
-    {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
+  const T=window.__EQ_FS_TRACE||{startedAt:Date.now(),total:0,by:{},events:[]};
+  const mins=Math.max(1/60,(Date.now()-Number(T.startedAt||Date.now()))/60000);
+  const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const recent=(T.events||[]).slice(-8).reverse();
+  return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
+    <b>Firestore Live Trace — this session</b><br/>
+    SDK reads: <b>{T.total}</b> · {Math.round(T.total/mins)}/min<br/>
+    Legacy observed: {D.total}
+    {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
+    {top.length>0&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}}><b>Top sources</b>{top.map(x=><div key={x[0]}>{x[0]}: <b>{x[1]}</b></div>)}</div>}
+    {recent.length>0&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}}><b>Live events</b>{recent.map((x,i)=><div key={i} style={{color:"#d1d5db"}}>{new Date(x.t).toLocaleTimeString()} · {x.kind} · {x.source} · <b>+{x.count}</b></div>)}</div>}
   </div>;
 }
 
@@ -1173,7 +1239,7 @@ async function loadDashboardDataWithRoster(base) {
 // Student login must never call loadAllData(). It reuses the authenticated roster and loads only
 // student-facing collections. Large per-student result collections are queried by student identity.
 async function eqQueryStudentRows(col, st){
-  // V400 audit: the previous generic student lookup could issue up to 20 Firestore queries
+  // V401 audit: the previous generic student lookup could issue up to 20 Firestore queries
   // per collection (5 fields x 4 values). Empty queries can still be billable, while the
   // old diagnostic showed them as zero. Use the schemas actually written by EduQuiz and
   // stop once the canonical key returns data; then use only narrow legacy fallbacks.
@@ -10684,6 +10750,19 @@ Return ONLY valid JSON (no markdown):
 // ── Reading Theory Teacher: مفتاح + تحكم + نتائج
 function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const rtResps = (data.readingTheoryResponses||[]);
+  // V401: Reading Theory history is lazy-loaded ONCE when the teacher opens this section.
+  // This restores saved attempts without putting the collection back into Main/startup polling.
+  React.useEffect(()=>{
+    let alive=true;
+    if(window.__EQ_RT_HISTORY_LOADED||window.__EQ_RT_HISTORY_LOADING)return ()=>{alive=false;};
+    window.__EQ_RT_HISTORY_LOADING=true;
+    fsAll("readingTheoryResponses").then(rows=>{
+      if(!alive)return;
+      window.__EQ_RT_HISTORY_LOADED=true;
+      try{window.dispatchEvent(new CustomEvent("eq-rt-history-loaded",{detail:{rows:rows||[]}}));}catch(_e){}
+    }).catch(e=>console.warn("V401 RT history load failed",e&&e.message)).finally(()=>{window.__EQ_RT_HISTORY_LOADING=false;});
+    return ()=>{alive=false;};
+  },[]);
   const myResps = rtResps.filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)));
 
   // إعدادات التحكم من Firebase (appSettings → rt_access)
@@ -10755,15 +10834,14 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     setSelStudents(cleanStudentIds);
     try{
       await fsSetStrict("appSettings","rt_access",payload);
-      const verified=await fsGetDoc("appSettings","rt_access");
-      if(!verified || String(verified.status||"")!==String(payload.status||"")) throw new Error("rt_access verification mismatch");
-      const live={...verified,id:"rt_access"};
+      // V401: do not spend an extra read verifying our own acknowledged write.
+      const live={...payload,id:"rt_access"};
       setStatus(live.status||"closed");
       setSelClasses((live.classIds||[]).map(canonicalClassId).filter(Boolean));
       setSelStudents((live.studentIds||[]).map(String).filter(Boolean));
       try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}
       rtLastSyncRef.current=JSON.stringify({status:live.status||"closed",classIds:[...(live.classIds||[])].map(canonicalClassId).filter(Boolean).sort(),studentIds:[...(live.studentIds||[])].map(String).filter(Boolean).sort(),updatedAt:live.updatedAt||""});
-      setRtDirty(false); setAccessMsg("✅ Saved & verified"); setTimeout(()=>setAccessMsg(""),2500);
+      setRtDirty(false); setAccessMsg("✅ Saved"); setTimeout(()=>setAccessMsg(""),2500);
     }catch(e){
       const previous=(data.appSettings||[]).find(d=>String(d&&d.id||"")==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
       setStatus(previous.status||"closed");
@@ -14808,6 +14886,13 @@ function App() {
     window.addEventListener("eq-project-mutation",onProjectMutation);
     return ()=>window.removeEventListener("eq-project-mutation",onProjectMutation);
   },[]);
+  // V401: patch lazy Reading Theory history into React state; never reload global data.
+  React.useEffect(()=>{
+    const fn=(ev)=>{const rows=(ev&&ev.detail&&ev.detail.rows)||[];setData(prev=>{if(!prev)return prev;const next={...prev,readingTheoryResponses:rows};window.__EQ_CURRENT_DATA=next;return next;});};
+    window.addEventListener("eq-rt-history-loaded",fn);
+    return ()=>window.removeEventListener("eq-rt-history-loaded",fn);
+  },[]);
+
   // V398: keep appSettings/rt_access synchronized in memory after teacher saves it.
   React.useEffect(()=>{
     const onAppSettingMutation=(ev)=>{
