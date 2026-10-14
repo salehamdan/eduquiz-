@@ -1173,18 +1173,28 @@ async function loadDashboardDataWithRoster(base) {
 // Student login must never call loadAllData(). It reuses the authenticated roster and loads only
 // student-facing collections. Large per-student result collections are queried by student identity.
 async function eqQueryStudentRows(col, st){
-  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection) return [];
-  const vals=[st&&st.id,st&&st.studentId,st&&st.studentNumber,st&&st.email].filter(Boolean).map(String);
-  const fields=["studentId","studentUserId","userId","studentNumber","studentEmail"];
+  // V400 audit: the previous generic student lookup could issue up to 20 Firestore queries
+  // per collection (5 fields x 4 values). Empty queries can still be billable, while the
+  // old diagnostic showed them as zero. Use the schemas actually written by EduQuiz and
+  // stop once the canonical key returns data; then use only narrow legacy fallbacks.
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection || !st) return [];
+  const uid=String(st.id||"").trim();
+  const sid=String(st.studentId||st.studentNumber||"").trim();
+  const email=String(st.email||"").trim();
+  const probes=[];
+  if(uid) probes.push(["studentId",uid]);
+  if(sid && sid!==uid) probes.push(["studentNumber",sid]);
+  if(uid) probes.push(["studentUserId",uid]);
+  if(uid) probes.push(["userId",uid]);
+  if(email) probes.push(["studentEmail",email]);
   const out=new Map();
-  for(const field of fields){
-    for(const v of vals){
-      try{
-        const snap=await db.collection(col).where(field,"==",v).get();
-        try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field,snap.size||0);}catch(_e){}
-        snap.forEach(function(doc){out.set(String(doc.id),{...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id});});
-      }catch(_e){}
-    }
+  for(const [field,value] of probes){
+    try{
+      const snap=await db.collection(col).where(field,"==",value).get();
+      try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
+      snap.forEach(function(doc){out.set(String(doc.id),{...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id});});
+      if(out.size) break;
+    }catch(_e){}
   }
   return Array.from(out.values());
 }
@@ -14848,22 +14858,26 @@ function App() {
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   async function eqLoadStudentReadingTheoryHistory(studentUser){
-    // V399: one targeted query first; only use the legacy studentNumber key as a fallback.
+    // V400: targeted Reading Theory history restore; canonical key first, narrow legacy fallbacks only.
     // This restores historical Reading Theory attempts without reading the whole collection.
     if(!FIREBASE_OK || !db || !db.collection || !studentUser) return [];
     const out=new Map();
     async function run(field,value){
       if(value===undefined||value===null||String(value).trim()==="") return;
       const snap=await db.collection("readingTheoryResponses").where(field,"==",String(value)).get();
-      try{window.__eqReadDiag&&window.__eqReadDiag("query:readingTheoryResponses:"+field,snap.size||0);}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("query:readingTheoryResponses:"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(function(doc){const row={...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id};out.set(String(doc.id),row);});
     }
+    // Current RT writes studentId=user.id and studentNumber=school number.
+    // Keep two narrow legacy probes only if the canonical key has no history.
     try{await run("studentId",studentUser.id);}catch(_e){}
     if(out.size===0){try{await run("studentNumber",studentUser.studentId||studentUser.studentNumber);}catch(_e){}}
+    if(out.size===0){try{await run("studentId",studentUser.studentId||studentUser.studentNumber);}catch(_e){}}
+    if(out.size===0){try{await run("studentUserId",studentUser.id);}catch(_e){}}
     return Array.from(out.values());
   }
   async function viewAsStudent(studentUser){
-    // V399: preserve the stable zero-global-reload path, but restore this student's RT history.
+    // V400: preserve the stable zero-global-reload path and restore this student's RT history without global reads.
     setParkedTeacher(user);
     try{
       const history=await eqLoadStudentReadingTheoryHistory(studentUser);
@@ -17972,5 +17986,7 @@ setTimeout(function(){fab();},1500);
 </script>
 
 <!-- QUIZ_CREATE_USES_LIVE_MYCLASSES_FIX_20260919 -->
+
+<!-- V400_FULL_FIRESTORE_AUDIT_20261014: preserves v398/v399 zero-global-reload, Projects, RP, Writing, Quizzes, RT assignments/history. Student-owned lookup query fan-out reduced from up to 20 probes/collection to canonical-first narrow fallback. No background polling added. -->
 </body>
 </html>
