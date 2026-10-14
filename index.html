@@ -67,6 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
+<!-- EDUQUIZ_V407_STUDENT_READ_FIREWALL_20261014 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -92,7 +93,7 @@
 <script>
 try{
   Object.keys(localStorage).forEach(function(k){
-    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_fast_data_cache/i.test(k) || k==="eq_users"){ localStorage.removeItem(k); }
+    if(/^eduquiz_active_login_classes/i.test(k) || k==="eq_users"){ localStorage.removeItem(k); }
   });
 }catch(e){}
 </script>
@@ -101,7 +102,7 @@ try{
 <script>
 try{
   Object.keys(localStorage).forEach(function(k){
-    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_fast_data_cache/i.test(k) || /^eq_classes/i.test(k) || /^eq_users/i.test(k)){
+    if(/^eduquiz_active_login_classes/i.test(k) || /^eq_classes/i.test(k) || /^eq_users/i.test(k)){
       localStorage.removeItem(k);
     }
   });
@@ -1074,6 +1075,21 @@ function FirestoreReadBox(){
 
 // V381 FIRESTORE STARTUP/IDLE OPTIMIZATION
 // Collections: users, classes, quizzes, responses, announcements, notes
+function eqSavedSessionRole(){
+  try{const s=JSON.parse(localStorage.getItem("eq_session")||"null");return String(s&&s.role||"").toLowerCase();}catch(_e){return "";}
+}
+function eqStudentReadFirewallRows(col){
+  try{
+    if(eqSavedSessionRole()!=="student") return null;
+    const d=window.__EQ_CURRENT_DATA||null;
+    if(!d) return [];
+    const blocked=new Set(["users","deletedStudents","deletedClasses","responses","readingSubmissions","readingAttemptResets","readingTheoryResponses","projectSubmissions","notes","appSettings"]);
+    if(!blocked.has(String(col||""))) return null;
+    const rows=Array.isArray(d[col])?d[col]:[];
+    try{window.__eqReadDiag&&window.__eqReadDiag("student-firewall:"+col,0);}catch(_e){}
+    return rows;
+  }catch(_e){return null;}
+}
 async function fsAll(col) {
   const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
   if (!FIREBASE_OK) return local();
@@ -1196,14 +1212,19 @@ async function loadLoginData(sessionHint) {
   // V402: logged-out/student startup must NOT download the whole users collection.
   // Only classes + one policy document are needed to paint Login. If a saved student session exists,
   // validate that ONE student document. The teacher roster is loaded once only after teacher authentication.
-  const [classesRaw,googlePolicyRow] = await Promise.all([
-    fsAll("classes"),fsGetDoc("appSettings","student_google_registration_policy")
+  const [classesRaw,googlePolicyRow,rtAccessRow] = await Promise.all([
+    fsAll("classes"),
+    fsGetDoc("appSettings","student_google_registration_policy"),
+    fsGetDoc("appSettings","rt_access")
   ]);
   let hintedUser=null;
   if(sessionHint && String(sessionHint.role||"")==="student") hintedUser=await eqFetchLoginUser("student",sessionHint.studentId||sessionHint.id||"");
   const users=hintedUser?[hintedUser]:[];
   const classes=normalizeClassRows(classesRaw||[]);
-  return {users,classes,firebaseUsers:users.slice(),firebaseClasses:(classesRaw||[]).filter(c=>c&&!c.deleted&&c.status!=="deleted"&&!c.hidePreloaded&&!c.permanentDeleted),appSettings:googlePolicyRow?[{...googlePolicyRow,id:"student_google_registration_policy"}]:[],deletedStudents:[],deletedClasses:[],loginLight:true,
+  const lightSettings=[];
+  if(googlePolicyRow) lightSettings.push({...googlePolicyRow,id:"student_google_registration_policy"});
+  if(rtAccessRow) lightSettings.push({...rtAccessRow,id:"rt_access"});
+  return {users,classes,firebaseUsers:users.slice(),firebaseClasses:(classesRaw||[]).filter(c=>c&&!c.deleted&&c.status!=="deleted"&&!c.hidePreloaded&&!c.permanentDeleted),appSettings:lightSettings,deletedStudents:[],deletedClasses:[],loginLight:true,
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
 }
 // V385 FAST TEACHER STARTUP: reuse the already loaded/cached roster during the first dashboard hydrate.
@@ -1236,13 +1257,12 @@ async function loadDashboardDataWithRoster(base) {
     try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
     // Main-first hydrate. RP submissions arrive through the single realtime listener,
     // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
-    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey,rtAccess] = await Promise.all([
+    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
       fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
-      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key"),fsGetDoc("appSettings","rt_access")
+      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
     ]);
     if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-    const baseSettings=Array.isArray(base.appSettings)?base.appSettings.filter(x=>String(x&&(x.id||x._id)||"")!=="rt_access"):[];
-    if(rtAccess) baseSettings.push({...rtAccess,id:"rt_access"});
+    const baseSettings=Array.isArray(base.appSettings)?base.appSettings.slice():[];
     const allData={
       ...base, quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,
       readingSubmissions:[],
@@ -1290,34 +1310,54 @@ async function eqQueryStudentRows(col, st){
   }
   return Array.from(out.values());
 }
+
+let __EQ_STUDENT_HYDRATE_PROMISES = new Map();
 async function loadStudentDataWithRoster(base, st){
-  if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) base=await loadLoginData();
-  // Public task definitions are small and needed to decide assignment. Student-owned result rows are scoped.
-  const [quizzes,announcements,readingTasks,projects,writingDoc,rtAccess,responses,rtResponses,projectSubs] = await Promise.all([
-    fsAll("quizzes"),
-    fsAll("announcements"),
-    fsAll("readingTasks"),
-    fsAll("projects"),
-    fsGetDoc("appSettings","writing_independent_v12"),
-    fsGetDoc("appSettings","rt_access"),
-    eqQueryStudentRows("responses",st),
-    eqQueryStudentRows("readingTheoryResponses",st),
-    eqQueryStudentRows("projectSubmissions",st)
-  ]);
-  const appSettings=(base.appSettings||[]).filter(function(x){
-    const id=String(x&& (x.id||x._id) ||"");
-    return id!=="writing_independent_v12" && id!=="rt_access";
-  });
-  if(writingDoc) appSettings.push({...writingDoc,id:"writing_independent_v12"});
-  if(rtAccess) appSettings.push({...rtAccess,id:"rt_access"});
-  const d={...base,quizzes,announcements,readingTasks,projects,
-    responses:responses||[],readingTheoryResponses:rtResponses||[],projectSubmissions:projectSubs||[],
-    appSettings,notes:[],readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
-    readingAttemptResets:[],readingTheoryItems:[]};
-  window.__EQ_CURRENT_DATA=d;
-  return d;
+  const studentKey=String(st&&(st.id||st.studentId)||"student");
+  if(__EQ_STUDENT_HYDRATE_PROMISES.has(studentKey)){
+    try{window.__eqReadDiag&&window.__eqReadDiag("student-hydrate:joined",0);}catch(_e){}
+    return __EQ_STUDENT_HYDRATE_PROMISES.get(studentKey);
+  }
+  const job=(async()=>{
+    if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) base=await loadLoginData();
+    // Student bootstrap: task definitions once + student-owned result rows only.
+    // rt_access was already fetched in loadLoginData, so never read it twice here.
+    const [quizzes,announcements,readingTasks,projects,writingDoc,responses,rtResponses,projectSubs] = await Promise.all([
+      fsAll("quizzes"),
+      fsAll("announcements"),
+      fsAll("readingTasks"),
+      fsAll("projects"),
+      fsGetDoc("appSettings","writing_independent_v12"),
+      eqQueryStudentRows("responses",st),
+      eqQueryStudentRows("readingTheoryResponses",st),
+      eqQueryStudentRows("projectSubmissions",st)
+    ]);
+    const appSettings=(base.appSettings||[]).filter(function(x){
+      const id=String(x&& (x.id||x._id) ||"");
+      return id!=="writing_independent_v12";
+    });
+    if(writingDoc) appSettings.push({...writingDoc,id:"writing_independent_v12"});
+    const d={...base,quizzes,announcements,readingTasks,projects,
+      responses:responses||[],readingTheoryResponses:rtResponses||[],projectSubmissions:projectSubs||[],
+      appSettings,notes:[],readingSubmissions:Array.isArray(base.readingSubmissions)?base.readingSubmissions:[],
+      readingAttemptResets:[],readingTheoryItems:[]};
+    window.__EQ_CURRENT_DATA=d;
+    return d;
+  })();
+  __EQ_STUDENT_HYDRATE_PROMISES.set(studentKey,job);
+  try{return await job;}finally{__EQ_STUDENT_HYDRATE_PROMISES.delete(studentKey);}
 }
 async function loadAllData() {
+  // V407 hard containment: no browser running a real student session may ever execute the global 16-collection loader.
+  // Any legacy/hidden caller is redirected to the scoped student hydrate instead.
+  try{
+    const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
+    if(sess && String(sess.role||"")==="student"){
+      const base=window.__EQ_CURRENT_DATA||null;
+      try{window.__eqReadDiag&&window.__eqReadDiag("loadAllData:student-blocked",0);}catch(_e){}
+      return await loadStudentDataWithRoster(base,sess);
+    }
+  }catch(_e){}
   try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
   const [usersRaw,classesRaw,quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions,deletedStudents,deletedClasses] = await Promise.all([
     fsAll("users"),fsAll("classes"),fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions"),fsAll("deletedStudents"),fsAll("deletedClasses")
@@ -10783,7 +10823,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   // V401: Reading Theory history is lazy-loaded ONCE when the teacher opens this section.
   // This restores saved attempts without putting the collection back into Main/startup polling.
   React.useEffect(()=>{
-    // V405: rt_access is already loaded during teacher bootstrap; opening RT adds no access read.
+    // V407: rt_access is kept current by the single app-level document listener; opening RT adds no access read.
   let settingsAlive=true;
   let alive=true;
   // V404: do not read every student's Reading Theory history merely by opening the section.
@@ -11120,7 +11160,7 @@ function ReadingTheoryStudent({user,data,reload}){
   // This prevents stale View-as-Student state without ever loading global collections.
   const rtAccessFromData=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
   const [rtAccessLive,setRtAccessLive]=useState(rtAccessFromData);
-  // V405: student bootstrap already fetched rt_access once; no duplicate mount read.
+  // V407: rt_access comes from login bootstrap and stays live through the single app-level document listener.
   React.useEffect(()=>{setRtAccessLive(rtAccessFromData);},[rtAccessFromData.status,JSON.stringify(rtAccessFromData.classIds||[]),JSON.stringify(rtAccessFromData.studentIds||[]),rtAccessFromData.updatedAt]);
   const rtAccess=rtAccessLive||rtAccessFromData;
   const isOpen=rtAccess.status==="open";
@@ -13951,7 +13991,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V405" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V407" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -14857,6 +14897,21 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   );
 }
 
+// V406: background dashboard hydration must never overwrite newer realtime/local state.
+function eqMergeDashboardFresh(prev,fresh){
+  if(!prev) return fresh;
+  const merged={...fresh};
+  // RP listener may finish before the slower dashboard hydrate. Preserve the listener result.
+  if(Array.isArray(prev.readingSubmissions) && prev.readingSubmissions.length) merged.readingSubmissions=prev.readingSubmissions;
+  // Preserve newer RT history/settings mutations that arrived while hydrate was in flight.
+  if(Array.isArray(prev.readingTheoryResponses) && prev.readingTheoryResponses.length) merged.readingTheoryResponses=prev.readingTheoryResponses;
+  const settings=new Map();
+  (fresh.appSettings||[]).forEach(x=>{if(x)settings.set(String(x.id||x._id||""),x);});
+  (prev.appSettings||[]).forEach(x=>{if(x){const k=String(x.id||x._id||"");if(k==="rt_access"||k==="writing_independent_v12")settings.set(k,x);}});
+  merged.appSettings=Array.from(settings.values());
+  return merged;
+}
+
 // ── ROOT ──────────────────────────────────────────────────────
 function App() {
   const [user,setUser]=useState(null);
@@ -15055,7 +15110,7 @@ function App() {
           const rosterBase=(cachedTeacherFast&&cached)?cached:d;
           const started=performance.now();
           loadDashboardDataWithRoster(rosterBase).then(function(fresh){
-            setData(fresh); window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
+            setData(prev=>{const next=eqMergeDashboardFresh(prev,fresh);window.__EQ_CURRENT_DATA=next;return next;}); window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
             try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}
             try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
           }).catch(function(e){console.warn("V403 teacher dashboard hydrate failed",e);});
@@ -15103,6 +15158,29 @@ function App() {
     document.addEventListener("visibilitychange",onVis);
     return ()=>{ events.forEach(ev=>window.removeEventListener(ev,mark)); document.removeEventListener("visibilitychange",onVis); };
   },[user&&user.id,user&&user.role]);
+
+  // V407: one rt_access document listener for the real logged-in account (teacher or student).
+  // This makes Open/Closed and selected students/classes propagate immediately across Chrome/Edge/Safari.
+  useEffect(()=>{
+    if(parkedTeacher || !user || !FIREBASE_OK || !(db&&db.collection)) return;
+    let unsub=null;
+    try{
+      unsub=db.collection("appSettings").doc("rt_access").onSnapshot(function(doc){
+        if(!doc || !doc.exists) return;
+        const rec={...(doc.data?doc.data():{}),id:"rt_access"};
+        setData(prev=>{
+          if(!prev) return prev;
+          const rows=Array.isArray(prev.appSettings)?prev.appSettings.slice():[];
+          const i=rows.findIndex(x=>String(x&&(x.id||x._id)||"")==="rt_access");
+          if(i>=0) rows[i]={...rows[i],...rec,id:"rt_access"}; else rows.push(rec);
+          const next={...prev,appSettings:rows}; window.__EQ_CURRENT_DATA=next;
+          try{ if(String(user.role||"")!=="student") eqSaveFastDataCache(next); }catch(_e){}
+          return next;
+        });
+      },function(err){console.warn("V407 rt_access live sync unavailable",err&&err.message);});
+    }catch(e){console.warn("V407 rt_access live sync failed",e&&e.message);}
+    return ()=>{try{unsub&&unsub();}catch(_e){}};
+  },[parkedTeacher?"teacher-view":"real-student",user&&user.id,user&&user.role]);
 
   useEffect(()=>{
     if(parkedTeacher || !user || String(user.role||"")!=="student" || !FIREBASE_OK || !(db&&db.collection)) return;
@@ -15181,7 +15259,8 @@ function App() {
         const base=(data&&Array.isArray(data.users)&&Array.isArray(data.classes))?{...data,users:[...data.users.filter(x=>String(x.id)!==String(u.id)),u],firebaseUsers:[...(Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).filter(x=>String(x.id)!==String(u.id)),u]}:null;
         const role=String(u&&u.role||""); const job=(role==="teacher"&&base)?loadDashboardDataWithRoster(base):(role==="student"?loadStudentDataWithRoster(base,u):loadAllData());
         job.then(function(fresh){
-          setData(fresh);
+          if(role==="teacher") setData(prev=>{const next=eqMergeDashboardFresh(prev,fresh);window.__EQ_CURRENT_DATA=next;return next;});
+          else {setData(fresh);window.__EQ_CURRENT_DATA=fresh;}
           window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
           window.__EQ_LOGIN_TO_MAIN_MS=window.__EQ_LOGIN_CLICK_TS?Math.round(performance.now()-window.__EQ_LOGIN_CLICK_TS):window.__EQ_STARTUP_MS;
           try{window.__eqMark&&window.__eqMark("main");}catch(_e){}
