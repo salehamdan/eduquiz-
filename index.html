@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v410</title>
+<title>EduQuiz — Smart Assessment v411</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V410_FOLLOWUP_SCOPED_READS_20261014 -->
+<!-- EDUQUIZ_V411_FOLLOWUP_CACHE_20261015 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -215,7 +215,7 @@ try{
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
-</head>
+<!-- EDUQUIZ_V411_FINAL_READ_GUARD_20261015 -->\n</head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
@@ -1130,7 +1130,37 @@ function eqFollowupScopeMatch(row, teacherId, term, period, classId){
   if(classId && String(classId)!=="all" && !sameClassId(row.classId||"",classId)) return false;
   return true;
 }
-async function eqFollowupScopedRows(col, teacherId, term, period, classId){
+// V411: bounded Follow-up query cache; reuse period data across date navigation.
+const eqFollowupQueryCache=new Map();
+const eqFollowupQueryEpoch=new Map();
+function eqInvalidateFollowupQueryCache(col){
+  if(!col || !String(col).startsWith("followup") && col!=="dailyFollowup") return;
+  for(const key of eqFollowupQueryCache.keys()) if(key.startsWith(String(col)+"|")){
+    eqFollowupQueryEpoch.set(key,(eqFollowupQueryEpoch.get(key)||0)+1);
+    eqFollowupQueryCache.delete(key);
+  }
+}
+async function eqFollowupScopedRows(col,teacherId,term,period,classId){
+  const key=[col,teacherId||"",term||"",period||"",classId||""].join("|");
+  const now=Date.now();
+  const old=eqFollowupQueryCache.get(key);
+  if(old && (old.pending || now-old.at<300000)){
+    try{window.__EQ_FOLLOWUP_CACHE_HITS=(window.__EQ_FOLLOWUP_CACHE_HITS||0)+1;}catch(_e){}
+    return old.pending ? old.pending : old.rows.slice();
+  }
+  const epoch=eqFollowupQueryEpoch.get(key)||0;
+  const pending=eqFollowupScopedRowsUncached(col,teacherId,term,period,classId);
+  eqFollowupQueryCache.set(key,{at:now,pending});
+  try{
+    const rows=await pending;
+    if(eqFollowupQueryCache.get(key)?.pending===pending && (eqFollowupQueryEpoch.get(key)||0)===epoch)eqFollowupQueryCache.set(key,{at:Date.now(),rows});
+    return rows.slice();
+  }catch(e){
+    if(eqFollowupQueryCache.get(key)?.pending===pending)eqFollowupQueryCache.delete(key);
+    throw e;
+  }
+}
+async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classId){
   const filterRows=(rows)=>(rows||[]).filter(r=>eqFollowupScopeMatch(r,teacherId,term,period,classId));
   if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
     try{return filterRows(await fsAll(col));}catch(_e){return [];}
@@ -1148,7 +1178,7 @@ async function eqFollowupScopedRows(col, teacherId, term, period, classId){
   }catch(e){
     // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
     // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
-    console.warn("V410 scoped follow-up query fallback",col,e&&e.message);
+    console.warn("V411 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
       if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
@@ -1158,7 +1188,7 @@ async function eqFollowupScopedRows(col, teacherId, term, period, classId){
       try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
       return filterRows(mapSnap(snap));
     }catch(e2){
-      console.warn("V410 follow-up fallback failed",col,e2&&e2.message);
+      console.warn("V411 follow-up fallback failed",col,e2&&e2.message);
       return [];
     }
   }
@@ -1194,12 +1224,13 @@ async function fsSet(col, id, data) {
     try { await db.collection(col).doc(id).set(data); ok=true; }
     catch(e){ console.warn("Firestore write failed", col, e && e.message); }
   }
+  if(ok) try{eqInvalidateFollowupQueryCache(col);}catch(_e){}
   if(ok && col!=="readingSubmissions") try{if(typeof eqInvalidateDashboardHydrate==="function")eqInvalidateDashboardHydrate();}catch(_e){}
   if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
-  try { await db.collection(col).doc(id).set(data, {merge:true}); try{if(col!=="readingSubmissions"&&typeof eqInvalidateDashboardHydrate==="function")eqInvalidateDashboardHydrate();}catch(_e){} }
+  try { await db.collection(col).doc(id).set(data, {merge:true}); try{eqInvalidateFollowupQueryCache(col);}catch(_e){} try{if(col!=="readingSubmissions"&&typeof eqInvalidateDashboardHydrate==="function")eqInvalidateDashboardHydrate();}catch(_e){} }
   catch(e){ console.error("Firestore strict write failed", col, id, e); throw e; }
 }
 async function fsDel(col, id) {
@@ -1212,6 +1243,7 @@ async function fsDel(col, id) {
     try { await db.collection(col).doc(id).delete(); ok=true; }
     catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
   }
+  if(ok) try{eqInvalidateFollowupQueryCache(col);}catch(_e){}
   if(ok && col!=="readingSubmissions") try{if(typeof eqInvalidateDashboardHydrate==="function")eqInvalidateDashboardHydrate();}catch(_e){}
   if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
 }
@@ -3282,8 +3314,7 @@ async function saveAIKeyToCloud(k) {
 async function loadAIKeyFromCloud() {
   if(!FIREBASE_OK||!db) return "";
   try {
-    const docs=await fsAll("appSettings");
-    const r=docs.find(d=>d.id==="ai_key");
+    const r=await fsGetDoc("appSettings","ai_key");
     return String((r&&r.value)||"").trim();
   } catch(e){ return ""; }
 }
@@ -6574,7 +6605,7 @@ function StudentApp({user, data, onLogout, reload, directQuiz, clearDirect}) {
 
   const homeRtAccess=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
   const homeRtClassIds=(homeRtAccess.classIds||[]).map(canonicalClassId).filter(Boolean);
-  const homeRtStudentIds=(homeRtAccess.studentIds||[]).map(String);
+  const homeRtStudentIds=[...(homeRtAccess.studentIds||[]),...(homeRtAccess.studentAliases||[])].map(String);
   const homeRtCid=canonicalClassId(user.classId||user.className||user.class||"");
   const homeRtNoFilter=!homeRtClassIds.length&&!homeRtStudentIds.length;
   const homeRtHasAccess=homeRtAccess.status==="open"&&(homeRtNoFilter||homeRtClassIds.includes(homeRtCid)||homeRtStudentIds.some(homeMatchesStudentValue));
@@ -10945,6 +10976,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     status:rtAccess.status||"closed",
     classIds:(rtAccess.classIds||[]).map(canonicalClassId).filter(Boolean).sort(),
     studentIds:(rtAccess.studentIds||[]).map(String).filter(Boolean).sort(),
+    studentAliases:(rtAccess.studentAliases||[]).map(String).filter(Boolean).sort(),
     updatedAt:rtAccess.updatedAt||""
   });
   const rtLastSyncRef = React.useRef(rtAccessKey);
@@ -11004,7 +11036,13 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
       const sc=canonicalClassId(stu.classId||stu.className||stu.class||"");
       return classSet.has(sc);
     });
-    const payload={id:"rt_access",status:s,classIds:cleanClassIds,studentIds:cleanStudentIds,updatedAt:new Date().toISOString()};
+    const cleanStudentAliases=Array.from(new Set(cleanStudentIds.flatMap(function(sid){
+      const stu=liveById.get(String(sid));
+      if(!stu) return [String(sid)];
+      const digits=eqDigits(stu.studentId||stu.studentNumber||stu.id||"");
+      return [stu.id,stu.studentId,stu.studentNumber,stu.email,digits,digits?("student_"+digits):""].filter(Boolean).map(String);
+    })));
+    const payload={id:"rt_access",status:s,classIds:cleanClassIds,studentIds:cleanStudentIds,studentAliases:cleanStudentAliases,updatedAt:new Date().toISOString()};
     setSelStudents(cleanStudentIds);
     try{
       await fsSetStrict("appSettings","rt_access",payload);
@@ -11014,7 +11052,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
       setSelClasses((live.classIds||[]).map(canonicalClassId).filter(Boolean));
       setSelStudents((live.studentIds||[]).map(String).filter(Boolean));
       try{window.dispatchEvent(new CustomEvent("eq-appsetting-mutation",{detail:{id:"rt_access",record:live}}));}catch(_e){}
-      rtLastSyncRef.current=JSON.stringify({status:live.status||"closed",classIds:[...(live.classIds||[])].map(canonicalClassId).filter(Boolean).sort(),studentIds:[...(live.studentIds||[])].map(String).filter(Boolean).sort(),updatedAt:live.updatedAt||""});
+      rtLastSyncRef.current=JSON.stringify({status:live.status||"closed",classIds:[...(live.classIds||[])].map(canonicalClassId).filter(Boolean).sort(),studentIds:[...(live.studentIds||[])].map(String).filter(Boolean).sort(),studentAliases:[...(live.studentAliases||[])].map(String).filter(Boolean).sort(),updatedAt:live.updatedAt||""});
       setRtDirty(false); setAccessMsg("✅ Saved"); setTimeout(()=>setAccessMsg(""),2500);
     }catch(e){
       const previous=(data.appSettings||[]).find(d=>String(d&&d.id||"")==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
@@ -11273,8 +11311,16 @@ function ReadingTheoryStudent({user,data,reload}){
   const noFilter=(!rtAccess.classIds||rtAccess.classIds.length===0)&&(!rtAccess.studentIds||rtAccess.studentIds.length===0);
   const userRtCid=canonicalClassId(user.classId||user.className||user.class||"");
   const rtClassIds=(rtAccess.classIds||[]).map(canonicalClassId).filter(Boolean);
-  const rtStudentIds=(rtAccess.studentIds||[]).map(String);
-  const hasAccess=isOpen&&(noFilter||rtClassIds.includes(userRtCid)||rtStudentIds.includes(String(user.id)));
+  const rtStudentIds=[...(rtAccess.studentIds||[]),...(rtAccess.studentAliases||[])].map(String);
+  const rtUserDigits=eqDigits(user.studentId||user.studentNumber||user.id||"");
+  const rtUserTokens=Array.from(new Set([user.id,user.studentId,user.studentNumber,user.email,rtUserDigits,rtUserDigits?("student_"+rtUserDigits):""].filter(Boolean).map(String)));
+  const rtHasStudentMatch=rtStudentIds.some(function(saved){
+    const raw=String(saved||"");
+    if(rtUserTokens.includes(raw)) return true;
+    const d=eqDigits(raw);
+    return !!d && rtUserTokens.some(function(v){return eqDigits(v)===d;});
+  });
+  const hasAccess=isOpen&&(noFilter||rtClassIds.includes(userRtCid)||rtHasStudentMatch);
 
   const rtResps=(data.readingTheoryResponses||[]).filter(r=>responseBelongsToStudent(r,user));
   const totalKp=rtCalcKp(rtResps);
@@ -14074,7 +14120,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V410" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V411" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15304,7 +15350,9 @@ function App() {
     if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
     let first=true,unsub=null;
     try{
-      unsub=db.collection("readingSubmissions").onSnapshot(snap=>{
+      // V411 final: never subscribe the teacher to every RP record in the database.
+      // Current submissions carry task.teacherId, so listen only to this teacher's records.
+      unsub=db.collection("readingSubmissions").where("teacherId","==",String(realtimeTeacher.id||"")).onSnapshot(snap=>{
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
         try{window.__eqReadDiag&&window.__eqReadDiag(first?"snapshot:teacher-readingSubmissions-initial":"snapshot:teacher-readingSubmissions-change",first?(snap.size||0):changes.length);}catch(_e){}
         const newForAI=(!first)?changes.filter(ch=>ch.type==="added").map(ch=>({id:ch.doc.id,...(ch.doc.data?ch.doc.data():{})})):[];
