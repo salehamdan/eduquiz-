@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v413</title>
+<title>EduQuiz — Smart Assessment v415</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V413_FOLLOWUP_CACHE_20261015 -->
+<!-- EDUQUIZ_V415_FOLLOWUP_CACHE_20261015 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -215,7 +215,7 @@ try{
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
-<!-- EDUQUIZ_V413_FINAL_READ_GUARD_20261015 -->\n</head>
+<!-- EDUQUIZ_V415_FINAL_READ_GUARD_20261015 -->\n</head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
@@ -1130,7 +1130,7 @@ function eqFollowupScopeMatch(row, teacherId, term, period, classId){
   if(classId && String(classId)!=="all" && !sameClassId(row.classId||"",classId)) return false;
   return true;
 }
-// V413: bounded Follow-up query cache; reuse period data across date navigation.
+// V415: bounded Follow-up query cache; reuse period data across date navigation.
 const eqFollowupQueryCache=new Map();
 const eqFollowupQueryEpoch=new Map();
 function eqInvalidateFollowupQueryCache(col){
@@ -1178,7 +1178,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
   }catch(e){
     // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
     // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
-    console.warn("V413 scoped follow-up query fallback",col,e&&e.message);
+    console.warn("V415 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
       if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
@@ -1188,7 +1188,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
       try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
       return filterRows(mapSnap(snap));
     }catch(e2){
-      console.warn("V413 follow-up fallback failed",col,e2&&e2.message);
+      console.warn("V415 follow-up fallback failed",col,e2&&e2.message);
       return [];
     }
   }
@@ -1320,6 +1320,47 @@ function eqInvalidateDashboardHydrate(){
   __EQ_DASHBOARD_HYDRATE_RESULT=null;
   __EQ_DASHBOARD_HYDRATE_AT=0;
 }
+
+// V415: teacher dashboard reads must be scoped. Never hydrate whole teacher-owned collections.
+async function eqQueryTeacherRows(col, teacherId){
+  if(!teacherId) return [];
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
+    const rows=await fsAll(col);
+    return (rows||[]).filter(x=>String(x&&x.teacherId||"")===String(teacherId));
+  }
+  try{
+    const snap=await db.collection(col).where("teacherId","==",String(teacherId)).get();
+    try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":teacherId",Math.max(1,Number(snap.size||0)));}catch(_e){}
+    return snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
+  }catch(e){
+    console.warn("V415 teacher-scoped query failed",col,e&&e.message);
+    return [];
+  }
+}
+async function eqQueryResponsesForQuizIds(quizIds){
+  const ids=Array.from(new Set((quizIds||[]).map(String).filter(Boolean)));
+  if(!ids.length) return [];
+  if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
+    const all=await fsAll("responses");
+    const set=new Set(ids);
+    return (all||[]).filter(r=>set.has(String(r&&r.quizId||"")));
+  }
+  const out=new Map();
+  // Use conservative batches of 10 for broad Firestore compatibility.
+  for(let i=0;i<ids.length;i+=10){
+    const chunk=ids.slice(i,i+10);
+    try{
+      const snap=await db.collection("responses").where("quizId","in",chunk).get();
+      try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
+      snap.forEach(doc=>{const x=doc.data()||{};out.set(String(doc.id),{...x,id:x.id||doc.id,_id:doc.id});});
+    }catch(e){
+      console.warn("V415 response query failed",e&&e.message);
+      // Never fall back to a full collection scan in normal teacher dashboard flow.
+    }
+  }
+  return Array.from(out.values());
+}
+
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
   // V402: the Login screen intentionally has no student roster. A teacher needs it once after authentication.
@@ -1344,10 +1385,17 @@ async function loadDashboardDataWithRoster(base) {
     try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
     // Main-first hydrate. RP submissions arrive through the single realtime listener,
     // so never GET the same collection here. Reading Theory/reset/settings detail is lazy and must not block Main.
-    const [quizzes,responses,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
-      fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),
-      fsAll("readingTasks"),fsAll("projects"),fsAll("projectSubmissions"),fsGetDoc("appSettings","ai_key")
+    const teacherId=String((base.users||[]).find(u=>u&&String(u.role||"")==="teacher")?.id || JSON.parse(localStorage.getItem("eq_session")||"null")?.id || "");
+    const [quizzes,announcements,notes,readingTasks,projects,projectSubmissions,cloudKey] = await Promise.all([
+      eqQueryTeacherRows("quizzes",teacherId),
+      eqQueryTeacherRows("announcements",teacherId),
+      eqQueryTeacherRows("notes",teacherId),
+      eqQueryTeacherRows("readingTasks",teacherId),
+      eqQueryTeacherRows("projects",teacherId),
+      eqQueryTeacherRows("projectSubmissions",teacherId),
+      fsGetDoc("appSettings","ai_key")
     ]);
+    const responses=await eqQueryResponsesForQuizIds((quizzes||[]).map(q=>q&&q.id).filter(Boolean));
     if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
     const baseSettings=Array.isArray(base.appSettings)?base.appSettings.slice():[];
     const allData={
@@ -4873,7 +4921,7 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
     // Don't save an empty attempt (student left without answering anything)
     if(answeredCount===0){ return; }
     setSaving(true);
-    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...finalAnswers},attempt:prev+1,points,mode:"game",completedAt:today(),ts:Date.now()};
+    const entry={id:uid(),teacherId:quiz.teacherId||"",studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:{...finalAnswers},attempt:prev+1,points,mode:"game",completedAt:today(),ts:Date.now()};
     try { await fsSet("responses",entry.id,entry); if(onSaved) await onSaved(); } catch(e){}
     setSaving(false);
   }
@@ -5292,7 +5340,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
       if(orig){const oi=orig.options.indexOf(selText);origAnswers[q.id]=oi>=0?oi:sel;}
       else origAnswers[q.id]=sel;
     });
-    const entry={id:uid(),studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:origAnswers,attempt:prev+1,selfRating:rating,completedAt:today(),ts:Date.now()};
+    const entry={id:uid(),teacherId:quiz.teacherId||"",studentId:student.id,quizId:quiz.id,score:sc,totalQ:total,answers:origAnswers,attempt:prev+1,selfRating:rating,completedAt:today(),ts:Date.now()};
     await fsSet("responses",entry.id,entry);
     if(onSaved) await onSaved();
     setScore(sc);setSaving(false);setSubmitted(true);setTab("results");
@@ -10585,7 +10633,7 @@ function ImportResultsTool({data,user,reload,myClasses,myStudents,myQuizzes}){
         const officialPct=(dupeMode==="last")?r.lastPercent:(dupeMode==="first")?r.firstPercent:r.bestPercent;
         const rid=uid();
         await fsSet("responses",rid,{
-          id:rid, quizId:qid, studentId:r.student.id, score:official, totalQ:total, percent:officialPct||pct(official,total),
+          id:rid, teacherId:user.id, quizId:qid, studentId:r.student.id, score:official, totalQ:total, percent:officialPct||pct(official,total),
           answers:{}, mode:"imported", source:"ZipGrade", imported:true, importSource:"ZipGrade", importBatchId:batchId,
           importFile:fileName, importMode:mode, importDuplicatePolicy:dupeMode, keyVersion:r.keyVersion||"",
           studentName:r.student.name, studentNumber:r.student.studentId||"", classId:r.student.classId||"",
@@ -12923,30 +12971,30 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       map.set(key,{...(map.get(key)||{}),...clean});
     };
     (Array.isArray(data.users)?data.users:[]).forEach(add);
-    // V413: apply raw active Firebase roster AFTER merged rows so a live account
-    // overrides stale/deleted/old-roster metadata with the same school number.
-    (Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).forEach(add);
+    // V415: local patches are lower priority than the current raw Firebase roster.
     (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
+    // The active Firebase row is applied LAST so stale/deleted/local metadata cannot replace it.
+    (Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).forEach(add);
     return Array.from(map.values());
   })();
-  // V413: active Firebase roster wins over stale merged rows/tokens.
-  // If a live student has a missing/stale classId, infer class from school number
-  // only when that inferred class is one of this teacher's real active classes.
+  // V415: never infer or invent a class from a student number.
+  // Show only the real current class stored on the active student record.
   const eqTeacherClassById=new Map(myClasses.map(function(c){return [canonicalClassId(c.id||c.classId||c.name||""),c];}));
   function eqEffectiveTeacherStudent(u){
     if(!u) return null;
     const sid=eqDigits(u.studentId||u.studentNumber||u.id||"");
-    const declared=canonicalClassId(u.classId||u.className||u.class||"");
-    let cid=declared && eqTeacherClassById.has(declared) ? declared : "";
-    if(!cid && sid.length>=2){
-      const inferred=canonicalClassId("class_"+sid.charAt(0)+"_"+sid.charAt(1));
-      if(eqTeacherClassById.has(inferred)) cid=inferred;
+    let live=null;
+    if(sid){
+      live=(Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).find(function(v){
+        if(!v || v.role!=="student") return false;
+        if(v.deleted===true || String(v.status||"").toLowerCase()==="deleted" || v.hidePreloaded===true || v.permanentDeleted===true) return false;
+        return eqDigits(v.studentId||v.studentNumber||v.id||v._id||"")===sid;
+      })||null;
     }
-    if(!cid) return null;
-    const live=sid?eqActiveFirebaseStudentBySid(data,sid,cid):null;
-    // A raw active Firebase row overrides stale deleted/token metadata.
     const base=live?{...u,...live}:u;
-    if(base.deleted===true || String(base.status||"").toLowerCase()==="deleted" || base.hidePreloaded===true || base.permanentDeleted===true) return null;
+    if(base.role!=="student" || base.deleted===true || String(base.status||"").toLowerCase()==="deleted" || base.hidePreloaded===true || base.permanentDeleted===true) return null;
+    const cid=canonicalClassId(base.classId||base.className||base.class||"");
+    if(!cid || !eqTeacherClassById.has(cid)) return null;
     if(resettingClassId && sameClassId(cid,resettingClassId)) return null;
     return {...base,classId:cid};
   }
@@ -14147,7 +14195,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V413" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V415" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15377,7 +15425,7 @@ function App() {
     if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
     let first=true,unsub=null;
     try{
-      // V413 final: never subscribe the teacher to every RP record in the database.
+      // V415 final: never subscribe the teacher to every RP record in the database.
       // Current submissions carry task.teacherId, so listen only to this teacher's records.
       unsub=db.collection("readingSubmissions").where("teacherId","==",String(realtimeTeacher.id||"")).onSnapshot(snap=>{
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
@@ -17795,7 +17843,10 @@ document.addEventListener("click", function(e){
     let ok=0, fail=0, lastErr='';
     try{
       const db=firebase.firestore();
-      const snap=await db.collection('readingSubmissions').get();
+      const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
+      const teacherId=String(sess&&sess.role==="teacher"&&sess.id||"");
+      if(!teacherId) throw new Error("Teacher session required for RP auto analysis.");
+      const snap=await db.collection('readingSubmissions').where("teacherId","==",teacherId).get();
       try{window.__eqReadDiag&&window.__eqReadDiag('get:auto-readingSubmissions',snap.size||0);}catch(_e){}
       const todo=[];
       snap.forEach(doc=>{ const r={id:doc.id, ...(doc.data()||{})}; if(needs(r)) todo.push(r); });
