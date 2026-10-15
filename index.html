@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v411</title>
+<title>EduQuiz — Smart Assessment v412</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_V411_FOLLOWUP_CACHE_20261015 -->
+<!-- EDUQUIZ_V412_FOLLOWUP_CACHE_20261015 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -215,7 +215,7 @@ try{
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
-<!-- EDUQUIZ_V411_FINAL_READ_GUARD_20261015 -->\n</head>
+<!-- EDUQUIZ_V412_FINAL_READ_GUARD_20261015 -->\n</head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
@@ -1130,7 +1130,7 @@ function eqFollowupScopeMatch(row, teacherId, term, period, classId){
   if(classId && String(classId)!=="all" && !sameClassId(row.classId||"",classId)) return false;
   return true;
 }
-// V411: bounded Follow-up query cache; reuse period data across date navigation.
+// V412: bounded Follow-up query cache; reuse period data across date navigation.
 const eqFollowupQueryCache=new Map();
 const eqFollowupQueryEpoch=new Map();
 function eqInvalidateFollowupQueryCache(col){
@@ -1178,7 +1178,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
   }catch(e){
     // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
     // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
-    console.warn("V411 scoped follow-up query fallback",col,e&&e.message);
+    console.warn("V412 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
       if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
@@ -1188,7 +1188,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
       try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
       return filterRows(mapSnap(snap));
     }catch(e2){
-      console.warn("V411 follow-up fallback failed",col,e2&&e2.message);
+      console.warn("V412 follow-up fallback failed",col,e2&&e2.message);
       return [];
     }
   }
@@ -11336,8 +11336,11 @@ function ReadingTheoryStudent({user,data,reload}){
     // أولاً: جرب المفتاح المحلي، إذا ما في جرب Firebase
     let key=getAIKey();
     if(!key){
+      try{window.__eqReadDiag&&window.__eqReadDiag("rt:start:cloud-ai-key",0);}catch(_e){}
       key=await loadAIKeyFromCloud();
       if(key) setAIKey(key); // خزّنه محلياً للمرة القادمة
+    }else{
+      try{window.__eqReadDiag&&window.__eqReadDiag("rt:start:cached-ai-key",0);}catch(_e){}
     }
     if(!key){setErrMsg("No AI key. Ask your teacher to set it in Settings ⚙️.");setPhase("list");return;}
     const topic=RT_TOPICS[Math.floor(Math.random()*RT_TOPICS.length)];
@@ -12923,7 +12926,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
     return Array.from(map.values());
   })();
-  const myStudents=eqAllUsersForTeacher.filter(u=>u.role==="student" && u.deleted!==true && u.status!=="deleted" && (!resettingClassId || !sameClassId(u.classId||u.className||u.class,resettingClassId)) && myClasses.some(c=>sameClassId(c.id,u.classId||u.className||u.class) && (!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)))).map(fixAhmedStudent);
+  // V412: a current active Firebase roster row wins over a stale classRosterToken.
+  // This keeps re-imported/moved students visible (e.g. in Reading Theory assignment)
+  // without reviving deleted accounts.
+  const myStudents=eqAllUsersForTeacher.filter(function(u){
+    if(!u || u.role!=="student" || u.deleted===true || String(u.status||"").toLowerCase()==="deleted") return false;
+    if(resettingClassId && sameClassId(u.classId||u.className||u.class,resettingClassId)) return false;
+    return myClasses.some(function(c){
+      if(!sameClassId(c.id,u.classId||u.className||u.class)) return false;
+      if(!c.rosterToken || String(u.classRosterToken||"")===String(c.rosterToken)) return true;
+      const sid=eqDigits(u.studentId||u.studentNumber||u.id||"");
+      return !!(sid && eqActiveFirebaseStudentBySid(data,sid,c.id));
+    });
+  }).map(fixAhmedStudent);
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
@@ -14120,7 +14135,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V411" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V412" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15350,7 +15365,7 @@ function App() {
     if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
     let first=true,unsub=null;
     try{
-      // V411 final: never subscribe the teacher to every RP record in the database.
+      // V412 final: never subscribe the teacher to every RP record in the database.
       // Current submissions carry task.teacherId, so listen only to this teacher's records.
       unsub=db.collection("readingSubmissions").where("teacherId","==",String(realtimeTeacher.id||"")).onSnapshot(snap=>{
         const changes=(typeof snap.docChanges==="function")?snap.docChanges():[];
