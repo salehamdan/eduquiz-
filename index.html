@@ -972,43 +972,12 @@ async function forceUpdate(){
 
 
 // ── CLOUD DATA LAYER (Firestore) ──────────────────────────────
-// V384 FIRESTORE READ COUNTER — diagnostic only; no Firestore reads are created by this counter.
-window.__EQ_READ_DIAG = window.__EQ_READ_DIAG || {startedAt:Date.now(), total:0, by:{}, events:[]};
-window.__eqReadDiag = function(source,count){
-  try{
-    count=Math.max(0,Number(count)||0);
-    const D=window.__EQ_READ_DIAG;
-    D.total+=count; D.by[source]=(D.by[source]||0)+count;
-    D.events.push({t:Date.now(),source:String(source||"unknown"),count:count});
-    if(D.events.length>200)D.events.splice(0,D.events.length-200);
-    window.dispatchEvent(new CustomEvent("eq-read-diag-update"));
-  }catch(e){}
-};
-function FirestoreReadBox(){
-  const [tick,setTick]=useState(0);
-  useEffect(()=>{
-    const fn=()=>setTick(x=>x+1);
-    window.addEventListener("eq-read-diag-update",fn);
-    return ()=>window.removeEventListener("eq-read-diag-update",fn);
-  },[]);
-  const D=window.__EQ_READ_DIAG||{startedAt:Date.now(),total:0,by:{}};
-  const mins=Math.max(1/60,(Date.now()-Number(D.startedAt||Date.now()))/60000);
-  const top=Object.entries(D.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003"}}>
-    <b>Firestore reads — this device</b><br/>
-    Total observed: {D.total} · {Math.round(D.total/mins)}/min
-    {top.map(x=><React.Fragment key={x[0]}><br/>{x[0]}: {x[1]}</React.Fragment>)}
-  </div>;
-}
-
-// V381 FIRESTORE STARTUP/IDLE OPTIMIZATION
 // Collections: users, classes, quizzes, responses, announcements, notes
 async function fsAll(col) {
   const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
   if (!FIREBASE_OK) return local();
   try {
     const snap = await db.collection(col).get();
-    try{window.__eqReadDiag&&window.__eqReadDiag("get:"+col,snap.size||snap.docs.length||0);}catch(_e){}
     return snap.docs.map(d => ({...d.data(), _id:d.id}));
   } catch(e) {
     console.warn("Firestore read failed", col, e && e.message);
@@ -1020,7 +989,6 @@ async function fsGetDoc(col, id) {
   if (!FIREBASE_OK) return local();
   try {
     const d = await db.collection(col).doc(String(id)).get();
-    try{window.__eqReadDiag&&window.__eqReadDiag("doc:"+col,d&&d.exists?1:0);}catch(_e){}
     return d && d.exists ? ({...d.data(), _id:d.id}) : null;
   } catch(e) {
     console.warn("Firestore doc read failed", col, id, e && e.message);
@@ -1036,7 +1004,6 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
   try {
     const sid=String(st&&st.id||"");
     const snap=await db.collection("projectSubmissions").where("studentId","==",sid).get();
-    try{window.__eqReadDiag&&window.__eqReadDiag("query:projectSubmissions",snap.size||snap.docs.length||0);}catch(_e){}
     const rows=snap.docs.map(d=>({...d.data(),_id:d.id}));
     return projectSubmissionsForStudent(rows,projectId,st);
   } catch(e) {
@@ -1110,25 +1077,6 @@ async function loadLoginData() {
   const firebaseClasses=(classesRaw||[]).filter(function(c){return c && !c.deleted && c.status!=="deleted" && !c.hidePreloaded && !c.permanentDeleted;});
   return {users,classes,firebaseUsers,firebaseClasses,appSettings:appSettings||[],deletedStudents:deletedStudents||[],deletedClasses:deletedClasses||[],
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
-}
-
-// V385 FAST TEACHER STARTUP: reuse the already loaded/cached roster during the first dashboard hydrate.
-// This avoids immediately downloading users/classes/deletion rosters a second time while preserving
-// every Main collection (quizzes, responses, RP, Reading Theory, Projects, settings, etc.).
-async function loadDashboardDataWithRoster(base) {
-  if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
-  try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
-  const [quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions] = await Promise.all([
-    fsAll("quizzes"),fsAll("responses"),fsAll("announcements"),fsAll("notes"),fsAll("readingTasks"),fsAll("readingSubmissions"),fsAll("readingAttemptResets"),fsAll("readingTheoryItems"),fsAll("readingTheoryResponses"),fsAll("appSettings"),fsAll("projects"),fsAll("projectSubmissions")
-  ]);
-  const cloudKey=(appSettings||[]).find(d=>d.id==="ai_key");
-  if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
-  const allData={
-    ...base, quizzes,responses,announcements,notes,readingTasks,readingSubmissions,readingAttemptResets,
-    readingTheoryItems,readingTheoryResponses,appSettings,projects,projectSubmissions
-  };
-  eqSaveFastDataCache(allData);
-  return allData;
 }
 
 async function loadAllData() {
@@ -5942,37 +5890,16 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
     <div style={{display:"flex",gap:"8px"}}><Btn color={C.p} onClick={save} style={{flex:1}}>💾 Save Project</Btn><Btn color={C.mu} onClick={onCancel}>Cancel</Btn></div>
   </div>;
 }
-// V369: DB-backed project submission idempotency. This prevents two slow/repeated submits
-// from creating two attempts, even when the second request starts before the first one finishes.
-function projectSubmissionGuardId(projectId,studentId){
-  return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
-}
+// V370: submission protection without a new Firestore collection.
+// The existing projectSubmissions collection remains the source of truth.
+// The in-page lock blocks repeated taps while a request is in flight; the remote
+// existing-submission check below blocks another attempt unless the teacher allowed resubmission.
 async function projectAcquireSubmissionGuard(p,st){
-  const token=uid();
-  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection&&db.runTransaction)) return {token,remote:false};
-  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id));
-  const now=Date.now(), staleMs=120000;
-  await db.runTransaction(async tx=>{
-    const snap=await tx.get(ref); const row=snap&&snap.exists?snap.data():null;
-    if(row&&row.status==="submitted") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
-    if(row&&row.status==="submitting"&&(now-Number(row.startedAtMs||0))<staleMs) throw new Error("Your project submission is already being processed. Please wait; do not submit it again.");
-    tx.set(ref,{projectId:p.id,studentId:st.id,studentNumber:st.studentId||"",status:"submitting",token,startedAtMs:now,updatedAt:new Date().toISOString()},{merge:true});
-  });
-  return {token,remote:true,ref};
+  return {token:uid(),remote:false};
 }
-async function projectFinishSubmissionGuard(guard,submissionId){
-  if(!guard||!guard.remote||!guard.ref) return;
-  await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"submitted",submissionId:submissionId||"",finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});});
-}
-async function projectReleaseSubmissionGuard(guard){
-  if(!guard||!guard.remote||!guard.ref) return;
-  try{await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"idle",token:"",updatedAt:new Date().toISOString()},{merge:true});});}catch(e){console.warn("submission guard release failed",e&&e.message);}
-}
-async function projectAllowSubmissionAgain(p,s){
-  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection)) return;
-  const sid=s.studentId||s.studentNumber||""; if(!sid)return;
-  try{await db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,sid)).set({projectId:p.id,studentId:sid,status:"allowed",token:"",allowedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});}catch(e){console.warn("submission guard reset failed",e&&e.message);}
-}
+async function projectFinishSubmissionGuard(guard,submissionId){ return; }
+async function projectReleaseSubmissionGuard(guard){ return; }
+async function projectAllowSubmissionAgain(p,s){ return; }
 function StudentProjects({user,data,reload}){
   const [openProject,setOpenProject]=useState(null);
   const [mode,setMode]=useState("text");
@@ -6013,7 +5940,7 @@ function StudentProjects({user,data,reload}){
     setSubmitting(true);
     let submissionGuard=null; let submissionSaved=false;
     try{
-      // V369: acquire an atomic Firestore guard BEFORE upload/slow work.
+      // V370: local in-flight guard only; do not require permissions for a new Firestore collection.
       submissionGuard=await projectAcquireSubmissionGuard(p,user);
       // V359 SAFE SPEED: do not download every project submission/file chunk before Submit.
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
@@ -7428,9 +7355,8 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
     let alive=true, unsub=null;
     try{
-      unsub=db.collection("readingSubmissions").where("studentId","==",String(user.id||"")).onSnapshot(function(snap){
+      unsub=db.collection("readingSubmissions").onSnapshot(function(snap){
         if(!alive) return;
-        try{window.__eqReadDiag&&window.__eqReadDiag("snapshot:student-readingSubmissions-scoped",snap.size||0);}catch(_e){}
         const arr=[];
         snap.forEach(function(doc){
           const item={id:doc.id,...(doc.data?doc.data():{})};
@@ -12428,7 +12354,6 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [qrdSearch,setQrdSearch]=useState("");
   const [profileOpen,setProfileOpen]=useState(false);
   const [navOpen,setNavOpen]=useState(false);
-  const [readDiagOpen,setReadDiagOpen]=useState(false);
   const [quizFastPatch,setQuizFastPatch]=useState({});
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
@@ -12454,8 +12379,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       }catch(_e){}
     }
     refreshPendingSectionCounts();
-    // V378: no idle polling; counts refresh on data/event changes.
-    timer=null;
+    timer=setInterval(refreshPendingSectionCounts,12000);
     const onChanged=()=>refreshPendingSectionCounts();
     window.addEventListener("eq-pending-counts-changed",onChanged);
     return ()=>{alive=false;if(timer)clearInterval(timer);window.removeEventListener("eq-pending-counts-changed",onChanged);};
@@ -12534,9 +12458,6 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   useEffect(()=>{
     let alive=true;
-    // V381: dailyFollowup can exceed 1,000 documents. Do not download the full history on Dashboard/login.
-    // Follow-up loads its own data when opened; keep the last badge value until then.
-    if(String(tab||"")!=="followup") return ()=>{alive=false;};
     (async()=>{try{
       const rows=await fsAll("dailyFollowup"), refs=await fsAll("followupReferrals");
       const mineStudents=(myStudents||[]); const byStudent={};
@@ -13741,26 +13662,22 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v385" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EduQuiz v370 · Project Storage 2MB" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>setViewAsOpen(true)}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
-        <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
-        <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
+        <button onClick={()=>{setTab("overview");setNavOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
+        <button onClick={()=>setNavOpen(!navOpen)} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}{currentTab.id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
-          <div style={{marginBottom:"9px"}}>
-            <button onClick={()=>setReadDiagOpen(!readDiagOpen)} style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:readDiagOpen?"#eff6ff":"#fff",color:C.tx,fontWeight:900,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>📊 Firestore Reads</button>
-            {readDiagOpen&&<div style={{marginTop:"6px"}}><FirestoreReadBox/></div>}
-          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
-            <button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+            <button onClick={()=>{setNavOpen(false);try{window.eqOpenRPDrawer&&window.eqOpenRPDrawer();}catch(e){console.warn("RP drawer open failed",e);}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
               <div>🎙️ RP {rpPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rpPendingCount}</span>}</div>
               {rpPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{rpPendingCount} recording{rpPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-            <button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
+            <button onClick={()=>{setNavOpen(false);try{window.eqOpenWriting&&window.eqOpenWriting();}catch(e){}}} style={{position:"relative",padding:"10px 8px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",fontWeight:900,color:C.tx}}>
               <div>✍️ Writing {writingPendingCount>0&&<span style={{marginInlineStart:"5px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{writingPendingCount}</span>}</div>
               {writingPendingCount>0&&<div style={{marginTop:"4px",fontSize:"9px",fontWeight:900,color:C.d}}>{writingPendingCount} writing submission{writingPendingCount===1?"":"s"} awaiting approval</div>}
             </button>
-          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="readingTheory"&&rtUnreadCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtUnreadCount}</span>}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}{id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
+          </div>{tabGroups.map(g=><div key={g.label} style={{marginBottom:"9px"}}><div style={{fontSize:"10px",fontWeight:900,color:C.mu,padding:"3px 5px 6px"}}>{g.label}</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"6px"}}>{g.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t)return null; return <button key={id} onClick={()=>{setTab(id);setNavOpen(false);}} style={{padding:"10px",border:"1px solid "+(tab===id?"#93c5fd":C.br),borderRadius:"10px",background:tab===id?"#eff6ff":"#fff",color:tab===id?C.p:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>{t.icon} {t.label}{id==="readingTheory"&&rtUnreadCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtUnreadCount}</span>}{id==="followup"&&referralAlertCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{referralAlertCount}</span>}{id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</button>;})}{g.label==="Administration"&&<button onClick={()=>{setNavOpen(false);setProfileOpen(true);}} style={{padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff",color:C.tx,fontWeight:800,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>🔐 Login Settings</button>}</div></div>)}
         </div>}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
@@ -14681,10 +14598,7 @@ function App() {
       // is loaded after successful login, not before the login screen can open.
       // V333: startup/login must never wait for heavy dashboard/RP/result collections.
       // Load only the light authentication roster first; hydrate the full dashboard after first paint.
-      // V381: a valid cached teacher session already has the roster needed to paint/login.
-      // Avoid a second full users/classes read before the background dashboard refresh.
-      const cachedTeacherFast = !!(cached && sess && String(sess.role||"")!=="student");
-      const d = cachedTeacherFast ? cached : await loadLoginData();
+      const d = await loadLoginData();
       // V334: when a valid teacher session already has a cached dashboard, keep that usable
       // dashboard on screen. The lightweight auth snapshot is only for validation; full data
       // refreshes in the background. This removes the long blank/login wait without touching data.
@@ -14700,17 +14614,7 @@ function App() {
       }
       setLoading(false);
       // V333: hydrate heavy collections only after the usable screen is already visible.
-      if(sess){
-        // V385: Main still hydrates fully, but the roster already used for authentication/paint is reused.
-        // On a cached teacher session this removes the largest redundant startup read (users/classes).
-        setTimeout(function(){
-          const rosterBase=(cachedTeacherFast&&cached)?cached:d;
-          loadDashboardDataWithRoster(rosterBase).then(function(fresh){
-            setData(fresh);
-            try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(fresh.readingSubmissions||[]);if(typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),50);}catch(e){}
-          }).catch(function(e){console.warn("V385 background dashboard hydrate failed",e);});
-        },250);
-      }
+      if(sess){ setTimeout(function(){ reload().catch(function(e){console.warn("V333 background hydrate failed",e);}); },700); }
     })();
   },[]);
 
@@ -14726,9 +14630,9 @@ function App() {
       busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
     const onVis=()=>{ if(document.visibilityState==="visible") refresh(); };
-    // V378: do not reload all Firestore collections on browser focus/visibility.
-    // Realtime listeners and explicit actions keep live data current without a 16-collection reload.
-    return ()=>{};
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVis);
+    return ()=>{ window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVis); };
   },[user&&user.id,user&&user.role]);
 
   // v274 — keep the teacher session alive for 55 minutes from the LAST real activity.
@@ -14750,7 +14654,7 @@ function App() {
   },[user&&user.id,user&&user.role]);
 
   useEffect(()=>{
-    if(!user || String(user.role||"")!=="student" || !FIREBASE_OK || !(db&&db.collection)) return;
+    if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
     let unsubs=[];
     function applyCollection(col, arr){
       try{
@@ -14765,10 +14669,9 @@ function App() {
         return {...prev, [col]: arr};
       });
     }
-    ["readingTasks"].forEach(col=>{
+    ["readingSubmissions","readingTasks"].forEach(col=>{
       try{
         const unsub=db.collection(col).onSnapshot(snap=>{
-          try{window.__eqReadDiag&&window.__eqReadDiag("snapshot:"+col,snap.size||0);}catch(_e){}
           const arr=[]; snap.forEach(doc=>arr.push({id:doc.id, ...(doc.data?doc.data():{})}));
           applyCollection(col, arr);
         }, err=>console.warn("RP117 live sync unavailable", col, err&&err.message));
@@ -16018,9 +15921,20 @@ document.addEventListener("click", function(e){
   }
 
   function rpStartRealtimeDrawerSync(){
-    // V378: App-level readingSubmissions listener is the single realtime source.
-    // Avoid a second full-collection snapshot in the RP drawer.
-    return;
+    try{
+      if(window.__rp117DrawerLiveStarted) return;
+      if(!(typeof db!=="undefined" && db && db.collection)) return;
+      window.__rp117DrawerLiveStarted=true;
+      db.collection("readingSubmissions").onSnapshot(function(snap){
+        try{
+          const remote=[];
+          snap.forEach(function(doc){ remote.push({id:doc.id, ...(doc.data?doc.data():{})}); });
+          if(typeof window.rpV11MergeCloudRecords==="function") window.rpV11MergeCloudRecords(remote);
+          if(typeof renderCards==="function") renderCards();
+          window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions"}}));
+        }catch(e){ console.warn("RP117 drawer live snapshot failed", e); }
+      }, function(err){ console.warn("RP117 drawer live unavailable", err&&err.message); window.__rp117DrawerLiveStarted=false; });
+    }catch(e){ window.__rp117DrawerLiveStarted=false; }
   }
 
     function teacherPanel(){
@@ -17129,7 +17043,6 @@ document.addEventListener("click", function(e){
     try{
       const db=firebase.firestore();
       const snap=await db.collection('readingSubmissions').get();
-      try{window.__eqReadDiag&&window.__eqReadDiag('get:auto-readingSubmissions',snap.size||0);}catch(_e){}
       const todo=[];
       snap.forEach(doc=>{ const r={id:doc.id, ...(doc.data()||{})}; if(needs(r)) todo.push(r); });
       todo.sort((a,b)=>String(a.submittedAt||a.createdAt||'').localeCompare(String(b.submittedAt||b.createdAt||'')));
@@ -17158,8 +17071,8 @@ document.addEventListener("click", function(e){
   }
   window.rpRunTeacherAutoNow = function(){ return runOnce(10).then(r=>{ alert('RP Auto: analyzed '+(r.ok||0)+' / failed '+(r.fail||0)+(r.lastErr?'\n'+r.lastErr:'')); return r; }); };
   window.rpRunTeacherAutoNowSilent = function(){ return runOnce(3).catch(function(e){return {ok:0,fail:1,lastErr:String(e&&e.message||e||'')}}); };
-  // V378: disable idle full-collection RP auto scan. Teacher Analyze/Re-analyze remains available.
-  // No background runOnce polling.
+  setTimeout(()=>runOnce(2), 5000);
+  setInterval(()=>runOnce(2), 15000);
 })();
 </script>
 
@@ -17395,7 +17308,7 @@ function tabScores(el){
   el.innerHTML='<div class="w12box"><b>Writing Results</b><div style="font-size:12px;color:#64748b">Advanced Writing Students × Writing Tasks. Final teacher score is shown when approved; before approval the current AI score is shown as pending.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:10px"><span style="color:#16a34a;font-weight:900">● Final</span><span style="color:#d97706;font-weight:900">● Pending</span><span style="color:#dc2626;font-weight:900">● Not Submitted</span><span style="color:#94a3b8;font-weight:900">● Not Assigned</span></div></div>'+cards+(us.length?'':'<div class="w12box">No Advanced Writing Students selected.</div>')
 }
 async function studentPanel(forcedStudent,strictMode){const body=panel("✍️ Writing — Student");body.innerHTML='<div class="w12box">Loading...</div>';await load();const u=(forcedStudent&&typeof forcedStudent==="object")?forcedStudent:sess();const isStrict=!!(strictMode&&forcedStudent);if(!(isStrict?strictStudentSelected(u):selected(u))){body.innerHTML='<div class="w12box"><b>تأكيد رقم الطالب</b><input id="snum" inputmode="numeric" placeholder="Student number" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;margin-top:8px"><button id="show" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">Show Writing Tasks</button></div>';body.querySelector("#show").onclick=async()=>{const v=body.querySelector("#snum").value.trim();if(!v)return;["eqWritingStudentNumber_v12","eqWritingStudentNumber_v11","eqWritingStudentNumber_v10","eqWritingStudentNumber_v8"].forEach(k=>localStorage.setItem(k,v));await load();studentPanel()};return}const al=isStrict?strictStudentAliases(u):aliases(u);const studentTasks=(DATA.tasks||[]).filter(t=>taskAssignedTo(t,u));body.innerHTML=studentTasks.map(t=>{const mine=visibleSubs().filter(s=>String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));const req=(DATA.retakeRequests||[]).find(r=>requestMatches(r,al,t.id)&&!r.cleared);const old=mine[0],can=!!req||(old&&old.status==="retake_requested");if(!old&&!taskIsOpen(t))return '<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div><div style="margin-top:9px;padding:9px;border-radius:10px;background:#f1f5f9;color:#64748b;font-weight:800">Task is currently closed.</div></div>';if(old&&!can){const a=Object.assign({},old.auto||localMark(old.text,t,0));if(old.finalScore!=null){a.score=old.finalScore;a.total=a.total||10;a.level=lvl(old.finalScore);a.source=old.teacherOverride?"teacher-override":(a.source||"final")}return'<div class="w12box"><b>'+esc(t.title)+'</b><div>'+esc(t.instructions||"")+'</div>'+box(a,true)+'<div style="margin-top:10px;background:#f1f5f9;border-radius:12px;padding:10px">Submitted — Status: <b>'+esc(old.status||"pending_review")+'</b></div></div>'}return'<div class="w12box"><b>'+esc(t.title)+'</b><div style="font-size:12px;color:#64748b">'+esc(t.instructions||"")+'</div>'+(can?'<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:12px;padding:10px;margin-top:8px;font-weight:900">Retake requested — أعد المحاولة واكتب من جديد.</div>':'')+'<textarea data-task="'+esc(t.id)+'" style="width:100%;min-height:160px;margin-top:8px;border:1px solid #cbd5e1;border-radius:12px;padding:10px"></textarea><button data-submit="'+esc(t.id)+'" class="w12btn" style="margin-top:8px;background:#2563eb;color:white;width:100%">'+(can?"Submit Retake":"Submit Writing")+'</button></div>'}).join("")||'<div class="w12box">لا توجد مهام كتابة.</div>';body.querySelectorAll("[data-submit]").forEach(btn=>btn.onclick=async()=>{const t=DATA.tasks.find(x=>x.id===btn.dataset.submit),text=body.querySelector('[data-task="'+CSS.escape(t.id)+'"]').value.trim();if(!text)return alert("Write your paragraph first.");btn.disabled=true;btn.textContent="Scoring...";const saved=isStrict?"":(localStorage.getItem("eqWritingStudentNumber_v12")||localStorage.getItem("eqWritingStudentNumber_v11")||localStorage.getItem("eqWritingStudentNumber_v10")||localStorage.getItem("eqWritingStudentNumber_v8")||""),sid=isStrict?strictStudentSid(u,al):(saved?(/^\d+$/.test(saved)?"student_"+saved:saved):(Array.from(al).find(x=>/^student_\d+$/.test(x))||Array.from(al)[0]||"student"));DATA.retakeRequests=(DATA.retakeRequests||[]).map(r=>requestMatches(r,al,t.id)?Object.assign({},r,{cleared:true,clearedAt:new Date().toISOString()}):r);visibleSubs().forEach(s=>{if(String(s.taskId)===String(t.id)&&subStudentIds(s).some(x=>al.has(x))&&s.status==="retake_requested")s.status="retaken"});const mx=Math.max(0,...visibleSubs().filter(s=>String(s.taskId)===String(t.id)).map(s=>sim(text,s.text)));const a=await aiMark(text,t,u.name||hi()||"Student",mx);const mode=String(t.mode||"ai_teacher");const st=mode==="ai"?"accepted":"pending_review";DATA.submissions.push({id:uid("sub"),taskId:t.id,taskTitle:t.title,studentId:sid,studentName:u.name||hi()||"Student",text,auto:a,status:st,finalScore:mode==="ai"?a.score:null,createdAt:new Date().toISOString()});await save();alert("Writing submitted and scored.");studentPanel(u,isStrict)})}
-setTimeout(function(){fab();},1500);
+setInterval(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1200);setTimeout(function(){fab();try{rpStartRealtimeDrawerSync();}catch(e){}},1500);
 })();
 </script>
 <!-- V344_WRITING_EVALUATION_TASK_STATUS_FILTERS_20261008 -->
