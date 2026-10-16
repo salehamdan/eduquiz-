@@ -1057,7 +1057,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Live Trace — this session</b><br/>
+    <b>Firestore Diagnostics — V421</b>
+    <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
+      <button onClick={()=>{const report={version:"V421",at:new Date().toISOString(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
+    </div>
+    <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
     SDK reads: <b>{T.total}</b> · {Math.round(T.total/mins)}/min<br/>
     Legacy observed: {D.total}
     {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
@@ -8673,15 +8678,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           snap.forEach(doc=>{
             const x={id:doc.id,...(doc.data?doc.data():{})};
             const sid=String(x.studentNumber||"").trim();
-            if(sid)covered.add(sid);
-            if(String(x.source||"")!=="rp_audio_chunk" && !(x.decisionMarker===true || String(x.id||"").indexOf("rp_decision_")===0)) subMap.set(String(doc.id),x);
+            if(String(x.source||"")!=="rp_audio_chunk" && !(x.decisionMarker===true || String(x.id||"").indexOf("rp_decision_")===0)){
+              if(sid)covered.add(sid);
+              subMap.set(String(doc.id),x);
+            }
           });
         }catch(e){console.warn("V420 RP studentNumber batch failed",e&&e.message);}
       }
 
       // Narrow legacy fallback only for students who had no studentNumber result.
       const missing=students.filter(st=>{const sid=String(st.studentId||st.studentNumber||"").trim();return sid&&!covered.has(sid);});
-      const uids=Array.from(new Set(missing.map(st=>String(st.id||"").trim()).filter(Boolean)));
+      const uids=Array.from(new Set(missing.flatMap(st=>[String(st.id||"").trim(),String(st.studentId||st.studentNumber||"").trim()]).filter(Boolean)));
       for(let i=0;i<uids.length;i+=10){
         const batch=uids.slice(i,i+10);
         try{
@@ -8697,7 +8704,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       if(alive){
         const rows=Array.from(subMap.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st))).sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
         const taskRows=Array.from(taskMap.values());
-        rpCache.set(rpCacheKey,{tasks:taskRows,rows});
+        if(rows.length)rpCache.set(rpCacheKey,{tasks:taskRows,rows});
         setHistoricalTeacherTasks(taskRows);
         setHistoricalTeacherSubs(rows);
         try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-history-v420",rows.length);}catch(_e){}
@@ -14392,14 +14399,14 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V420" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V421" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
         <div style={{fontSize:"13px",fontWeight:900,color:C.tx,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{currentTab.icon} {currentTab.label}{currentTab.id==="projects"&&projectPendingCount>0&&<span style={{marginInlineStart:"6px",background:C.d,color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{projectPendingCount}</span>}</div>
         {navOpen&&<div style={{position:"absolute",top:"calc(100% + 6px)",left:"12px",right:"12px",zIndex:1200,background:"#fff",border:"1px solid "+C.br,borderRadius:"14px",boxShadow:"0 16px 38px rgba(15,23,42,.22)",padding:"10px",maxHeight:"70vh",overflowY:"auto"}}>
           <div style={{marginBottom:"9px"}}>
-            <button onClick={()=>setReadDiagOpen(!readDiagOpen)} style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:readDiagOpen?"#eff6ff":"#fff",color:C.tx,fontWeight:900,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>📊 Firestore Reads</button>
+            <button onClick={()=>setReadDiagOpen(!readDiagOpen)} style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px",background:readDiagOpen?"#eff6ff":"#fff",color:C.tx,fontWeight:900,fontSize:"12px",cursor:"pointer",textAlign:"start",fontFamily:F}}>📊 Firestore Diagnostics</button>
             {readDiagOpen&&<div style={{marginTop:"6px"}}><FirestoreReadBox/></div>}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"9px"}}>
