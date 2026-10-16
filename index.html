@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v430</title>
+<title>EduQuiz — Smart Assessment v431</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1059,7 +1059,7 @@ function FirestoreReadBox(){
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
     <b>Firestore Diagnostics — V428</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={()=>{const report={version:"V430",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V431",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -14509,7 +14509,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V430" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V431" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17183,7 +17183,7 @@ document.addEventListener("click", function(e){
     window.eqGetRPPendingCount=async function(){
       try{
         const d=window.__EQ_CURRENT_DATA;
-        const rows=(d&&Array.isArray(d.readingSubmissions))?d.readingSubmissions:recordsLive();
+        const rows=mergeRecords((d&&Array.isArray(d.readingSubmissions))?d.readingSubmissions:[], recordsLive());
         return (rows||[]).filter(r=>rpRecordVisible(r)&&isWaitingForTeacher(r)).length;
       }catch(_e){ return 0; }
     };
@@ -17770,7 +17770,8 @@ document.addEventListener("click", function(e){
     // Current React snapshot + the single teacher realtime listener are the source of truth.
     try{ await rpRefreshRosters(false); }catch(_e){}
     const snap=window.__EQ_CURRENT_DATA;
-    let allLocalRaw=(snap&&Array.isArray(snap.readingSubmissions))?snap.readingSubmissions:recordsLive();
+    // V431: always merge the React snapshot WITH the synced cloud history (an empty/partial snapshot array must not hide it).
+    let allLocalRaw=mergeRecords((snap&&Array.isArray(snap.readingSubmissions))?snap.readingSubmissions:[], recordsLive());
     try{RP_LIVE_CACHE=allLocalRaw.slice();}catch(_e){}
     const allLocal=allLocalRaw.filter(rpRecordVisible);
     const rpTasks=(snap&&Array.isArray(snap.readingTasks))?snap.readingTasks.filter(t=>t&&t.status!=="deleted"&&t.deleted!==true):await rpLoadReadingTasks();
