@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v431</title>
+<title>EduQuiz — Smart Assessment v432</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1059,7 +1059,7 @@ function FirestoreReadBox(){
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
     <b>Firestore Diagnostics — V428</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={()=>{const report={version:"V431",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V432",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1269,15 +1269,16 @@ async function fsSet(col, id, data) {
     try { await db.collection(col).doc(id).set(data); ok=true; }
     catch(e){ console.warn("Firestore write failed", col, e && e.message); }
   }
+  try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
   if(ok) try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
-  if(ok && col==="readingTasks") try{__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
+  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v432");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
-  try { await db.collection(col).doc(id).set(data, {merge:true}); try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){} try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){} }
+  try { await db.collection(col).doc(id).set(data, {merge:true}); try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){} try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){} try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){} }
   catch(e){ console.error("Firestore strict write failed", col, id, e); throw e; }
 }
 async function fsDel(col, id) {
@@ -1290,10 +1291,11 @@ async function fsDel(col, id) {
     try { await db.collection(col).doc(id).delete(); ok=true; }
     catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
   }
+  try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
   if(ok) try{eqPatchFollowupQueryCache(col,"delete",id,null);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"delete",id,null);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
-  if(ok && col==="readingTasks") try{__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
+  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v432");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 
@@ -1361,11 +1363,27 @@ async function loadLoginData(sessionHint) {
 }
 // V426 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
+// V432: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
+// Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
+const EQ_ROSTER_CACHE_KEY="eq_roster_users_v432";
+window.eqClearRosterCache=function(){try{localStorage.removeItem(EQ_ROSTER_CACHE_KEY);}catch(_e){}};
+async function eqUsersCached(){
+  try{
+    const x=JSON.parse(localStorage.getItem(EQ_ROSTER_CACHE_KEY)||"null");
+    if(x&&Array.isArray(x.rows)&&x.rows.length&&Date.now()-Number(x.at||0)<1200000){
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-users-v432",0);}catch(_e){}
+      return x.rows;
+    }
+  }catch(_e){}
+  const rows=await fsAll("users");
+  try{if(Array.isArray(rows)&&rows.length)localStorage.setItem(EQ_ROSTER_CACHE_KEY,JSON.stringify({at:Date.now(),rows:rows}));}catch(_e){}
+  return rows;
+}
 let __EQ_TEACHER_ROSTER_PROMISE=null;
 async function eqRefreshTeacherRosterOnly(base){
   if(__EQ_TEACHER_ROSTER_PROMISE) return __EQ_TEACHER_ROSTER_PROMISE;
   __EQ_TEACHER_ROSTER_PROMISE=(async function(){
-    const [usersRaw,classesRaw]=await Promise.all([fsAll("users"),fsAll("classes")]);
+    const [usersRaw,classesRaw]=await Promise.all([eqUsersCached(),fsAll("classes")]);
     const activeUsers=(usersRaw||[]).filter(u=>u && !isStudentTombstone(u) && u.deleted!==true && String(u.status||"").toLowerCase()!=="deleted");
     const activeClasses=normalizeClassRows((classesRaw||[]).filter(c=>c && c.deleted!==true && String(c.status||"").toLowerCase()!=="deleted"));
     const next={...(base||{}),users:activeUsers,classes:activeClasses,firebaseUsers:activeUsers.slice(),firebaseClasses:activeClasses.slice(),loginLight:false};
@@ -1433,7 +1451,7 @@ async function loadDashboardDataWithRoster(base) {
   if(base.loginLight){
     // V417: daily teacher startup loads the live roster only.
     // Historical deletedStudents/deletedClasses are administrative data and must not be downloaded on every login.
-    const usersRaw=await fsAll("users");
+    const usersRaw=await eqUsersCached();
     const activeUsers=(usersRaw||[]).filter(u=>u&&!isStudentTombstone(u)&&u.deleted!==true&&String(u.status||"").toLowerCase()!=="deleted");
     base={...base,users:activeUsers,firebaseUsers:activeUsers,
       deletedStudents:Array.isArray(base.deletedStudents)?base.deletedStudents:[],
@@ -1451,6 +1469,27 @@ async function loadDashboardDataWithRoster(base) {
     try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:reused",0);}catch(_e){}
     return __EQ_DASHBOARD_HYDRATE_RESULT;
   }
+  // V432: a fresh re-login within 15 minutes reuses the saved dashboard collections (same teacher) instead of re-reading
+  // quizzes + every response + notes + projects (~1,600 reads). Teacher can force a full reload with window.__EQ_FORCE_HEAVY=true.
+  try{
+    const raw=JSON.parse(localStorage.getItem(EQ_FAST_DATA_CACHE_KEY)||"null");
+    const cd=raw&&raw.data, age=Date.now()-Number(raw&&raw.savedAt||0);
+    const tid0=String((base.users||[]).find(u=>u&&String(u.role||"")==="teacher")?.id || JSON.parse(localStorage.getItem("eq_session")||"null")?.id || "");
+    if(!window.__EQ_FORCE_HEAVY && cd && age<900000 && Array.isArray(cd.quizzes) && tid0 && String(cd.__cacheTeacherId||"")===tid0){
+      const reuse={...base,
+        quizzes:cd.quizzes,responses:cd.responses||[],announcements:cd.announcements||[],notes:cd.notes||[],
+        readingTasks:cd.readingTasks||[],projects:cd.projects||[],projectSubmissions:cd.projectSubmissions||[],
+        readingSubmissions:[],
+        readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
+        readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
+        readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
+        appSettings:Array.isArray(cd.appSettings)?cd.appSettings:(Array.isArray(base.appSettings)?base.appSettings:[]),
+        __cacheTeacherId:tid0};
+      __EQ_DASHBOARD_HYDRATE_RESULT=reuse; __EQ_DASHBOARD_HYDRATE_AT=Date.now();
+      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:fast-cache-v432",0);}catch(_e){}
+      return reuse;
+    }
+  }catch(_e){}
   __EQ_DASHBOARD_HYDRATE_PROMISE=(async function(){
     try{ __eqRespStudentMemo.clear(); if(responsesForStudent.__cache) responsesForStudent.__cache.clear(); }catch(e){}
     // Main-first hydrate. RP submissions arrive through the single realtime listener,
@@ -1474,7 +1513,8 @@ async function loadDashboardDataWithRoster(base) {
       readingAttemptResets:Array.isArray(base.readingAttemptResets)?base.readingAttemptResets:[],
       readingTheoryItems:Array.isArray(base.readingTheoryItems)?base.readingTheoryItems:[],
       readingTheoryResponses:Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[],
-      appSettings:baseSettings
+      appSettings:baseSettings,
+      __cacheTeacherId:teacherId
     };
     eqSaveFastDataCache(allData);
     __EQ_DASHBOARD_HYDRATE_RESULT=allData;
@@ -1585,8 +1625,17 @@ async function eqQueryStudentReadingTasks(st){
   // This preserves legacy/manual students whose task audience used an older id/class token.
   if(Array.isArray(__EQ_RP_TASK_DEFS_CACHE)) return __EQ_RP_TASK_DEFS_CACHE.slice();
   if(__EQ_RP_TASK_DEFS_PROMISE) return (await __EQ_RP_TASK_DEFS_PROMISE).slice();
+  try{
+    const x=JSON.parse(localStorage.getItem("eq_rp_taskdefs_v432")||"null");
+    if(x&&Array.isArray(x.rows)&&Date.now()-Number(x.at||0)<300000){
+      __EQ_RP_TASK_DEFS_CACHE=x.rows.slice();
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:readingTasks-v432",0);}catch(_e){}
+      return __EQ_RP_TASK_DEFS_CACHE.slice();
+    }
+  }catch(_e){}
   __EQ_RP_TASK_DEFS_PROMISE=(async()=>{
     const rows=await fsAll("readingTasks");
+    try{localStorage.setItem("eq_rp_taskdefs_v432",JSON.stringify({at:Date.now(),rows:(rows||[]).filter(Boolean)}));}catch(_e){}
     const clean=(rows||[]).filter(Boolean);
     __EQ_RP_TASK_DEFS_CACHE=clean.slice();
     try{window.__eqReadDiag&&window.__eqReadDiag("get:readingTasks:v370-compat",clean.length);}catch(_e){}
@@ -14509,7 +14558,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V431" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V432" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
