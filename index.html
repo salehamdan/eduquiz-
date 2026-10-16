@@ -1057,9 +1057,9 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V425</b>
+    <b>Firestore Diagnostics — V426</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={()=>{const report={version:"V425",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V426",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1138,7 +1138,7 @@ function eqInvalidateFollowupQueryCache(col){
     eqFollowupQueryCache.delete(key);
   }
 }
-// V425: keep already-loaded Follow-up scopes warm after local writes/deletes.
+// V426: keep already-loaded Follow-up scopes warm after local writes/deletes.
 // Cache keys are col|teacherId|term|period|classId.
 function eqPatchFollowupQueryCache(col,type,id,data){
   if(!col || (!String(col).startsWith("followup") && col!=="dailyFollowup")) return;
@@ -1165,7 +1165,7 @@ function eqPatchFollowupQueryCache(col,type,id,data){
 async function eqFollowupScopedRows(col,teacherId,term,period,classId){
   const key=[col,teacherId||"",term||"",period||"",classId||""].join("|");
   const old=eqFollowupQueryCache.get(key);
-  // V425: session cache. Navigation between students/classes must not expire after 5 minutes.
+  // V426: session cache. Navigation between students/classes must not expire after 5 minutes.
   if(old && (old.pending || Array.isArray(old.rows))){
     try{window.__EQ_FOLLOWUP_CACHE_HITS=(window.__EQ_FOLLOWUP_CACHE_HITS||0)+1;}catch(_e){}
     return old.pending ? old.pending : old.rows.slice();
@@ -1359,7 +1359,7 @@ async function loadLoginData(sessionHint) {
   return {users,classes,firebaseUsers:users.slice(),firebaseClasses:(classesRaw||[]).filter(c=>c&&!c.deleted&&c.status!=="deleted"&&!c.hidePreloaded&&!c.permanentDeleted),appSettings:lightSettings,deletedStudents:[],deletedClasses:[],loginLight:true,
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
 }
-// V425 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
+// V426 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
 let __EQ_TEACHER_ROSTER_PROMISE=null;
 async function eqRefreshTeacherRosterOnly(base){
@@ -1580,7 +1580,7 @@ async function eqQueryStudentAnnouncements(st, classes){
 let __EQ_RP_TASK_DEFS_CACHE=null;
 let __EQ_RP_TASK_DEFS_PROMISE=null;
 async function eqQueryStudentReadingTasks(st){
-  // V425 compatibility with V370: RP task definitions are loaded as one small collection,
+  // V426 compatibility with V370: RP task definitions are loaded as one small collection,
   // then the existing ReadingProgressStudent assignment filter decides what this student sees.
   // This preserves legacy/manual students whose task audience used an older id/class token.
   if(Array.isArray(__EQ_RP_TASK_DEFS_CACHE)) return __EQ_RP_TASK_DEFS_CACHE.slice();
@@ -7954,7 +7954,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return false;
   }
 
-  // V425: preserve V370 identity coverage without the old whole-collection listener.
+  // V426: preserve V370 identity coverage without the old whole-collection listener.
   // Merge every supported identity alias, then deduplicate by document id.
   useEffect(()=>{
     if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
@@ -7987,7 +7987,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         const arr=Array.from(out.values()).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
         if(sidCache) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
         setLocalRpSubmissions(arr);
-      }catch(err){ console.warn("V425 student RP scoped load unavailable",err&&err.message); }
+      }catch(err){ console.warn("V426 student RP scoped load unavailable",err&&err.message); }
     })();
     return function(){alive=false;};
   },[user&&user.id,user&&user.studentId,user&&user.email]);
@@ -8685,64 +8685,108 @@ function rpDeletedPatch(r, teacherId){
   return {...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:now,reviewedAt:now,updatedAt:now,deletedBy:teacherId||"teacher",visibleToStudent:false,scoreVisible:false};
 }
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
-  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rp-roster-v425",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
+  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rp-roster-v426",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
   const [historicalTeacherSubs,setHistoricalTeacherSubs]=useState([]);
   const [historicalTeacherTasks,setHistoricalTeacherTasks]=useState([]);
   useEffect(()=>{
-    if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
+    if(!user) return;
     let alive=true;
-    const rpCacheKey=String(user.id||"")+"::v370-route";
-    const rpCache=window.__EQ_RP_TEACHER_CACHE||(window.__EQ_RP_TEACHER_CACHE=new Map());
-    const cached=rpCache.get(rpCacheKey);
-    if(cached){
-      setHistoricalTeacherTasks(cached.tasks||[]);
-      setHistoricalTeacherSubs(cached.rows||[]);
-      try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rp-session",0);}catch(_e){}
-      return ()=>{alive=false;};
+    const teacherKey=String(user.id||"teacher");
+    const memoryCache=window.__EQ_RP_TEACHER_CACHE||(window.__EQ_RP_TEACHER_CACHE=new Map());
+    const memKey=teacherKey+"::v426-direct";
+    const persistedKey="eq_rp_teacher_direct_cache_v426_"+teacherKey;
+
+    function cleanDirectRows(arr){
+      const out=new Map();
+      (arr||[]).forEach(function(r){
+        if(!r) return;
+        const id=String(r.id||r._id||"");
+        if(!id) return;
+        if(String(r.source||"")==="rp_audio_chunk" || id.indexOf("_chunk_")>=0) return;
+        if(r.decisionMarker===true || id.indexOf("rp_decision_")===0) return;
+        out.set(id,{...r,id:id});
+      });
+      return Array.from(out.values()).sort((x,y)=>rpAttemptTimeMs(x)-rpAttemptTimeMs(y));
     }
-    (async()=>{
-      const taskMap=new Map(), subMap=new Map();
-      function acceptDoc(doc){
-        const x={id:doc.id,...(doc.data?doc.data():{})};
-        if(String(x.source||"")==="rp_audio_chunk") return;
-        if(x.decisionMarker===true || String(x.id||"").indexOf("rp_decision_")===0) return;
-        subMap.set(String(doc.id),x);
-      }
-      try{
-        const owned=await db.collection("readingTasks").where("teacherId","==",String(user.id||"")).get();
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-tasks-v370",Math.max(1,Number(owned.size||0)));}catch(_e){}
-        owned.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};taskMap.set(String(doc.id),x);});
-      }catch(e){console.warn("V425 RP task load failed",e&&e.message);}
 
-      // V370-compatible primary path: teacher-owned RP submissions first.
-      try{
-        const snap=await db.collection("readingSubmissions").where("teacherId","==",String(user.id||"")).get();
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-by-teacher-v370",Math.max(1,Number(snap.size||0)));}catch(_e){}
-        snap.forEach(acceptDoc);
-      }catch(e){console.warn("V425 RP teacherId history failed",e&&e.message);}
-
-      // Legacy V370 fallback: a submission can belong to this teacher through taskId even when teacherId is absent.
-      const represented=new Set(Array.from(subMap.values()).map(x=>String(x.taskId||"")).filter(Boolean));
-      const missingTaskIds=Array.from(taskMap.keys()).filter(id=>!represented.has(String(id)));
-      for(let i=0;i<missingTaskIds.length;i+=10){
-        const batch=missingTaskIds.slice(i,i+10);
-        if(!batch.length) continue;
+    function loadLegacyLocal(){
+      const merged=[];
+      const keys=["eq_rp_teacher_direct_cache_v426_"+teacherKey,"rp_attempt_records_v11","rp_student_attempts","eq_readingSubmissions"];
+      keys.forEach(function(k){
         try{
-          const snap=await db.collection("readingSubmissions").where("taskId","in",batch).get();
-          try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-by-task-v370",Math.max(1,Number(snap.size||0)));}catch(_e){}
-          snap.forEach(acceptDoc);
-        }catch(e){console.warn("V425 RP task fallback failed",e&&e.message);}
+          const x=JSON.parse(localStorage.getItem(k)||"[]");
+          if(Array.isArray(x)) merged.push.apply(merged,x);
+          else if(x&&Array.isArray(x.rows)) merged.push.apply(merged,x.rows);
+        }catch(_e){}
+      });
+      return cleanDirectRows(merged);
+    }
+
+    function publish(rows,tasks,source){
+      if(!alive) return;
+      const clean=cleanDirectRows(rows);
+      setHistoricalTeacherSubs(clean);
+      if(Array.isArray(tasks)) setHistoricalTeacherTasks(tasks);
+      try{window.__eqReadDiag&&window.__eqReadDiag(source||"rp-v426-publish",clean.length);}catch(_e){}
+    }
+
+    // 1) Instant path: memory cache, then V370 legacy local cache.
+    const mem=memoryCache.get(memKey);
+    if(mem&&Array.isArray(mem.rows)&&mem.rows.length){
+      publish(mem.rows,mem.tasks||[],"cache:teacher-rp-v426-memory");
+    }else{
+      const localRows=loadLegacyLocal();
+      if(localRows.length){
+        publish(localRows,[],"cache:teacher-rp-v426-local");
+        memoryCache.set(memKey,{rows:localRows,tasks:[]});
+      }
+    }
+
+    if(!FIREBASE_OK || !(db&&db.collection)) return ()=>{alive=false;};
+
+    (async()=>{
+      const taskMap=new Map();
+      try{
+        const owned=await db.collection("readingTasks").where("teacherId","==",teacherKey).get();
+        owned.forEach(function(doc){
+          const x={id:doc.id,...(doc.data?doc.data():{})};
+          taskMap.set(String(doc.id),x);
+        });
+        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-tasks-v426",Math.max(1,Number(owned.size||0)));}catch(_e){}
+      }catch(e){console.warn("V426 RP task load failed",e&&e.message);}
+
+      // If we already have a rich V370/local snapshot, do not perform another full collection read.
+      let existing=[];
+      try{
+        const m=memoryCache.get(memKey);
+        existing=(m&&Array.isArray(m.rows))?m.rows:loadLegacyLocal();
+      }catch(_e){}
+      if(existing.length>=10){
+        const tasks=Array.from(taskMap.values());
+        memoryCache.set(memKey,{rows:existing,tasks});
+        publish(existing,tasks,"cache:teacher-rp-v426-rich");
+        return;
       }
 
-      if(alive){
-        const rows=Array.from(subMap.values()).sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
-        const taskRows=Array.from(taskMap.values());
-        rpCache.set(rpCacheKey,{tasks:taskRows,rows});
-        setHistoricalTeacherTasks(taskRows);
-        setHistoricalTeacherSubs(rows);
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-history-v425",rows.length);}catch(_e){}
+      // 2) Compatibility sync: ONE full metadata read, only when no useful legacy cache exists.
+      // This reproduces V370 discovery of old heterogeneous records, but without a persistent onSnapshot.
+      try{
+        const snap=await db.collection("readingSubmissions").get();
+        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-v426-one-time-full-sync",Math.max(1,Number(snap.size||0)));}catch(_e){}
+        const rows=[];
+        snap.forEach(function(doc){ rows.push({id:doc.id,...(doc.data?doc.data():{})}); });
+        const clean=cleanDirectRows(rows);
+        const tasks=Array.from(taskMap.values());
+        memoryCache.set(memKey,{rows:clean,tasks});
+        try{localStorage.setItem(persistedKey,JSON.stringify({rows:clean,savedAt:Date.now()}));}catch(_e){}
+        publish(clean,tasks,"get:teacher-rp-v426-direct-visible");
+      }catch(e){
+        console.warn("V426 RP one-time compatibility sync failed",e&&e.message);
+        const tasks=Array.from(taskMap.values());
+        if(tasks.length) setHistoricalTeacherTasks(tasks);
       }
     })();
+
     return ()=>{alive=false;};
   },[user&&user.id]);
 
@@ -11168,7 +11212,7 @@ function rtAdaptiveLevel(resps){
     const twoPerfectSameLevel=!!(prev && Number(prev.score)===100 && prevLv && prevLv.id===lastLv.id);
     if(twoPerfectSameLevel && newIdx<RT_ADAPTIVE_LEVELS.length-1) newIdx++;
   } else if(score<=40 && newIdx>0){
-    // V425: 60% never lowers the level. A downgrade requires TWO consecutive weak
+    // V426: 60% never lowers the level. A downgrade requires TWO consecutive weak
     // attempts (40% or below) at the same level.
     const prev=resps.length>1?(resps[resps.length-2]||{}):null;
     const prevLv=prev?(RT_ADAPTIVE_LEVELS.find(l=>l.name===(prev.level||"")||l.id===Number(prev.levelId))||null):null;
@@ -14441,7 +14485,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V425" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V426" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15541,14 +15585,14 @@ function App() {
       // V381: a valid cached teacher session already has the roster needed to paint/login.
       // Avoid a second full users/classes read before the background dashboard refresh.
       const cachedTeacherFast = !!(cached && sess && String(sess.role||"")!=="student");
-      // V425: cached heavy dashboard is fine, but the roster must never come from a stale cache.
+      // V426: cached heavy dashboard is fine, but the roster must never come from a stale cache.
       // Refresh only users/classes once; do not hydrate RP/RT/results here.
       const d = cachedTeacherFast ? await eqRefreshTeacherRosterOnly(cached) : await loadLoginData(sess);
       // V334: when a valid teacher session already has a cached dashboard, keep that usable
       // dashboard on screen. The lightweight auth snapshot is only for validation; full data
       // refreshes in the background. This removes the long blank/login wait without touching data.
       const keepCachedTeacher = !!(cached && sess && String(sess.role||"")!=="student");
-      // V425: even with cached heavy collections, replace roster immediately with the fresh V385-style live roster.
+      // V426: even with cached heavy collections, replace roster immediately with the fresh V385-style live roster.
       if(!keepCachedTeacher) setData(d);
       else { setData(d); window.__EQ_CURRENT_DATA=d; try{eqSaveFastDataCache(d);}catch(_e){} }
       // Check for ?quiz=CODE link
