@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v420</title>
+<title>EduQuiz — Smart Assessment v428</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1057,9 +1057,9 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V426</b>
+    <b>Firestore Diagnostics — V428</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={()=>{const report={version:"V426",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V428",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -8768,23 +8768,11 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         return;
       }
 
-      // 2) Compatibility sync: ONE full metadata read, only when no useful legacy cache exists.
-      // This reproduces V370 discovery of old heterogeneous records, but without a persistent onSnapshot.
-      try{
-        const snap=await db.collection("readingSubmissions").get();
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-v426-one-time-full-sync",Math.max(1,Number(snap.size||0)));}catch(_e){}
-        const rows=[];
-        snap.forEach(function(doc){ rows.push({id:doc.id,...(doc.data?doc.data():{})}); });
-        const clean=cleanDirectRows(rows);
-        const tasks=Array.from(taskMap.values());
-        memoryCache.set(memKey,{rows:clean,tasks});
-        try{localStorage.setItem(persistedKey,JSON.stringify({rows:clean,savedAt:Date.now()}));}catch(_e){}
-        publish(clean,tasks,"get:teacher-rp-v426-direct-visible");
-      }catch(e){
-        console.warn("V426 RP one-time compatibility sync failed",e&&e.message);
-        const tasks=Array.from(taskMap.values());
-        if(tasks.length) setHistoricalTeacherTasks(tasks);
-      }
+      // V428: the RP203 drawer owns historical hydration with bounded direct-submission queries.
+      // Do not perform a second full readingSubmissions scan from this React component.
+      const tasks=Array.from(taskMap.values());
+      if(tasks.length) setHistoricalTeacherTasks(tasks);
+      try{window.__eqReadDiag&&window.__eqReadDiag("teacher-rp-history-waits-for-rp203-v428",0);}catch(_e){}
     })();
 
     return ()=>{alive=false;};
@@ -14485,7 +14473,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V426" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V428" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16096,9 +16084,11 @@ document.addEventListener("click", function(e){
     return Object.values(map).filter(function(r){ return r && !(rpIsLocallyDeletedAttempt(r) && !(isDeleted(r)||rpAttemptState(r)==="deleted")); });
   }
 
-  async function cloudRecords(){
-    // V420: ZERO Firestore reads here. The legacy drawer consumes the scoped React/cache rows only.
-    // Never use fsAll("readingSubmissions") from navigation/refresh.
+  let __rpV428CloudLoaded=false;
+  let __rpV428CloudPromise=null;
+  async function cloudRecords(force){
+    // V428: restore the V370 teacher-history discovery only when RP is opened.
+    // Use bounded direct-submission queries; never read audio chunk documents or keep a full listener.
     try{
       const d=window.__EQ_CURRENT_DATA||{};
       const live=Array.isArray(d.readingSubmissions)?d.readingSubmissions:[];
@@ -16110,9 +16100,47 @@ document.addEventListener("click", function(e){
         if(sc&&sc.forEach)sc.forEach(v=>{(v&&Array.isArray(v.rows)?v.rows:[]).forEach(r=>cached.push(r));});
       }catch(_e){}
       const map=new Map();
-      [...live,...cached].forEach(r=>{if(r&&r.id&&String(r.source||"")!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_"))map.set(String(r.id),r);});
-      return Array.from(map.values());
-    }catch(e){ return []; }
+      function add(r){
+        if(!r) return;
+        const id=String(r.id||r._id||"");
+        if(!id || String(r.source||"")==="rp_audio_chunk" || id.includes("_chunk_")) return;
+        if(r.decisionMarker===true || id.indexOf("rp_decision_")===0) return;
+        map.set(id,{...r,id:id});
+      }
+      [...live,...cached,...recordsLive()].forEach(add);
+      if(!force && __rpV428CloudLoaded) return Array.from(map.values());
+      if(__rpV428CloudPromise) return await __rpV428CloudPromise;
+      if(!(typeof db!=="undefined" && db && db.collection)) return Array.from(map.values());
+
+      __rpV428CloudPromise=(async function(){
+        async function runQuery(q,label){
+          try{
+            const snap=await q.get();
+            try{window.__eqReadDiag&&window.__eqReadDiag(label,Math.max(1,Number(snap.size||0)));}catch(_e){}
+            snap.forEach(function(doc){add({id:doc.id,...(doc.data?doc.data():{})});});
+          }catch(e){console.warn("V428 RP history query failed",label,e&&e.message);}
+        }
+        // All current real attempts use this source; audio chunks use rp_audio_chunk and are excluded server-side.
+        await runQuery(db.collection("readingSubmissions").where("source","==","rp_shared_submission"),"get:rp-v428-source");
+
+        // Legacy fallback only when the modern source did not recover a real history.
+        if(map.size<10){
+          try{await rpRefreshRosters(false);}catch(_e){}
+          const u=user();
+          if(u&&u.id) await runQuery(db.collection("readingSubmissions").where("teacherId","==",String(u.id)),"get:rp-v428-teacher");
+          if(map.size<10){
+            const vals=Array.from(new Set((rpRosterBase()||[]).map(x=>String(x&&x.studentId||"").trim()).filter(Boolean)));
+            for(let i=0;i<vals.length;i+=10){
+              await runQuery(db.collection("readingSubmissions").where("studentNumber","in",vals.slice(i,i+10)),"get:rp-v428-studentNumber:"+(i/10+1));
+            }
+          }
+        }
+        __rpV428CloudLoaded=true;
+        return Array.from(map.values());
+      })();
+      try{return await __rpV428CloudPromise;}
+      finally{__rpV428CloudPromise=null;}
+    }catch(e){console.warn("V428 RP cloudRecords failed",e&&e.message);return [];}
   }
 
   async function cloudSaveRecord(record){
@@ -16359,8 +16387,8 @@ document.addEventListener("click", function(e){
       return sameStudent && !!at && at===bt;
     }catch(_e){return false;}
   }
-  async function syncCloudIntoLocal(){
-    const cloud=await cloudRecords();
+  async function syncCloudIntoLocal(force){
+    const cloud=await cloudRecords(!!force);
     (cloud||[]).forEach(function(r){ if(isDeleted(r) || rpAttemptState(r)==="deleted") rpRememberDeletedAttempt(r); });
     let merged=mergeRecords(records(), cloud);
     // RP178: final local/cloud tombstones are applied by exact attempt id/fingerprint, not by loose student+task,
@@ -17108,17 +17136,11 @@ document.addEventListener("click", function(e){
     fab.type="button";
     fab.innerHTML='RP <span id="rp-floating-count" style="position:absolute;top:-7px;right:-7px;background:#dc2626;color:white;border-radius:999px;min-width:20px;height:20px;padding:0 5px;font-size:11px;line-height:20px;display:none">0</span>';
     fab.style.cssText="position:fixed;right:14px;bottom:18px;z-index:99999;width:54px;height:54px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:1000;font-size:15px;box-shadow:0 10px 28px rgba(37,99,235,.35);letter-spacing:.3px";
-    fab.onclick=async()=>{panel.style.display="block";await renderCards();};
+    fab.onclick=async()=>{panel.style.display="block";try{await syncCloudIntoLocal(false);}catch(_e){}await renderCards();};
     // v288: Sections > RP opens this real recordings/Pending drawer.
     window.eqOpenRPDrawer=async function(){
-      try{
-        const d=window.__EQ_CURRENT_DATA;
-        if(d&&Array.isArray(d.readingSubmissions)){
-          RP_LIVE_CACHE=d.readingSubmissions.slice();
-          __rpLastCloudSyncAt=Date.now();
-        }
-      }catch(_e){}
       panel.style.display="block";
+      try{ await syncCloudIntoLocal(false); }catch(_e){}
       await renderCards();
     };
     window.eqGetRPPendingCount=async function(){
@@ -17139,7 +17161,7 @@ document.addEventListener("click", function(e){
       if(id==="rp-v11-hard-purge"||id==="rp-v11-hard-purge-all"){ await rpHardPurgeAllExceptHusseinFayez(); return; }
       if(id==="rp-v11-target-delete"){ await rpHardDeleteByCurrentFilters(); return; }
       if(id==="rp-v11-show-more"){ rpDrawerVisibleLimit += 10; renderCards(); return; }
-      if(id==="rp-v11-refresh"){e.target.textContent="Updating..."; syncCloudIntoLocal().then(()=>renderCards()).finally(()=>{e.target.textContent="تحديث";}); return;}
+      if(id==="rp-v11-refresh"){e.target.textContent="Updating..."; syncCloudIntoLocal(true).then(()=>renderCards()).finally(()=>{e.target.textContent="تحديث";}); return;}
       if(id==="rp-v11-restore-old"){
         alert("تم تعطيل استعادة التسجيلات القديمة حتى لا ترجع بيانات أحمد/حسن القديمة إلى RP.");
         return;
