@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v428</title>
+<title>EduQuiz — Smart Assessment v429</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1057,7 +1057,7 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V429</b>
+    <b>Firestore Diagnostics — V428</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={()=>{const report={version:"V429",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
@@ -7962,7 +7962,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const sidCache=eqDigits(user.studentId||user.studentNumber||user.id||"");
     const cacheRoot=window.__EQ_RP_STUDENT_CACHE||(window.__EQ_RP_STUDENT_CACHE=new Map());
     const cached=sidCache?cacheRoot.get(sidCache):null;
-    if(cached){ setLocalRpSubmissions(cached.rows||[]); try{window.__eqReadDiag&&window.__eqReadDiag("cache:student-rp-session",0);}catch(_e){} return ()=>{alive=false;}; }
+    if(cached && (Date.now()-Number(cached.at||0))<300000 && Array.isArray(cached.rows) && cached.rows.length){ setLocalRpSubmissions(cached.rows||[]); try{window.__eqReadDiag&&window.__eqReadDiag("cache:student-rp-session",0);}catch(_e){} return ()=>{alive=false;}; }
     (async()=>{
       try{
         const out=new Map();
@@ -7971,11 +7971,17 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         const email=String(user.email||"").trim();
         const probes=[];
         function add(field,value){if(value&&!probes.some(p=>p[0]===field&&p[1]===value))probes.push([field,value]);}
-        add("studentNumber",sid); add("studentId",uidv); add("studentId",sid);
-        add("studentUserId",uidv); add("userId",uidv); add("studentEmail",email);
-        for(const [field,value] of probes){
+        // V429: primary probes first; legacy probes only if nothing was found (avoids 4x duplicate reads per record).
+        add("studentNumber",sid); add("studentUserId",uidv);
+        const legacy=[]; function addL(f,v){if(v)legacy.push([f,v]);}
+        addL("studentId",uidv); addL("studentId",sid); addL("userId",uidv); addL("studentEmail",email);
+        let probeOk=false;
+        for(let pi=0;pi<probes.length+legacy.length;pi++){
+          if(pi===probes.length && out.size>0) break;
+          const [field,value]=(pi<probes.length?probes[pi]:legacy[pi-probes.length]);
           try{
             const snap=await db.collection("readingSubmissions").where(field,"==",value).get();
+            probeOk=true;
             try{window.__eqReadDiag&&window.__eqReadDiag("get:student-rp:"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
             snap.forEach(function(doc){
               const item={id:doc.id,...(doc.data?doc.data():{})};
@@ -7985,7 +7991,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         }
         if(!alive) return;
         const arr=Array.from(out.values()).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
-        if(sidCache) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
+        if(sidCache && probeOk) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
         setLocalRpSubmissions(arr);
       }catch(err){ console.warn("V426 student RP scoped load unavailable",err&&err.message); }
     })();
@@ -8684,6 +8690,37 @@ function rpDeletedPatch(r, teacherId){
   const now=new Date().toISOString();
   return {...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:now,reviewedAt:now,updatedAt:now,deletedBy:teacherId||"teacher",visibleToStudent:false,scoreVisible:false};
 }
+
+// V429: ONE shared, bounded teacher RP history loader (used by the RP page and the RP drawer).
+// Reads only this teacher's own submissions (teacherId filter; audio chunks have no teacherId so they are never read).
+// Memoised per page session -> a single query, no matter how many RP screens ask for it.
+window.__eqRpTeacherHistory=function(teacherId,force){
+  const tid=String(teacherId||"").trim();
+  if(!tid||tid==="unknown"||tid==="teacher") return Promise.resolve([]);
+  const store=window.__EQ_RP_HISTORY_V429||(window.__EQ_RP_HISTORY_V429={});
+  if(!force&&store[tid]&&store[tid].promise) return store[tid].promise;
+  const p=(async function(){
+    const out=new Map();
+    try{
+      if(!(typeof db!=="undefined"&&db&&db.collection)) return [];
+      const snap=await db.collection("readingSubmissions").where("teacherId","==",tid).get();
+      try{window.__eqReadDiag&&window.__eqReadDiag("get:rp-v429-teacher-history",Math.max(1,Number(snap.size||0)));}catch(_e){}
+      snap.forEach(function(doc){
+        const r={id:doc.id,...(doc.data?doc.data():{})};
+        if(String(r.source||"")==="rp_audio_chunk"||String(doc.id).indexOf("_chunk_")>=0||String(doc.id).indexOf("__rp_audio_chunk__")===0) return;
+        if(r.decisionMarker===true||String(doc.id).indexOf("rp_decision_")===0) return;
+        out.set(String(doc.id),r);
+      });
+    }catch(e){
+      console.warn("V429 RP teacher history failed",e&&e.message);
+      try{delete store[tid];}catch(_e){}   // allow retry on next open
+      return [];
+    }
+    return Array.from(out.values());
+  })();
+  store[tid]={promise:p,at:Date.now()};
+  return p;
+};
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rp-roster-v426",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
   const [historicalTeacherSubs,setHistoricalTeacherSubs]=useState([]);
@@ -8761,18 +8798,16 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         const m=memoryCache.get(memKey);
         existing=(m&&Array.isArray(m.rows))?m.rows:loadLegacyLocal();
       }catch(_e){}
-      if(existing.length>=10){
-        const tasks=Array.from(taskMap.values());
-        memoryCache.set(memKey,{rows:existing,tasks});
-        publish(existing,tasks,"cache:teacher-rp-v426-rich");
-        return;
-      }
-
-      // V429: the RP203 drawer owns historical hydration with bounded direct-submission queries.
-      // Do not perform a second full readingSubmissions scan from this React component.
+      // V429: show cached rows instantly, then load the teacher's full history ONCE (shared with the RP drawer).
       const tasks=Array.from(taskMap.values());
       if(tasks.length) setHistoricalTeacherTasks(tasks);
-      try{window.__eqReadDiag&&window.__eqReadDiag("teacher-rp-history-waits-for-rp203-v428",0);}catch(_e){}
+      if(existing.length) publish(existing,tasks,"cache:teacher-rp-v429-cache");
+      const fresh=await window.__eqRpTeacherHistory(teacherKey,false);
+      if(!alive) return;
+      const merged=cleanDirectRows([...(existing||[]),...(fresh||[])]);
+      memoryCache.set(memKey,{rows:merged,tasks});
+      try{localStorage.setItem(persistedKey,JSON.stringify({rows:merged.slice(-400).map(function(r){const c={...r};delete c.audioDataUrl;return c;})}));}catch(_e){}
+      publish(merged,tasks,"get:teacher-rp-v429-merged");
     })();
 
     return ()=>{alive=false;};
@@ -16084,10 +16119,10 @@ document.addEventListener("click", function(e){
     return Object.values(map).filter(function(r){ return r && !(rpIsLocallyDeletedAttempt(r) && !(isDeleted(r)||rpAttemptState(r)==="deleted")); });
   }
 
-  let __rpV429CloudLoaded=false;
-  let __rpV429CloudPromise=null;
+  let __rpV428CloudLoaded=false;
+  let __rpV428CloudPromise=null;
   async function cloudRecords(force){
-    // V429: restore the V370 teacher-history discovery only when RP is opened.
+    // V428: restore the V370 teacher-history discovery only when RP is opened.
     // Use bounded direct-submission queries; never read audio chunk documents or keep a full listener.
     try{
       const d=window.__EQ_CURRENT_DATA||{};
@@ -16108,39 +16143,40 @@ document.addEventListener("click", function(e){
         map.set(id,{...r,id:id});
       }
       [...live,...cached,...recordsLive()].forEach(add);
-      if(!force && __rpV429CloudLoaded) return Array.from(map.values());
-      if(__rpV429CloudPromise) return await __rpV429CloudPromise;
+      if(!force && __rpV428CloudLoaded) return Array.from(map.values());
+      if(__rpV428CloudPromise) return await __rpV428CloudPromise;
       if(!(typeof db!=="undefined" && db && db.collection)) return Array.from(map.values());
 
-      __rpV429CloudPromise=(async function(){
+      __rpV428CloudPromise=(async function(){
         async function runQuery(q,label){
           try{
             const snap=await q.get();
             try{window.__eqReadDiag&&window.__eqReadDiag(label,Math.max(1,Number(snap.size||0)));}catch(_e){}
             snap.forEach(function(doc){add({id:doc.id,...(doc.data?doc.data():{})});});
-          }catch(e){console.warn("V429 RP history query failed",label,e&&e.message);}
+          }catch(e){console.warn("V428 RP history query failed",label,e&&e.message);}
         }
-        // All current real attempts use this source; audio chunks use rp_audio_chunk and are excluded server-side.
-        await runQuery(db.collection("readingSubmissions").where("source","==","rp_shared_submission"),"get:rp-v428-source");
-
-        // Legacy fallback only when the modern source did not recover a real history.
-        if(map.size<10){
+        // V429: the teacher's own submissions (shared single query; chunks have no teacherId so they are never read).
+        // The old `source==rp_shared_submission` query missed older records and also read other teachers' documents.
+        const u=user();
+        if(u&&u.id){
+          const rows=await window.__eqRpTeacherHistory(u.id,!!force);
+          (rows||[]).forEach(add);
+        }
+        // Legacy records saved without a teacherId (old fallback path): look them up by student number,
+        // only on manual refresh (تحديث) so normal opening stays cheap.
+        if(force){
           try{await rpRefreshRosters(false);}catch(_e){}
-          const u=user();
-          if(u&&u.id) await runQuery(db.collection("readingSubmissions").where("teacherId","==",String(u.id)),"get:rp-v428-teacher");
-          if(map.size<10){
-            const vals=Array.from(new Set((rpRosterBase()||[]).map(x=>String(x&&x.studentId||"").trim()).filter(Boolean)));
-            for(let i=0;i<vals.length;i+=10){
-              await runQuery(db.collection("readingSubmissions").where("studentNumber","in",vals.slice(i,i+10)),"get:rp-v428-studentNumber:"+(i/10+1));
-            }
+          const vals=Array.from(new Set((rpRosterBase()||[]).map(x=>String(x&&x.studentId||"").trim()).filter(Boolean)));
+          for(let i=0;i<vals.length;i+=10){
+            await runQuery(db.collection("readingSubmissions").where("studentNumber","in",vals.slice(i,i+10)),"get:rp-v429-studentNumber:"+(i/10+1));
           }
         }
-        __rpV429CloudLoaded=true;
+        __rpV428CloudLoaded=true;
         return Array.from(map.values());
       })();
-      try{return await __rpV429CloudPromise;}
-      finally{__rpV429CloudPromise=null;}
-    }catch(e){console.warn("V429 RP cloudRecords failed",e&&e.message);return [];}
+      try{return await __rpV428CloudPromise;}
+      finally{__rpV428CloudPromise=null;}
+    }catch(e){console.warn("V428 RP cloudRecords failed",e&&e.message);return [];}
   }
 
   async function cloudSaveRecord(record){
@@ -17136,19 +17172,13 @@ document.addEventListener("click", function(e){
     fab.type="button";
     fab.innerHTML='RP <span id="rp-floating-count" style="position:absolute;top:-7px;right:-7px;background:#dc2626;color:white;border-radius:999px;min-width:20px;height:20px;padding:0 5px;font-size:11px;line-height:20px;display:none">0</span>';
     fab.style.cssText="position:fixed;right:14px;bottom:18px;z-index:99999;width:54px;height:54px;border:0;border-radius:999px;background:#2563eb;color:white;font-weight:1000;font-size:15px;box-shadow:0 10px 28px rgba(37,99,235,.35);letter-spacing:.3px";
-    async function rpOpenPanelNow(){
-      // V429: open the drawer immediately. Never block opening on Firebase/history queries.
+    fab.onclick=async()=>{panel.style.display="block";try{await syncCloudIntoLocal(false);}catch(_e){}await renderCards();};
+    // v288: Sections > RP opens this real recordings/Pending drawer.
+    window.eqOpenRPDrawer=async function(){
       panel.style.display="block";
-      try{ await renderCards(); }catch(e){ console.warn("V429 RP immediate render failed",e&&e.message); }
-      // Refresh history after the drawer is already visible.
-      try{
-        await syncCloudIntoLocal(false);
-        await renderCards();
-      }catch(e){ console.warn("V429 RP background history refresh failed",e&&e.message); }
-    }
-    fab.onclick=rpOpenPanelNow;
-    // V429: Sections > RP uses the already-created panel without waiting on Firebase.
-    window.eqOpenRPDrawer=rpOpenPanelNow;
+      try{ await syncCloudIntoLocal(false); }catch(_e){}
+      await renderCards();
+    };
     window.eqGetRPPendingCount=async function(){
       try{
         const d=window.__EQ_CURRENT_DATA;
@@ -17853,33 +17883,8 @@ document.addEventListener("click", function(e){
     // التسجيل والإرسال متاحان دائمًا للطالب.
   }
 
-  // V429: install an opener immediately, even when the page started before teacher login.
-  // On click after login, create the panel synchronously, then delegate to its real opener.
-  window.eqEnsureAndOpenRPDrawer=async function(){
-    try{
-      let panel=document.getElementById("rp-v11-panel");
-      if(!panel){
-        teacherPanel();
-        panel=document.getElementById("rp-v11-panel");
-      }
-      if(panel && typeof window.eqOpenRPDrawer==="function"){
-        return await window.eqOpenRPDrawer();
-      }
-      if(panel){
-        panel.style.display="block";
-        try{await renderCards();}catch(_e){}
-        return;
-      }
-      console.warn("V429 RP panel unavailable after lazy initialization");
-    }catch(e){ console.warn("V429 RP lazy open failed",e&&e.message); }
-  };
-  // This proxy exists from startup; teacherPanel replaces eqOpenRPDrawer with the real opener once created.
-  if(typeof window.eqOpenRPDrawer!=="function"){
-    window.eqOpenRPDrawer=window.eqEnsureAndOpenRPDrawer;
-  }
-
   setTimeout(()=>{teacherPanel();studentStatus();},1000);
-  // V429: retry lightly after login state changes; click itself is still the authoritative lazy initializer.
+  // V333: do not rebuild the RP drawer every 4 seconds; this erased teacher-entered scores.
   setInterval(()=>{if(!panelMade)teacherPanel();studentStatus();},30000);
 })();
  // ===== END READING PROGRESS V11 INDEXEDDB STORAGE FIX =====
