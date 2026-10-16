@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v417</title>
+<title>EduQuiz — Smart Assessment v419</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -536,9 +536,8 @@ function activeStudentInData(user,data){
         u.deleted!==true && String(u.status||"").toLowerCase()!=="deleted" && u.hidePreloaded!==true && u.permanentDeleted!==true;
     });
     if(live){
-      const inferred=sid.length>=2?canonicalClassId("class_"+sid.charAt(0)+"_"+sid.charAt(1)):"";
-      const requested=canonicalClassId(user.classId||user.className||user.class||"");
-      if(!requested || !inferred || sameClassId(inferred,requested)) activeOverride=live;
+      // V419: the active Firebase row is authoritative. Never infer class from student-number digits.
+      activeOverride=live;
     }
   }
   if(!activeOverride){
@@ -578,13 +577,7 @@ function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
 function eqResolveClassForStudent(student, classes){
   if(!student) return null;
   const vals=[student.classId,student.className,student.class,student.grade,student.section,student.sectionName].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="");
-  const sid=eqDigits(student.studentId||student.studentNumber||student.id||"");
-  // Imported/legacy rows can contain a stale classId. The 4-digit school ID still carries
-  // the class prefix in this roster (3101 => 3-1, 1201 => 1-2), so always add it as a fallback.
-  if(sid && sid.length>=4){
-    const a=sid.charAt(0),b=sid.charAt(1);
-    if(a&&b) vals.push("class_"+a+"_"+b,a+"-"+b);
-  }
+  // V419: resolve class only from stored class fields. Student-number digits are never class metadata.
   for(const c of (classes||[])){
     const aliases=adminClassAliases(c);
     for(const v of vals){
@@ -1249,7 +1242,8 @@ async function fsSet(col, id, data) {
   }
   if(ok) try{eqInvalidateFollowupQueryCache(col);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){}
-  if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
+  if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
+  if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
@@ -1268,7 +1262,8 @@ async function fsDel(col, id) {
   }
   if(ok) try{eqInvalidateFollowupQueryCache(col);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"delete",id,null);}catch(_e){}
-  if(ok && col==="readingSubmissions") try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
+  if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
+  if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
@@ -3066,7 +3061,8 @@ async function rpUploadAudio(blob, path){
   // demo fallback: store small data URL. For real class use, Firebase Storage is required.
   return await rpBlobToDataUrl(blob);
 }
-async function rpSetReadingSubmissionStrict(id, data){ // V417: strict RP write + one-doc teacher inbox notification.
+async function rpSetReadingSubmissionStrict(id, data){ // V419: strict RP write + one-doc teacher inbox notification; RP session caches invalidate only on real writes.
+try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
 if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
   await db.collection("readingSubmissions").doc(id).set(data);
   try{window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
@@ -4451,17 +4447,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     if(!u) u=await eqFetchLoginUser("student",idDigits||id);
     if(u){ users=[...users.filter(x=>String(x.id)!==String(u.id)),u]; firebaseUsers=[...firebaseUsers.filter(x=>String(x.id)!==String(u.id)),u]; d={...d,users,firebaseUsers}; loginDataRef.current=d; }
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
-    // v302: after Move/Reorder, the CURRENT 4-digit school number is authoritative for the class.
-    // Example 32xx => class_3_2. Repair a stale old classId instead of rejecting the student.
-    if(idDigits && idDigits.length>=4){
-      const inferredClass=canonicalClassId("class_"+idDigits.charAt(0)+"_"+idDigits.charAt(1));
-      if(inferredClass && sameClassId(inferredClass,f.classId) && !sameClassId(u.classId||u.className||u.class||"",f.classId)){
-        try{
-          u={...u,classId:inferredClass,className:(activeLoginClassesFromData(d).find(c=>sameClassId(c.id||c.classId,inferredClass))||{}).name||u.className||"",updatedAt:today()};
-          fsSet("users",String(u.id||("student_"+idDigits)),u).catch(function(_classRepairErr){});
-        }catch(_classRepairErr){}
-      }
-    }
+    // V419: never rewrite or infer a student's class from the school number. Use the current Firebase classId only.
     const cid=canonicalClassId(u.classId||u.className||u.class||"");
     // LOGIN_ROSTER_FALLBACK_267: an ACTIVE current student row wins over stale class tombstones.
     // The live login-class list below is the final authority.
@@ -7901,30 +7887,44 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return false;
   }
 
-  // V417: student RP history is fetched once when Reading Progress is opened.
-  // No persistent listener runs while the student leaves the platform idle.
+  // V419: student RP uses one canonical query and keeps the result for the whole page session.
+  // No time-based expiry: a real RP mutation clears the session cache; ordinary navigation never re-reads it.
   useEffect(()=>{
     if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
     let alive=true;
+    const sidCache=eqDigits(user.studentId||user.studentNumber||user.id||"");
+    const cacheRoot=window.__EQ_RP_STUDENT_CACHE||(window.__EQ_RP_STUDENT_CACHE=new Map());
+    const cached=sidCache?cacheRoot.get(sidCache):null;
+    if(cached){ setLocalRpSubmissions(cached.rows||[]); try{window.__eqReadDiag&&window.__eqReadDiag("cache:student-rp-session",0);}catch(_e){} return ()=>{alive=false;}; }
     (async()=>{
       try{
         const out=new Map();
-        const probes=[["studentId",user.id],["studentNumber",user.studentId||user.studentNumber],["studentUserId",user.id]];
+        const sid=String(user.studentId||user.studentNumber||"").trim();
+        const uidv=String(user.id||"").trim();
+        const probes=[];
+        if(sid) probes.push(["studentNumber",sid]);
+        if(uidv) probes.push(["studentId",uidv]);
+        if(uidv) probes.push(["studentUserId",uidv]);
         for(const [field,value] of probes){
-          if(value===undefined||value===null||String(value).trim()==="") continue;
           try{
-            const snap=await db.collection("readingSubmissions").where(field,"==",String(value)).get();
-            try{window.__eqReadDiag&&window.__eqReadDiag("get:student-readingSubmissions:"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
-            snap.forEach(function(doc){const item={id:doc.id,...(doc.data?doc.data():{})};if(rpBelongsToCurrentStudent(item)&&String(item.source||"")!=="rp_audio_chunk")out.set(String(doc.id),item);});
+            const snap=await db.collection("readingSubmissions").where(field,"==",value).get();
+            try{window.__eqReadDiag&&window.__eqReadDiag("get:student-rp:"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
+            snap.forEach(function(doc){
+              const item={id:doc.id,...(doc.data?doc.data():{})};
+              if(rpBelongsToCurrentStudent(item) && String(item.source||"")!=="rp_audio_chunk" && !(item.decisionMarker===true || String(item.id||"").indexOf("rp_decision_")===0)) out.set(String(doc.id),item);
+            });
+            // Stop after the first successful identity path. Never bill the same history through another alias.
+            if(out.size) break;
           }catch(_e){}
         }
         if(!alive) return;
         const arr=Array.from(out.values()).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
+        if(sidCache) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
         setLocalRpSubmissions(arr);
-      }catch(err){ console.warn("V417 student RP scoped load unavailable",err&&err.message); }
+      }catch(err){ console.warn("V419 student RP scoped load unavailable",err&&err.message); }
     })();
     return function(){alive=false;};
-  },[user&&user.id,user&&user.studentId,user&&user.email]);
+  },[user&&user.id,user&&user.studentId]);
 
   // V273: one physical recording = one visible attempt, even if an old rp_direct fallback copy exists.
   const __rpStudentRows=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
@@ -8624,41 +8624,51 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   useEffect(()=>{
     if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
     let alive=true;
+    const rpClassKey=(myClasses||[]).map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean).sort().join("|");
+    const rpCacheKey=String(user.id||"")+"::"+rpClassKey;
+    const rpCache=window.__EQ_RP_TEACHER_CACHE||(window.__EQ_RP_TEACHER_CACHE=new Map());
+    const cached=rpCache.get(rpCacheKey);
+    if(cached){
+      setHistoricalTeacherTasks(cached.tasks||[]);setHistoricalTeacherSubs(cached.rows||[]);
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rp-session",0);}catch(_e){}
+      return ()=>{alive=false;};
+    }
     (async()=>{
       const taskMap=new Map(), subMap=new Map();
-      // Current teacher-owned RP tasks.
       try{
         const owned=await db.collection("readingTasks").where("teacherId","==",String(user.id||"")).get();
         owned.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};taskMap.set(String(doc.id),x);});
-      }catch(e){console.warn("V417 RP task load failed",e&&e.message);}
-      // Recover legacy tasks that were assigned to current classes but may not contain teacherId.
-      const classTokens=Array.from(new Set((myClasses||[]).flatMap(c=>[
-        String(c.id||"").trim(), canonicalClassId(c.id||c.classId||c.name||"")
-      ]).filter(Boolean)));
+      }catch(e){console.warn("V419 RP task load failed",e&&e.message);}
+      const classTokens=Array.from(new Set((myClasses||[]).map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean)));
       for(const cid of classTokens){
         try{
-          const snap=await db.collection("readingTasks").where("classIds","array-contains",cid).get();
-          snap.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};taskMap.set(String(doc.id),x);});
+          const ts=await db.collection("readingTasks").where("classIds","array-contains",cid).get();
+          ts.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};taskMap.set(String(doc.id),x);});
+        }catch(_e){}
+        try{
+          // Recover submissions by class, not by current task ids. This preserves recordings whose task row changed or disappeared.
+          const rs=await db.collection("readingSubmissions").where("classId","==",cid).get();
+          try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-class:"+cid,Math.max(1,Number(rs.size||0)));}catch(_e){}
+          rs.forEach(doc=>{
+            const x={id:doc.id,...(doc.data?doc.data():{})};
+            if(String(x.source||"")!=="rp_audio_chunk" && !(x.decisionMarker===true || String(x.id||"").indexOf("rp_decision_")===0)) subMap.set(String(doc.id),x);
+          });
+        }catch(e){console.warn("V419 RP class submission load failed",cid,e&&e.message);}
+      }
+      if(subMap.size===0){
+        try{
+          const rs=await db.collection("readingSubmissions").where("teacherId","==",String(user.id||"")).get();
+          try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-teacherId-fallback",Math.max(1,Number(rs.size||0)));}catch(_e){}
+          rs.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};if(String(x.source||"")!=="rp_audio_chunk" && !(x.decisionMarker===true || String(x.id||"").indexOf("rp_decision_")===0))subMap.set(String(doc.id),x);});
         }catch(_e){}
       }
-      // One submission path only: query by visible task IDs in batches. This returns modern + legacy rows
-      // without reading the same modern record once by teacherId and again by taskId.
-      const tids=Array.from(taskMap.keys());
-      for(let i=0;i<tids.length;i+=10){
-        const batch=tids.slice(i,i+10);
-        try{
-          const snap=await db.collection("readingSubmissions").where("taskId","in",batch).get();
-          snap.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};if(String(x.source||"")!=="rp_audio_chunk")subMap.set(String(doc.id),x);});
-        }catch(e){
-          // Compatibility fallback remains task-scoped only; never a collection scan.
-          for(const tid of batch){try{const one=await db.collection("readingSubmissions").where("taskId","==",tid).get();one.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};if(String(x.source||"")!=="rp_audio_chunk")subMap.set(String(doc.id),x);});}catch(_e){}}
-        }
-      }
       if(alive){
-        const rows=Array.from(subMap.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
-        setHistoricalTeacherTasks(Array.from(taskMap.values()));
+        const rows=Array.from(subMap.values()).sort((a,b)=>rpAttemptTimeMs(a)-rpAttemptTimeMs(b));
+        const taskRows=Array.from(taskMap.values());
+        rpCache.set(rpCacheKey,{at:Date.now(),tasks:taskRows,rows});
+        setHistoricalTeacherTasks(taskRows);
         setHistoricalTeacherSubs(rows);
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-history-task-scoped",rows.length);}catch(_e){}
+        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-history-v419",rows.length);}catch(_e){}
       }
     })();
     return ()=>{alive=false;};
@@ -8696,7 +8706,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
   const rawSubs=rpMergeById(rpMergeById((data.readingSubmissions||[]),historicalTeacherSubs),localTeacherSubs).filter(s=>
     String(s.teacherId||"")===String(user.id||"") ||
     taskIds.has(String(s.taskId)) ||
-    (myStudents||[]).some(st=>responseBelongsToStudent(s,st))
+    (myStudents||[]).some(st=>responseBelongsToStudent(s,st)) ||
+    (myClasses||[]).some(c=>sameClassId(s.classId||s.className||"",c.id||c.classId||c.name||""))
   );
   function rpOldDeleted(s){return !!(s && (s.deleted===true || s.status==="deleted"));}
   function rpApprovedForDashboard(s){
@@ -11149,6 +11160,11 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   React.useEffect(()=>{
     if(!FIREBASE_OK || !(db&&db.collection)) return;
     let alive=true;
+    const rtClassKey=(myClasses||[]).map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean).sort().join("|");
+    const rtCacheKey=String(user&&user.id||"")+"::"+rtClassKey;
+    const rtCache=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
+    const cached=rtCache.get(rtCacheKey);
+    if(cached){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
     (async()=>{
       const out=new Map();
       const tokens=Array.from(new Set((myClasses||[]).flatMap(c=>[
@@ -11163,6 +11179,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
       }
       if(alive){
         const rows=Array.from(out.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
+        rtCache.set(rtCacheKey,{at:Date.now(),rows});
         setRtTeacherRows(rows);
         try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rt-history-class-scoped",rows.length);}catch(_e){}
       }
@@ -11588,7 +11605,7 @@ function ReadingTheoryStudent({user,data,reload}){
         studentId:user.id,studentNumber:user.studentId,studentName:user.name,
         classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()
       });
-      try{window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
+      try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
     }catch(e){console.warn("Save failed",e);}
   }
 
@@ -14079,12 +14096,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const all=(await loadAllData()).users;
     if(all.find(u=>u.id!==editStu.id && !u.deleted && (u.studentId||"")===esForm.studentId.trim())){setEsMsg("That Student ID is used by another student.");return;}
     const typedSid=eqDigits(esForm.studentId.trim());
+    // V419: class selection is explicit. Never derive or override class from student-number digits.
     let targetClass=esForm.classId;
-    if(typedSid.length>=4){
-      const inferred=canonicalClassId("class_"+typedSid.charAt(0)+"_"+typedSid.charAt(1));
-      const hit=(myClasses||[]).find(function(c){return sameClassId(c.id||c.classId||c.grade||c.name,inferred);});
-      if(hit)targetClass=hit.id;
-    }
     const oldSid=eqDigits(editStu.studentId||"");
     const targetCls=(myClasses||[]).find(c=>sameClassId(c.id||c.classId||c.grade||c.name,targetClass));
     const updated={...editStu,name:esForm.name.trim(),shortName:(esForm.shortName||"").trim() || esForm.name.trim().split(/\s+/).slice(0,2).join(" "),studentId:typedSid,classId:targetClass,classRosterToken:(targetCls&&targetCls.rosterToken)||"",email:(esForm.email||"").trim().toLowerCase(),fatherName:esForm.fatherName.trim(),previousStudentIds:Array.from(new Set([...(Array.isArray(editStu.previousStudentIds)?editStu.previousStudentIds:[]),oldSid].filter(Boolean))),updatedAt:today()};
@@ -14353,7 +14366,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V417" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V419" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15609,6 +15622,10 @@ function App() {
           if(!doc || !doc.exists) return;
           const rec={id:doc.id,...(doc.data?doc.data():{})};
           if(String(rec.teacherId||"")!==String(realtimeTeacher.id||"") || String(rec.source||"")==="rp_audio_chunk") return;
+          try{
+            const cache=window.__EQ_RP_TEACHER_CACHE;
+            if(cache&&cache.forEach)cache.forEach((v,k)=>{if(String(k).indexOf(String(realtimeTeacher.id||"")+"::")===0){const rows=Array.isArray(v&&v.rows)?v.rows.slice():[];const i=rows.findIndex(x=>String(x&&x.id||"")===String(rec.id));if(i>=0)rows[i]={...rows[i],...rec};else rows.push(rec);cache.set(k,{...(v||{}),rows});}});
+          }catch(_e){}
           setData(prev=>{
             if(!prev)return prev;
             const rows=Array.isArray(prev.readingSubmissions)?prev.readingSubmissions.slice():[];
