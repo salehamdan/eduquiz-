@@ -215,7 +215,8 @@ try{
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
-<!-- EDUQUIZ_V417_FINAL_READ_GUARD_20261015 -->\n</head>
+<!-- EDUQUIZ_V417_FINAL_READ_GUARD_20261015 -->
+</head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
 <!-- V332_SAFE_REPAIR_RP_FINAL_QUIZ_MISSING_LOGIN_20261007 -->
@@ -923,7 +924,10 @@ window.__eqFsTraceAdd = function(kind,label,count){
     T.total+=count;
     const key=String(kind||"read")+":"+String(label||"unknown");
     T.by[key]=(T.by[key]||0)+count;
-    T.events.push({t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count});
+    const ev={t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count};
+    // V442: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
+    if(count>=20){ try{ ev.by=String(new Error().stack||"").split("\n").slice(2,9).map(function(l){var m=l.match(/at\s+(?:async\s+)?([^\s(]+)/);return m?m[1]:"";}).filter(function(n){return n&&!/eqFsTraceAdd|patch|labelOf|Object\.|Array\./.test(n);}).slice(0,4).join(" < "); }catch(_e){} }
+    T.events.push(ev);
     if(T.events.length>300)T.events.splice(0,T.events.length-300);
     window.dispatchEvent(new CustomEvent("eq-read-diag-update"));
   }catch(_e){}
@@ -1041,7 +1045,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V441", acc={total:0,by:{}};
+  const VER="V442", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1067,8 +1071,9 @@ window.__eqFsTraceAdd = function(kind,label,count){
     try{
       const s=JSON.parse(localStorage.getItem("eq_session")||"null")||{};
       const id=String(s.id||s._id||s.studentId||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,40);
-      return {key:id||"anon", name:String(s.name||"").slice(0,40), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
-    }catch(_e){ return {key:"anon",name:"",cls:""}; }
+      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v441")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v441",dv); } }catch(_e){}
+      return {key:id||("anon_"+(dv||"x")), name:String(s.name||"").slice(0,40)||(id?"":"قبل الدخول"), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
+    }catch(_e){ return {key:"anon",name:"قبل الدخول",cls:""}; }
   }
   function hourKey(){
     try{ return "h"+new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Riyadh",hour:"2-digit",hour12:false}).format(new Date()).slice(0,2); }catch(_e){ return "h"+String(new Date().getHours()).padStart(2,"0"); }
@@ -1183,12 +1188,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V441</b>
+    <b>Firestore Diagnostics — V442</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"V441",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V442",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1594,6 +1599,52 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
+// V442: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
+async function eqStudentLiteData(sidRaw, extra){
+  extra=extra||{};
+  const entered=String(sidRaw||"").trim().replace(/\s/g,"");
+  const digits=eqDigits(entered);
+  const rows=new Map();
+  const put=function(d){ try{ if(d&&d.exists){ const x=d.data()||{}; rows.set(d.id,{...x,_id:d.id,id:x.id||d.id}); } }catch(_e){} };
+  const putSnap=function(snap){ try{ snap.forEach(put); }catch(_e){} };
+  let deleted=[];
+  if(FIREBASE_OK && db && db.collection && entered){
+    const ids=Array.from(new Set(["student_"+(digits||entered),"student_"+entered]));
+    const jobs=[];
+    ids.forEach(function(id){ jobs.push(db.collection("users").doc(id).get().then(put).catch(function(){})); });
+    const vals=Array.from(new Set([entered,digits].filter(Boolean)));
+    vals.forEach(function(v){ jobs.push(db.collection("users").where("studentId","==",v).limit(10).get().then(putSnap).catch(function(){})); });
+    if(extra.email){ const em=String(extra.email).trim().toLowerCase(); ["email","linkedEmail"].forEach(function(f){ jobs.push(db.collection("users").where(f,"==",em).limit(5).get().then(putSnap).catch(function(){})); }); }
+    if(extra.uid){ ["authUid","linkedAuthUid"].forEach(function(f){ jobs.push(db.collection("users").where(f,"==",String(extra.uid)).limit(5).get().then(putSnap).catch(function(){})); }); }
+    ids.forEach(function(id){ jobs.push(db.collection("deletedStudents").doc(id).get().then(function(d){ if(d&&d.exists){ const x=d.data()||{}; deleted.push({...x,_id:d.id,id:x.id||d.id}); } }).catch(function(){})); });
+    await Promise.all(jobs);
+    try{ window.__eqReadDiag&&window.__eqReadDiag("student-lite-login",rows.size+deleted.length); }catch(_e){}
+  }else{
+    const all=await fsAll("users"); (all||[]).forEach(function(u){ if(u) rows.set(String(u._id||u.id),u); });
+  }
+  const usersRaw=Array.from(rows.values());
+  const activeKeys=new Set();
+  usersRaw.forEach(function(u){ if(u && String(u.role||"")==="student" && !isStudentTombstone(u)){ adminStudentDeleteKeys(u).forEach(function(k){ if(k) activeKeys.add(String(k)); }); } });
+  const deletedRows=deleted.map(function(x){return {...x,role:"student",deleted:true,status:"deleted",hidePreloaded:true,permanentDeleted:true};}).filter(function(x){ return !adminStudentDeleteKeys(x).some(function(k){ return activeKeys.has(String(k)); }); });
+  const users=mergePreloadedRows([].concat(usersRaw,deletedRows),[]);
+  const firebaseUsers=usersRaw.filter(function(u){ return u && !isStudentTombstone(u); });
+  return {users,firebaseUsers,classes:[],firebaseClasses:[],quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],appSettings:[],projects:[],projectSubmissions:[],deletedStudents:deleted,deletedClasses:[]};
+}
+async function eqFindUserByAuthUid(uid){
+  if(!uid) return null;
+  if(FIREBASE_OK && db && db.collection){
+    for(const f of ["authUid","linkedAuthUid"]){
+      try{
+        const snap=await db.collection("users").where(f,"==",String(uid)).limit(3).get();
+        let hit=null; snap.forEach(function(d){ const x=d.data()||{}; if(!hit && !x.deleted) hit={...x,_id:d.id,id:x.id||d.id}; });
+        if(hit) return hit;
+      }catch(_e){}
+    }
+    return null;
+  }
+  const all=await fsAll("users");
+  return (all||[]).find(function(x){ return !x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(uid); })||null;
+}
 async function eqFetchLoginUser(role, identifier){
   if(!FIREBASE_OK || !db || !db.collection) return null;
   const raw=String(identifier||"").trim();
@@ -4866,10 +4917,10 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     if(!f.name||!f.studentId||!f.password||!f.classId){setErr("Fill all required fields.");return;}
     if(!f.fatherName||!f.fatherName.trim()){setErr("Please enter your father's name (for password recovery).");return;}
     setLoading(true); setErr("");
-    const allD = await loadAllData();
+    const enteredId = f.studentId.trim().replace(/\s/g,"");
+    const allD = await eqStudentLiteData(enteredId);
     const users = allD.users||[];
     const firebaseUsersReg = Array.isArray(allD.firebaseUsers) ? allD.firebaseUsers : (FIREBASE_OK ? [] : users);
-    const enteredId = f.studentId.trim().replace(/\s/g,"");
     // ACTIVE_FIREBASE_STUDENT_LOGIN_ONLY_20260701
     // Registration/self-linking can only use a currently active Firebase student row.
     const preloaded = firebaseUsersReg.find(function(u){ return u && u.role==="student" && !isStudentTombstone(u) && String(u.studentId||"") === enteredId; });
@@ -4912,9 +4963,9 @@ function Landing({onLogin, prefillQuiz, loginData}) {
   async function doQuickStart() {
     if(!f.name||!f.studentId){setErr("Enter your name and ID.");return;}
     setLoading(true); setErr("");
-    const allD = await loadAllData();
-    const users = allD.users||[];
     const enteredId = f.studentId.trim().replace(/\s/g,"");
+    const allD = await eqStudentLiteData(enteredId);
+    const users = allD.users||[];
     // Check if already registered with exact ID
     let u = users.find(function(u){ return u.role==="student" && !u.deleted && String(u.studentId||"").trim()===enteredId; });
     if (!u) {
@@ -4939,8 +4990,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
       const provider = kind==="google" ? new firebase.auth.GoogleAuthProvider() : new firebase.auth.OAuthProvider("microsoft.com");
       const res = await auth.signInWithPopup(provider);
       const g = res.user;
-      const users = await fsAll("users");
-      const linked = users.find(x=>!x.deleted && String(x.authUid||x.linkedAuthUid||"")===String(g.uid));
+      const linked = await eqFindUserByAuthUid(g.uid);
       if(linked){
         saveLoginMemory({mode:"login",name:linked.name||"",classId:linked.classId||"",studentId:linked.studentId||"",email:linked.studentId||linked.email||"",password:linked.password||"",role:linked.role||"student"});
         saveSession(linked); onLogin(linked); setLoading(false); return;
@@ -4972,7 +5022,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
         setErr("رقم الطالب لا ينتمي للفصل المختار.\nThis Student ID does not belong to the selected class.");
         setLoading(false); return;
       }
-      const d=await loadAllData();
+      const d=await eqStudentLiteData(enteredId,{email:pendingAuth.email,uid:pendingAuth.uid});
       const students=d.users.filter(function(u){return u.role==="student" && !u.deleted;});
       const emailKey=String(pendingAuth.email||"").trim().toLowerCase();
       const emailOwner=students.find(function(u){return emailKey && [u.email,u.linkedEmail].some(v=>String(v||"").trim().toLowerCase()===emailKey);});
@@ -14846,7 +14896,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V441" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V442" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17842,7 +17892,8 @@ document.addEventListener("click", function(e){
       if(snap && Array.isArray(snap.classes) && Array.isArray(snap.users)){
         cls=snap.classes; users=snap.users;
       }else if(typeof fsAll==="function"){
-        const res=await Promise.all([fsAll("classes"),fsAll("users")]);
+        let isT=false; try{ const ss=JSON.parse(localStorage.getItem("eq_session")||"null"); isT=!!(ss&&String(ss.role||"")==="teacher"); }catch(_e){}
+        const res=await Promise.all([fsAll("classes"),(isT&&typeof eqUsersCached==="function")?eqUsersCached():fsAll("users")]);
         cls=res[0]||[]; users=res[1]||[];
       }
       const preCls=(typeof PRELOADED_CLASSES!=="undefined" && Array.isArray(PRELOADED_CLASSES))?PRELOADED_CLASSES:[];
