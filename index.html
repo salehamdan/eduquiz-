@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v435</title>
+<title>EduQuiz — Smart Assessment v436</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -929,49 +929,110 @@ window.__eqFsTraceAdd = function(kind,label,count){
   }catch(_e){}
 };
 (function eqInstallFirestoreTrace(){
+  // V436: patch the prototype that REALLY owns get/onSnapshot. V401-V435 patched only CollectionReference, so every
+  // where()/limit()/orderBy() query (Follow-up, RP, students, Reading Theory...) and transaction read was invisible.
   if(!FIREBASE_OK||!db||!db.collection||window.__EQ_FS_TRACE_INSTALLED)return;
   window.__EQ_FS_TRACE_INSTALLED=true;
   function labelOf(x){
-    try{
-      if(x&&x.path)return String(x.path);
-      if(x&&x._key&&x._key.path&&x._key.path.canonicalString)return x._key.path.canonicalString();
-      if(x&&x._query&&x._query.path&&x._query.path.canonicalString)return x._query.path.canonicalString();
-      if(x&&x._query&&x._query.path)return String(x._query.path);
-    }catch(_e){}
+    const tries=[
+      function(){return x.path;},
+      function(){return x._key.path.canonicalString();},
+      function(){return x._query.path.canonicalString();},
+      function(){return x._delegate._query.path.canonicalString();},
+      function(){return x._delegate._key.path.canonicalString();},
+      function(){return x._delegate.path;},
+      function(){return x._query.path;},
+      function(){return x._delegate._query.path;}
+    ];
+    for(const f of tries){try{const v=f();if(v)return String(v);}catch(_e){}}
     return "unknown";
   }
-  try{
-    const q=db.collection("__eq_trace_probe__");
-    const qp=Object.getPrototypeOf(q);
-    if(qp&&qp.get&&!qp.get.__eqWrapped){
-      const old=qp.get;
+  function owner(obj,name){
+    let o=Object.getPrototypeOf(obj);
+    while(o&&!Object.prototype.hasOwnProperty.call(o,name)) o=Object.getPrototypeOf(o);
+    return o&&typeof o[name]==="function"?o:null;
+  }
+  function wrapSnapNext(fn,lab,kind){
+    let first=true;
+    return function(s){
+      let n=0;
+      try{ n=first?Math.max(1,Number(s&&s.size||0)):Math.max(0,(s&&s.docChanges?s.docChanges().length:0)); }catch(_e){}
+      first=false; if(n) window.__eqFsTraceAdd(kind,lab,n);
+      return fn.apply(this,arguments);
+    };
+  }
+  function patchQueryLike(obj){
+    const og=owner(obj,"get");
+    if(og&&!og.get.__eqWrapped){
+      const old=og.get;
       const wrapped=function(){
         const self=this, lab=labelOf(self), p=old.apply(self,arguments);
         return Promise.resolve(p).then(s=>{const n=Math.max(1,Number(s&&s.size||0));window.__eqFsTraceAdd("GET",lab,n);return s;});
-      }; wrapped.__eqWrapped=true; qp.get=wrapped;
+      }; wrapped.__eqWrapped=true; og.get=wrapped;
     }
-    if(qp&&qp.onSnapshot&&!qp.onSnapshot.__eqWrapped){
-      const old=qp.onSnapshot;
+    const os=owner(obj,"onSnapshot");
+    if(os&&!os.onSnapshot.__eqWrapped){
+      const old=os.onSnapshot;
       const wrapped=function(){
         const self=this,lab=labelOf(self),args=[...arguments];
-        let idx=args.findIndex(a=>typeof a==="function");
-        if(idx>=0){const userNext=args[idx];let first=true;args[idx]=function(s){let n=0;try{n=first?Math.max(1,Number(s&&s.size||0)):Math.max(0,(s&&s.docChanges?s.docChanges().length:0));}catch(_e){}first=false;if(n)window.__eqFsTraceAdd("SNAPSHOT",lab,n);return userNext.apply(this,arguments);};}
-        else if(args[0]&&typeof args[0]==="object"&&typeof args[0].next==="function"){const obs=args[0],userNext=obs.next,copy={...obs};let first=true;copy.next=function(s){let n=0;try{n=first?Math.max(1,Number(s&&s.size||0)):Math.max(0,(s&&s.docChanges?s.docChanges().length:0));}catch(_e){}first=false;if(n)window.__eqFsTraceAdd("SNAPSHOT",lab,n);return userNext.apply(this,arguments);};args[0]=copy;}
+        const idx=args.findIndex(a=>typeof a==="function");
+        if(idx>=0) args[idx]=wrapSnapNext(args[idx],lab,"SNAPSHOT");
+        else{
+          const oi=args.findIndex(a=>a&&typeof a==="object"&&typeof a.next==="function");
+          if(oi>=0){const obs=args[oi];const copy={...obs};copy.next=wrapSnapNext(obs.next.bind(obs),lab,"SNAPSHOT");args[oi]=copy;}
+        }
         return old.apply(self,args);
-      }; wrapped.__eqWrapped=true; qp.onSnapshot=wrapped;
+      }; wrapped.__eqWrapped=true; os.onSnapshot=wrapped;
     }
-    const d=q.doc("__probe__"), dp=Object.getPrototypeOf(d);
-    if(dp&&dp.get&&!dp.get.__eqWrapped){
-      const old=dp.get;
+  }
+  function patchDocLike(obj){
+    const og=owner(obj,"get");
+    if(og&&!og.get.__eqWrapped){
+      const old=og.get;
       const wrapped=function(){const self=this,lab=labelOf(self),p=old.apply(self,arguments);return Promise.resolve(p).then(s=>{window.__eqFsTraceAdd("DOC",lab,1);return s;});};
-      wrapped.__eqWrapped=true;dp.get=wrapped;
+      wrapped.__eqWrapped=true; og.get=wrapped;
     }
-    if(dp&&dp.onSnapshot&&!dp.onSnapshot.__eqWrapped){
-      const old=dp.onSnapshot;
-      const wrapped=function(){const self=this,lab=labelOf(self),args=[...arguments];let idx=args.findIndex(a=>typeof a==="function");if(idx>=0){const userNext=args[idx];args[idx]=function(s){window.__eqFsTraceAdd("DOC-SNAPSHOT",lab,1);return userNext.apply(this,arguments);};}return old.apply(self,args);};
-      wrapped.__eqWrapped=true;dp.onSnapshot=wrapped;
+    const os=owner(obj,"onSnapshot");
+    if(os&&!os.onSnapshot.__eqWrapped){
+      const old=os.onSnapshot;
+      const wrapped=function(){
+        const self=this,lab=labelOf(self),args=[...arguments];
+        const idx=args.findIndex(a=>typeof a==="function");
+        if(idx>=0){const userNext=args[idx];args[idx]=function(){window.__eqFsTraceAdd("DOC-SNAPSHOT",lab,1);return userNext.apply(this,arguments);};}
+        else{
+          const oi=args.findIndex(a=>a&&typeof a==="object"&&typeof a.next==="function");
+          if(oi>=0){const obs=args[oi];const copy={...obs};copy.next=function(){window.__eqFsTraceAdd("DOC-SNAPSHOT",lab,1);return obs.next.apply(obs,arguments);};args[oi]=copy;}
+        }
+        return old.apply(self,args);
+      }; wrapped.__eqWrapped=true; os.onSnapshot=wrapped;
     }
-  }catch(e){console.warn("V401 Firestore live trace install failed",e&&e.message);}
+  }
+  try{
+    const col=db.collection("__eq_trace_probe__");
+    patchQueryLike(col);
+    try{patchQueryLike(col.where("__eq_probe__","==",1));}catch(_e){}   // plain Query class (where/limit/orderBy results)
+    patchDocLike(col.doc("__probe__"));
+  }catch(e){console.warn("V436 Firestore live trace install failed",e&&e.message);}
+  // Transactions: tx.get(docRef) is a billed read too.
+  try{
+    const rt=db.runTransaction;
+    if(typeof rt==="function"&&!rt.__eqWrapped){
+      const wrappedRT=function(fn,opts){
+        return rt.call(this,function(tx){
+          try{
+            const o=owner(tx,"get");
+            if(o&&!o.get.__eqWrapped){
+              const old=o.get;
+              const w=function(){const self=this,lab=(arguments[0]&&labelOf(arguments[0]))||"unknown",p=old.apply(self,arguments);return Promise.resolve(p).then(s=>{window.__eqFsTraceAdd("TX-GET",lab,1);return s;});};
+              w.__eqWrapped=true; o.get=w;
+            }
+          }catch(_e){}
+          return fn(tx);
+        },opts);
+      };
+      wrappedRT.__eqWrapped=true; db.runTransaction=wrappedRT;
+    }
+  }catch(e){console.warn("V436 transaction trace failed",e&&e.message);}
 })();
 
 // V434 USAGE METER (all users): every browser counts the Firestore reads the SDK returns, by collection, and sends ONE small
@@ -980,7 +1041,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V434", acc={total:0,by:{}};
+  const VER="V436", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1105,15 +1166,15 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V435</b>
+    <b>Firestore Diagnostics — V436</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0,1]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع</button>
-      <button onClick={()=>{const report={version:"V435",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V436",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
     SDK reads: <b>{T.total}</b> · {Math.round(T.total/mins)}/min<br/>
-    Legacy observed: {D.total}
+    Legacy observed (labels only, may include cached lists): {D.total}
     {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
     {usage&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}} dir="rtl">
       <b>📊 الاستهلاك الفعلي لكل المستخدمين (يوم Firebase = توقيت المحيط الهادئ)</b>
@@ -14661,7 +14722,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V435" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V436" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
