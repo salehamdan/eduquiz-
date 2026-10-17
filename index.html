@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v432</title>
+<title>EduQuiz — Smart Assessment v435</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -973,6 +973,53 @@ window.__eqFsTraceAdd = function(kind,label,count){
     }
   }catch(e){console.warn("V401 Firestore live trace install failed",e&&e.message);}
 })();
+
+// V434 USAGE METER (all users): every browser counts the Firestore reads the SDK returns, by collection, and sends ONE small
+// increment write to readStats/<Pacific date> (same day boundary as Firebase quota). The teacher panel shows teacher vs students.
+// It performs no reads. If Firestore rules block the write, window.__EQ_STATS_ERR explains it in the panel.
+(function eqUsageMeter(){
+  if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
+  window.__EQ_METER_INSTALLED=true;
+  const VER="V434", acc={total:0,by:{}};
+  let newSession=true, flushing=false, fails=0;
+  const orig=window.__eqFsTraceAdd;
+  window.__eqFsTraceAdd=function(kind,label,count){
+    try{orig&&orig.apply(this,arguments);}catch(_e){}
+    try{
+      count=Math.max(0,Number(count)||0); if(!count) return;
+      const col=String(label||"unknown").split("/")[0];
+      const key=(String(kind||"read")+"_"+col).replace(/[^A-Za-z0-9_-]/g,"_").slice(0,60);
+      acc.total+=count; acc.by[key]=(acc.by[key]||0)+count;
+    }catch(_e){}
+  };
+  window.__eqPtDate=function(offsetDays){
+    try{ const d=new Date(Date.now()-(Number(offsetDays)||0)*86400000); return new Intl.DateTimeFormat("en-CA",{timeZone:"America/Los_Angeles"}).format(d); }
+    catch(_e){ return new Date().toISOString().slice(0,10); }
+  };
+  function role(){
+    try{ const s=JSON.parse(localStorage.getItem("eq_session")||"null"); return s&&s.role==="teacher"?"teacher":(s&&s.role==="student"?"student":"anon"); }catch(_e){ return "anon"; }
+  }
+  async function flush(){
+    if(flushing||!acc.total||fails>=3||!(window.firebase&&firebase.firestore)) return;
+    flushing=true;
+    const snapTotal=acc.total, snapBy={...acc.by}, wasNew=newSession;
+    try{
+      const inc=firebase.firestore.FieldValue.increment, r=role();
+      const by={}; Object.keys(snapBy).forEach(k=>{by[k]=inc(snapBy[k]);});
+      const upd={updatedAt:new Date().toISOString(), total:inc(snapTotal)};
+      upd[r]={total:inc(snapTotal), sessions:inc(wasNew?1:0), by:by};
+      upd.versions={}; upd.versions[VER+"_"+r]=inc(wasNew?1:0);
+      await db.collection("readStats").doc(window.__eqPtDate(0)).set(upd,{merge:true});
+      acc.total-=snapTotal; Object.keys(snapBy).forEach(k=>{acc.by[k]=(acc.by[k]||0)-snapBy[k]; if(acc.by[k]<=0) delete acc.by[k];});
+      newSession=false; fails=0; window.__EQ_STATS_ERR="";
+    }catch(e){ fails++; window.__EQ_STATS_ERR=String(e&&e.message||e).slice(0,160); }
+    finally{ flushing=false; }
+  }
+  window.__eqFlushUsage=flush;
+  setInterval(flush,180000);
+  document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") flush(); });
+  window.addEventListener("pagehide",function(){ flush(); });
+})();
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -1045,6 +1092,7 @@ window.__eqReadDiag = function(source,count){
 };
 function FirestoreReadBox(){
   const [tick,setTick]=useState(0);
+  const [usage,setUsage]=useState(null);
   useEffect(()=>{
     const fn=()=>setTick(x=>x+1);
     window.addEventListener("eq-read-diag-update",fn);
@@ -1057,15 +1105,37 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V428</b>
+    <b>Firestore Diagnostics — V435</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={()=>{const report={version:"V432",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0,1]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع</button>
+      <button onClick={()=>{const report={version:"V435",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
     SDK reads: <b>{T.total}</b> · {Math.round(T.total/mins)}/min<br/>
     Legacy observed: {D.total}
     {window.__EQ_STARTUP_MS!=null&&<React.Fragment><br/>Dashboard hydrate: {window.__EQ_STARTUP_MS} ms</React.Fragment>}
+    {usage&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}} dir="rtl">
+      <b>📊 الاستهلاك الفعلي لكل المستخدمين (يوم Firebase = توقيت المحيط الهادئ)</b>
+      {window.__EQ_STATS_ERR&&<div style={{color:"#fca5a5"}}>تعذر الإرسال من هذا الجهاز: {window.__EQ_STATS_ERR}</div>}
+      {usage.error&&<div style={{color:"#fca5a5"}}>{usage.error}</div>}
+      {(usage.days||[]).map(function(dd){
+        const x=dd.data;
+        if(!x) return <div key={dd.date} style={{marginTop:"5px"}}>{dd.date}: لا توجد بيانات بعد</div>;
+        const roles=["teacher","student","anon"].filter(r=>x[r]);
+        return <div key={dd.date} style={{marginTop:"6px"}}>
+          <div><b>{dd.date}</b> — المجموع: <b>{x.total||0}</b></div>
+          {roles.map(function(r){
+            const R=x[r]||{}; const by=Object.entries(R.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,6);
+            return <div key={r} style={{marginRight:"8px",color:"#e5e7eb"}}>
+              {r==="teacher"?"المعلم":r==="student"?"الطلاب":"قبل الدخول"}: <b>{R.total||0}</b> قراءة · {R.sessions||0} جلسة
+              {by.map(b=><div key={b[0]} dir="ltr" style={{color:"#cbd5e1",marginRight:"10px"}}>{b[0]}: {b[1]}</div>)}
+            </div>;
+          })}
+          {x.versions&&<div style={{color:"#cbd5e1"}} dir="ltr">versions: {Object.entries(x.versions).map(v=>v[0]+"="+v[1]).join(" · ")}</div>}
+        </div>;
+      })}
+    </div>}
     {top.length>0&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}}><b>Top sources</b>{top.map(x=><div key={x[0]}>{x[0]}: <b>{x[1]}</b></div>)}</div>}
     {recent.length>0&&<div style={{marginTop:"7px",paddingTop:"6px",borderTop:"1px solid #374151"}}><b>Live events</b>{recent.map((x,i)=><div key={i} style={{color:"#d1d5db"}}>{new Date(x.t).toLocaleTimeString()} · {x.kind} · {x.source} · <b>+{x.count}</b></div>)}</div>}
   </div>;
@@ -1130,6 +1200,31 @@ function eqFollowupScopeMatch(row, teacherId, term, period, classId){
 }
 // V417: bounded Follow-up query cache; reuse period data across date navigation.
 const eqFollowupQueryCache=new Map();
+// V433/V435: Follow-up period data (dailyFollowup/referrals/homework) is persisted per browser for up to 30 days (manual sync button available).
+// Opening Follow-up or switching class/term/period used to re-read the whole period (class x school days) on every page load.
+// Only this teacher writes these collections and every local write patches the cache, so the persisted copy stays accurate.
+const EQ_FQ_PREFIX="eq_fq_v433|", EQ_FQ_TTL=30*24*3600*1000;
+const eqFqTimers=new Map();
+window.eqClearFollowupCache=function(){try{Object.keys(localStorage).filter(k=>k.indexOf(EQ_FQ_PREFIX)===0).forEach(k=>localStorage.removeItem(k));}catch(_e){} try{eqFollowupQueryCache.clear();}catch(_e){}};
+function eqFqLoad(key){
+  try{
+    const x=JSON.parse(localStorage.getItem(EQ_FQ_PREFIX+key)||"null");
+    if(x&&Array.isArray(x.rows)&&Date.now()-Number(x.at||0)<EQ_FQ_TTL) return x.rows;
+  }catch(_e){}
+  return null;
+}
+function eqFqSave(key,rows){
+  try{
+    clearTimeout(eqFqTimers.get(key));
+    eqFqTimers.set(key,setTimeout(function(){
+      // V435: compact copy (drop empty fields) so several classes fit in browser storage.
+      const slim=(rows||[]).map(function(r){const o={};Object.keys(r||{}).forEach(function(k){const v=r[k];if(v===""||v===null||v===undefined||(Array.isArray(v)&&!v.length))return;o[k]=v;});return o;});
+      const payload=JSON.stringify({at:Date.now(),rows:slim});
+      try{localStorage.setItem(EQ_FQ_PREFIX+key,payload);}
+      catch(e){ window.__EQ_FQ_QUOTA_FAIL=(window.__EQ_FQ_QUOTA_FAIL||0)+1; }
+    },1500));
+  }catch(_e){}
+}
 const eqFollowupQueryEpoch=new Map();
 function eqInvalidateFollowupQueryCache(col){
   if(!col || !String(col).startsWith("followup") && col!=="dailyFollowup") return;
@@ -1160,6 +1255,7 @@ function eqPatchFollowupQueryCache(col,type,id,data){
       }else if(idx>=0) rows.splice(idx,1);
     }
     eqFollowupQueryCache.set(key,{at:Date.now(),rows});
+    eqFqSave(key,rows);
   }
 }
 async function eqFollowupScopedRows(col,teacherId,term,period,classId){
@@ -1170,12 +1266,19 @@ async function eqFollowupScopedRows(col,teacherId,term,period,classId){
     try{window.__EQ_FOLLOWUP_CACHE_HITS=(window.__EQ_FOLLOWUP_CACHE_HITS||0)+1;}catch(_e){}
     return old.pending ? old.pending : old.rows.slice();
   }
+  const persisted=eqFqLoad(key);
+  if(persisted){
+    try{window.__eqReadDiag&&window.__eqReadDiag("cache:followup-v433:"+col,0);}catch(_e){}
+    eqFollowupQueryCache.set(key,{at:Date.now(),rows:persisted});
+    return persisted.slice();
+  }
   const epoch=eqFollowupQueryEpoch.get(key)||0;
   const pending=eqFollowupScopedRowsUncached(col,teacherId,term,period,classId);
   eqFollowupQueryCache.set(key,{at:Date.now(),pending});
   try{
     const rows=await pending;
     if(eqFollowupQueryCache.get(key)?.pending===pending && (eqFollowupQueryEpoch.get(key)||0)===epoch)eqFollowupQueryCache.set(key,{at:Date.now(),rows});
+    eqFqSave(key,rows);
     return rows.slice();
   }catch(e){
     if(eqFollowupQueryCache.get(key)?.pending===pending)eqFollowupQueryCache.delete(key);
@@ -10555,7 +10658,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
       </div>
     </Card>
     {msg&&<div style={{margin:"0 0 10px",fontSize:"12px",fontWeight:900,color:msg.startsWith("✅")?C.s:(msg.startsWith("⚠️")?C.d:C.mu)}}>{msg}</div>}
-    {classId!=="all"&&<div style={{margin:"0 0 10px",padding:"8px 10px",borderRadius:"10px",background:autosaveMsg.includes("⚠️")?"#fef2f2":(autosaveMsg.includes("🟡")?"#fffbeb":"#ecfdf5"),border:"1px solid "+(autosaveMsg.includes("⚠️")?"#fecaca":(autosaveMsg.includes("🟡")?"#fde68a":"#bbf7d0")),fontSize:"12px",fontWeight:900,color:autosaveMsg.includes("⚠️")?"#991b1b":(autosaveMsg.includes("🟡")?"#92400e":"#166534")}}>{autosaveMsg} <span style={{opacity:.85}}>— {date} · سجلات اليوم: {dayEntriesCount(date)}</span></div>}
+    {classId!=="all"&&<div style={{margin:"0 0 10px",padding:"8px 10px",borderRadius:"10px",background:autosaveMsg.includes("⚠️")?"#fef2f2":(autosaveMsg.includes("🟡")?"#fffbeb":"#ecfdf5"),border:"1px solid "+(autosaveMsg.includes("⚠️")?"#fecaca":(autosaveMsg.includes("🟡")?"#fde68a":"#bbf7d0")),fontSize:"12px",fontWeight:900,color:autosaveMsg.includes("⚠️")?"#991b1b":(autosaveMsg.includes("🟡")?"#92400e":"#166534")}}>{autosaveMsg} <span style={{opacity:.85}}>— {date} · سجلات اليوم: {dayEntriesCount(date)}</span> <button onClick={async function(){if(!window.confirm("مزامنة المتابعة من السحابة؟ ستُقرأ بيانات هذه الفترة مرة واحدة من جديد (تستهلك قراءات)."))return;try{window.eqClearFollowupCache&&window.eqClearFollowupCache();}catch(_e){} await loadFollowupDay();}} style={{marginRight:"8px",padding:"3px 8px",borderRadius:"6px",border:"1px solid #94a3b8",background:"#fff",color:"#334155",fontSize:"11px",fontWeight:800,cursor:"pointer"}}>🔄 مزامنة</button></div>}
     <Card style={{marginBottom:"12px"}}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:"8px",alignItems:"end"}}>
         <div><Label text="الفصل الدراسي"/><select value={term} onChange={e=>setTerm(e.target.value)} style={{width:"100%",padding:"9px",border:"1px solid "+C.br,borderRadius:"10px",background:"#fff"}}><option value="term1">الفصل الأول</option><option value="term2">الفصل الثاني</option><option value="term3">الفصل الثالث</option></select></div>
@@ -14558,7 +14661,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V432" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V435" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
