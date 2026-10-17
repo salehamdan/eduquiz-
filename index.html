@@ -1041,7 +1041,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V440", acc={total:0,by:{}};
+  const VER="V441", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1183,12 +1183,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V440</b>
+    <b>Firestore Diagnostics — V441</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"V440",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V441",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1330,7 +1330,8 @@ function eqFqLoad(key){
   }catch(_e){}
   return null;
 }
-function eqFqSave(key,rows){
+function eqFqLog(key,src,n){ try{ const L=window.__EQ_FQ_LOG||(window.__EQ_FQ_LOG=[]); L.push({t:Date.now(),key:key,src:src,rows:n}); if(L.length>40)L.shift(); }catch(_e){} }
+function eqFqSave(key,rows,immediate){
   try{
     clearTimeout(eqFqTimers.get(key));
     eqFqTimers.set(key,setTimeout(function(){
@@ -1338,8 +1339,8 @@ function eqFqSave(key,rows){
       const slim=(rows||[]).map(function(r){const o={};Object.keys(r||{}).forEach(function(k){const v=r[k];if(v===""||v===null||v===undefined||(Array.isArray(v)&&!v.length))return;o[k]=v;});return o;});
       const payload=JSON.stringify({at:Date.now(),rows:slim});
       try{localStorage.setItem(EQ_FQ_PREFIX+key,payload);}
-      catch(e){ window.__EQ_FQ_QUOTA_FAIL=(window.__EQ_FQ_QUOTA_FAIL||0)+1; }
-    },1500));
+      catch(e){ window.__EQ_FQ_QUOTA_FAIL=(window.__EQ_FQ_QUOTA_FAIL||0)+1; eqFqLog(key,"save-failed",slim.length); }
+    },immediate?0:1500));
   }catch(_e){}
 }
 const eqFollowupQueryEpoch=new Map();
@@ -1387,6 +1388,7 @@ async function eqFollowupScopedRows(col,teacherId,term,period,classId){
   if(persisted){
     try{window.__eqReadDiag&&window.__eqReadDiag("cache:followup-v433:"+col,0);}catch(_e){}
     eqFollowupQueryCache.set(key,{at:Date.now(),rows:persisted});
+    eqFqLog(key,"persisted-cache",persisted.length);
     return persisted.slice();
   }
   const epoch=eqFollowupQueryEpoch.get(key)||0;
@@ -1395,7 +1397,8 @@ async function eqFollowupScopedRows(col,teacherId,term,period,classId){
   try{
     const rows=await pending;
     if(eqFollowupQueryCache.get(key)?.pending===pending && (eqFollowupQueryEpoch.get(key)||0)===epoch)eqFollowupQueryCache.set(key,{at:Date.now(),rows});
-    eqFqSave(key,rows);
+    eqFqLog(key,"read-from-firebase",rows.length);
+    eqFqSave(key,rows,true);
     return rows.slice();
   }catch(e){
     if(eqFollowupQueryCache.get(key)?.pending===pending)eqFollowupQueryCache.delete(key);
@@ -1491,6 +1494,7 @@ async function fsSet(col, id, data) {
     catch(e){ console.warn("Firestore write failed", col, e && e.message); }
   }
   try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
+  if(ok) try{eqSyncTouch(col,id);}catch(_e){}
   if(ok) try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
@@ -1499,7 +1503,7 @@ async function fsSet(col, id, data) {
 }
 async function fsSetStrict(col, id, data) {
   if (!FIREBASE_OK) return fsSet(col,id,data);
-  try { await db.collection(col).doc(id).set(data, {merge:true}); try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){} try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){} try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){} }
+  try { await db.collection(col).doc(id).set(data, {merge:true}); try{eqSyncTouch(col,id);}catch(_e){} try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){} try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){} try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){} }
   catch(e){ console.error("Firestore strict write failed", col, id, e); throw e; }
 }
 async function fsDel(col, id) {
@@ -1513,6 +1517,7 @@ async function fsDel(col, id) {
     catch(e){ console.warn("Firestore delete failed", col, e && e.message); }
   }
   try{if(col==="users"||col==="classes"||col==="deletedStudents")window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
+  if(ok) try{eqSyncTouch(col,id);}catch(_e){}
   if(ok) try{eqPatchFollowupQueryCache(col,"delete",id,null);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"delete",id,null);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
@@ -1542,6 +1547,44 @@ function eqPersistFastSoon(){
       }catch(_e){}
     },1500);
   }catch(_e){}
+}
+// V441: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
+// which collection, which doc ids, from which device. Other teacher devices listen to that single doc and patch/invalidate only what changed.
+// This replaces short cache expiry times: caches live until the marker says something changed.
+const EQ_SYNC_EXCLUDE=new Set(["readStats","projectInbox","rpInbox","syncMarker","readingSubmissions"]);
+function eqDevId(){
+  try{ let d=localStorage.getItem("eq_dev_id_v441"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v441",d);} return d; }
+  catch(_e){ return "d_anon"; }
+}
+let __EQ_SYNC_PENDING={}, __EQ_SYNC_TIMER=null;
+function eqSyncTouch(col,id){
+  try{
+    if(!FIREBASE_OK||typeof db==="undefined"||!db||!db.collection) return;
+    col=String(col||""); if(!col||EQ_SYNC_EXCLUDE.has(col)) return;
+    const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
+    if(!sess||String(sess.role||"")!=="teacher"||!sess.id) return;
+    const p=__EQ_SYNC_PENDING[col]||(__EQ_SYNC_PENDING[col]={ids:[],bulk:false});
+    if(id===undefined||id===null||id==="") p.bulk=true;
+    else if(p.ids.length<20){ const k=String(id); if(p.ids.indexOf(k)<0) p.ids.push(k); }
+    else p.bulk=true;
+    if(!__EQ_SYNC_TIMER) __EQ_SYNC_TIMER=setTimeout(eqSyncFlush,2000);
+  }catch(_e){}
+}
+async function eqSyncFlush(){
+  __EQ_SYNC_TIMER=null;
+  const pend=__EQ_SYNC_PENDING; __EQ_SYNC_PENDING={};
+  try{
+    const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
+    if(!sess||!sess.id) return;
+    const names=Object.keys(pend); if(!names.length) return;
+    const now=new Date().toISOString(), dev=eqDevId(), inc=firebase.firestore.FieldValue.increment, cols={};
+    names.forEach(function(c){ cols[c]={n:inc(1),at:now,dev:dev,bulk:!!pend[c].bulk,ids:pend[c].bulk?[]:pend[c].ids}; });
+    await db.collection("syncMarker").doc(String(sess.id)).set({updatedAt:now,cols:cols},{merge:true});
+  }catch(e){ console.warn("V441 syncMarker write failed",e&&e.message); }
+}
+function eqFqDropCol(col){
+  try{ Object.keys(localStorage).filter(function(k){return k.indexOf(EQ_FQ_PREFIX+col+"|")===0;}).forEach(function(k){localStorage.removeItem(k);}); }catch(_e){}
+  try{ eqInvalidateFollowupQueryCache(col); }catch(_e){}
 }
 function eqLoadFastDataCache(){
   try{
@@ -1601,6 +1644,7 @@ async function loadLoginData(sessionHint) {
 }
 // V426 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
+// V441: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in V432).
 // V432: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
 // Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
 const EQ_ROSTER_CACHE_KEY="eq_roster_users_v432";
@@ -1608,7 +1652,7 @@ window.eqClearRosterCache=function(){try{localStorage.removeItem(EQ_ROSTER_CACHE
 async function eqUsersCached(){
   try{
     const x=JSON.parse(localStorage.getItem(EQ_ROSTER_CACHE_KEY)||"null");
-    if(x&&Array.isArray(x.rows)&&x.rows.length&&Date.now()-Number(x.at||0)<1200000){
+    if(x&&Array.isArray(x.rows)&&x.rows.length&&Date.now()-Number(x.at||0)<86400000){
       try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-users-v432",0);}catch(_e){}
       return x.rows;
     }
@@ -12393,7 +12437,7 @@ async function adminBatchDelete(col, rows, onProgress){
     const batch=db.batch();
     let chunkCount=0;
     slice.forEach(r=>{const id=r._id||r.id; if(id){ batch.delete(db.collection(col).doc(String(id))); chunkCount++; }});
-    if(chunkCount){ await batch.commit(); try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){} count+=chunkCount; if(onProgress) onProgress(chunkCount,col,count,rows.length); }
+    if(chunkCount){ await batch.commit(); try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){} try{eqSyncTouch(col,"");}catch(_e){} count+=chunkCount; if(onProgress) onProgress(chunkCount,col,count,rows.length); }
   }
   return count;
 }
@@ -12407,6 +12451,7 @@ async function adminBatchSet(col, rows){
     rows.slice(i,i+450).forEach(r=>{const id=r.id||r._id; if(id){ const clean=eqCleanFirestoreData({...r,id:String(id)}); delete clean._id; batch.set(db.collection(col).doc(String(id)),clean,{merge:false}); count++; }});
     await batch.commit();
     try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){}
+    try{eqSyncTouch(col,"");}catch(_e){}
   }
   return count;
 }
@@ -12440,6 +12485,7 @@ async function adminBatchSetMergeQuick(col, rows, timeoutMs){
       });
       await batch.commit();
       try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){}
+      try{eqSyncTouch(col,"");}catch(_e){}
     }
     return count;
   })();
@@ -14800,7 +14846,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V440" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V441" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16081,6 +16127,91 @@ function App() {
       },e=>console.warn("V417 RP inbox listener unavailable",e&&e.message));
     }catch(e){console.warn("V417 RP inbox listener failed",e&&e.message);}
     return ()=>{try{unsub&&unsub();}catch(_e){}};
+  },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
+
+  // V441: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
+  useEffect(()=>{
+    const rt=parkedTeacher||user;
+    if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
+    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v441|"+String(rt.id||"");
+    let unsub=null, chain=Promise.resolve();
+    const log=(m)=>{ try{ const L=window.__EQ_SYNC_LOG||(window.__EQ_SYNC_LOG=[]); L.push({t:new Date().toISOString(),m:m}); if(L.length>30)L.shift(); }catch(_e){} };
+    const loadSeen=()=>{ try{ return JSON.parse(localStorage.getItem(SEEN_KEY)||"null"); }catch(_e){ return null; } };
+    const saveSeen=(m)=>{ try{ localStorage.setItem(SEEN_KEY,JSON.stringify(m)); }catch(_e){} };
+    const ROSTER=new Set(["users","classes","deletedStudents","deletedClasses"]);
+    async function refreshRoster(){
+      try{
+        window.eqClearRosterCache&&window.eqClearRosterCache();
+        const cur=window.__EQ_CURRENT_DATA; if(!cur||!Array.isArray(cur.users)) return;
+        const next=await eqRefreshTeacherRosterOnly(cur);
+        setData(prev=>{ if(!prev) return prev; const n={...prev,users:next.users,classes:next.classes,firebaseUsers:next.firebaseUsers,firebaseClasses:next.firebaseClasses}; window.__EQ_CURRENT_DATA=n; try{eqPersistFastSoon();}catch(_e){} return n; });
+        log("roster refreshed");
+      }catch(e){ console.warn("V441 roster refresh failed",e&&e.message); }
+    }
+    async function patchIds(col,ids){
+      const isFq=(col==="dailyFollowup"||String(col).indexOf("followup")===0);
+      for(const id of ids){
+        try{
+          const d=await db.collection(col).doc(String(id)).get();
+          if(isFq){
+            if(d&&d.exists) eqPatchFollowupQueryCache(col,"upsert",String(id),{...d.data(),id:(d.data()&&d.data().id)||d.id});
+            else eqPatchFollowupQueryCache(col,"delete",String(id),null);
+          }else{
+            const rec=(d&&d.exists)?{...d.data(),id:d.id}:null;
+            setData(prev=>{
+              if(!prev||!Array.isArray(prev[col])) return prev;
+              let rows=prev[col].slice(); const i=rows.findIndex(r=>String(r&&(r.id||r._id)||"")===String(id));
+              if(!rec){ if(i>=0) rows.splice(i,1); else return prev; }
+              else if(i>=0) rows[i]={...rows[i],...rec}; else rows.push(rec);
+              const n={...prev,[col]:rows}; window.__EQ_CURRENT_DATA=n; return n;
+            });
+          }
+        }catch(e){ console.warn("V441 patch failed",col,id,e&&e.message); }
+      }
+      if(col==="readingTasks"){ try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){} }
+      if(!isFq){ try{ eqInvalidateDashboardHydrate(); eqPersistFastSoon(); }catch(_e){} }
+      log("patched "+col+" ×"+ids.length);
+    }
+    async function bulk(col){
+      if(String(col).indexOf("followup")===0||col==="dailyFollowup"){ eqFqDropCol(col); log("dropped followup cache "+col); return; }
+      if(ROSTER.has(col)) return; // handled once by refreshRoster
+      try{
+        window.__EQ_FORCE_HEAVY=true; eqInvalidateDashboardHydrate();
+        try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){}
+        await reload(); log("bulk reload for "+col);
+      }catch(e){ console.warn("V441 bulk reload failed",e&&e.message); }
+      finally{ window.__EQ_FORCE_HEAVY=false; }
+    }
+    async function apply(changed){
+      let rosterNeeded=false;
+      for(const ch of changed){
+        const isBulk=ch.bulk||ch.diff>1||!(ch.ids&&ch.ids.length);
+        if(ROSTER.has(ch.col)){ rosterNeeded=true; continue; }
+        if(isBulk) await bulk(ch.col); else await patchIds(ch.col,ch.ids);
+      }
+      if(rosterNeeded) await refreshRoster();
+    }
+    try{
+      unsub=db.collection("syncMarker").doc(String(rt.id||"")).onSnapshot({includeMetadataChanges:false},snap=>{
+        try{
+          if(!snap || (snap.metadata&&snap.metadata.hasPendingWrites)) return;
+          const cols=(snap.exists&&snap.data()&&snap.data().cols)||{};
+          const seen=loadSeen();
+          const nowSeen={}; Object.keys(cols).forEach(c=>{ nowSeen[c]=Number(cols[c]&&cols[c].n||0); });
+          if(!seen){ saveSeen(nowSeen); log("first run: baseline saved"); return; }
+          const changed=[];
+          Object.keys(cols).forEach(c=>{
+            const x=cols[c]||{}, n=Number(x.n||0), was=Number(seen[c]||0), diff=n-was;
+            if(diff>0 && !(diff===1 && String(x.dev||"")===myDev)) changed.push({col:c,diff:diff,bulk:!!x.bulk,ids:Array.isArray(x.ids)?x.ids:[]});
+          });
+          saveSeen({...seen,...nowSeen});
+          if(!changed.length) return;
+          log("remote change: "+changed.map(c=>c.col+"("+(c.bulk||c.diff>1?"bulk":c.ids.length)+")").join(","));
+          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("V441 apply failed",e&&e.message));
+        }catch(e){ console.warn("V441 sync snapshot failed",e&&e.message); }
+      },e=>console.warn("V441 syncMarker listener unavailable",e&&e.message));
+    }catch(e){ console.warn("V441 syncMarker listener failed",e&&e.message); }
+    return ()=>{ try{unsub&&unsub();}catch(_e){} };
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
   // V438: live project delivery. Student writes projectInbox/<teacherId>; teacher listens to that ONE doc
