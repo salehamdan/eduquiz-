@@ -1041,14 +1041,16 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V438", acc={total:0,by:{}};
-  let newSession=true, flushing=false, fails=0;
+  const VER="V439", acc={total:0,by:{}};
+  let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
     try{orig&&orig.apply(this,arguments);}catch(_e){}
     try{
       count=Math.max(0,Number(count)||0); if(!count) return;
       const col=String(label||"unknown").split("/")[0];
+      if(col==="readStats"){ window.__EQ_TOOL_READS=(window.__EQ_TOOL_READS||0)+count; return; }
+      if(!earlyTimer){ earlyTimer=setTimeout(flush,20000); }
       const key=(String(kind||"read")+"_"+col).replace(/[^A-Za-z0-9_-]/g,"_").slice(0,60);
       acc.total+=count; acc.by[key]=(acc.by[key]||0)+count;
     }catch(_e){}
@@ -1060,6 +1062,17 @@ window.__eqFsTraceAdd = function(kind,label,count){
   function role(){
     try{ const s=JSON.parse(localStorage.getItem("eq_session")||"null"); return s&&s.role==="teacher"?"teacher":(s&&s.role==="student"?"student":"anon"); }catch(_e){ return "anon"; }
   }
+  // V439: who is this device? (name + class only; used for the teacher-only diagnostics panel)
+  function who(){
+    try{
+      const s=JSON.parse(localStorage.getItem("eq_session")||"null")||{};
+      const id=String(s.id||s._id||s.studentId||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,40);
+      return {key:id||"anon", name:String(s.name||"").slice(0,40), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
+    }catch(_e){ return {key:"anon",name:"",cls:""}; }
+  }
+  function hourKey(){
+    try{ return "h"+new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Riyadh",hour:"2-digit",hour12:false}).format(new Date()).slice(0,2); }catch(_e){ return "h"+String(new Date().getHours()).padStart(2,"0"); }
+  }
   async function flush(){
     if(flushing||!acc.total||fails>=3||!(window.firebase&&firebase.firestore)) return;
     flushing=true;
@@ -1070,14 +1083,17 @@ window.__eqFsTraceAdd = function(kind,label,count){
       const upd={updatedAt:new Date().toISOString(), total:inc(snapTotal)};
       upd[r]={total:inc(snapTotal), sessions:inc(wasNew?1:0), by:by};
       upd.versions={}; upd.versions[VER+"_"+r]=inc(wasNew?1:0);
+      const w=who(); const ub={}; Object.keys(snapBy).forEach(k=>{ub[k]=inc(snapBy[k]);});
+      upd.users={}; upd.users[w.key]={name:w.name,cls:w.cls,role:r,last:new Date().toISOString(),total:inc(snapTotal),sessions:inc(wasNew?1:0),by:ub};
+      upd.hours={}; upd.hours[hourKey()]=inc(snapTotal);
       await db.collection("readStats").doc(window.__eqPtDate(0)).set(upd,{merge:true});
       acc.total-=snapTotal; Object.keys(snapBy).forEach(k=>{acc.by[k]=(acc.by[k]||0)-snapBy[k]; if(acc.by[k]<=0) delete acc.by[k];});
-      newSession=false; fails=0; window.__EQ_STATS_ERR="";
+      newSession=false; fails=0; window.__EQ_STATS_ERR=""; earlyTimer=null; if(acc.total>0) earlyTimer=setTimeout(flush,20000);
     }catch(e){ fails++; window.__EQ_STATS_ERR=String(e&&e.message||e).slice(0,160); }
     finally{ flushing=false; }
   }
   window.__eqFlushUsage=flush;
-  setInterval(flush,180000);
+  setInterval(flush,120000);
   document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") flush(); });
   window.addEventListener("pagehide",function(){ flush(); });
 })();
@@ -1154,6 +1170,7 @@ window.__eqReadDiag = function(source,count){
 function FirestoreReadBox(){
   const [tick,setTick]=useState(0);
   const [usage,setUsage]=useState(null);
+  const [consoleN,setConsoleN]=useState("");
   useEffect(()=>{
     const fn=()=>setTick(x=>x+1);
     window.addEventListener("eq-read-diag-update",fn);
@@ -1166,10 +1183,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V438</b>
+    <b>Firestore Diagnostics — V439</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
-      <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0,1]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع</button>
-      <button onClick={()=>{const report={version:"V436",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
+      <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
+      <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
+      <button onClick={()=>{const report={version:"V439",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1193,6 +1212,24 @@ function FirestoreReadBox(){
               {by.map(b=><div key={b[0]} dir="ltr" style={{color:"#cbd5e1",marginRight:"10px"}}>{b[0]}: {b[1]}</div>)}
             </div>;
           })}
+          {(function(){
+            const U=Object.entries(x.users||{}).map(function(e){return {k:e[0],...(e[1]||{})};}).sort((a,b)=>(b.total||0)-(a.total||0));
+            if(!U.length) return null;
+            const now=Date.now(), active=U.filter(u=>now-(Date.parse(u.last||"")||0)<300000).length;
+            const hrs=Object.entries(x.hours||{}).sort((a,b)=>a[0]<b[0]?-1:1);
+            const measured=Number(x.total||0), cn=Number(consoleN)||0;
+            return <div style={{marginTop:"5px",paddingTop:"5px",borderTop:"1px dashed #374151"}}>
+              <b>حسب المستخدم</b> ({U.length} جهاز/حساب · نشط آخر 5 دقائق: {active})
+              {U.slice(0,25).map(u=><div key={u.k} style={{color:"#e5e7eb"}}>{u.role==="teacher"?"👨‍🏫":"🎓"} {u.name||u.k}{u.cls?" · "+u.cls:""}: <b>{u.total||0}</b> · {u.sessions||0} جلسة · آخر نشاط {u.last?new Date(u.last).toLocaleTimeString("ar-SA",{hour:"2-digit",minute:"2-digit"}):"-"}</div>)}
+              {U.length>25&&<div style={{color:"#94a3b8"}}>… و{U.length-25} آخرين</div>}
+              {hrs.length>0&&<div style={{marginTop:"4px"}}><b>حسب الساعة (الرياض)</b><div dir="ltr" style={{color:"#cbd5e1"}}>{hrs.map(h=>h[0].slice(1)+":00="+h[1]).join(" · ")}</div></div>}
+              <div style={{marginTop:"4px",color:"#cbd5e1"}}>قراءات هذه اللوحة نفسها (على هذا الجهاز فقط، غير محسوبة أعلاه): {window.__EQ_TOOL_READS||0}</div>
+              <div style={{marginTop:"4px"}}>
+                <button onClick={()=>{const v=window.prompt("رقم القراءات اللي يظهر الآن في كونسول Firebase لهذا اليوم:",consoleN||"");if(v!==null)setConsoleN(String(v).replace(/[^0-9]/g,""));}} style={{padding:"3px 7px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>قارن مع كونسول Firebase</button>
+                {cn>0&&<div style={{color:"#fde68a"}}>كونسول: {cn} · مقاس داخل المنصة: {measured} · غير مرئي: {Math.max(0,cn-measured)} ({Math.round(Math.max(0,cn-measured)*100/cn)}%) — أجهزة قديمة، تصفح الكونسول، أو قراءات خارج المتصفح</div>}
+              </div>
+            </div>;
+          })()}
           {x.versions&&<div style={{color:"#cbd5e1"}} dir="ltr">versions: {Object.entries(x.versions).map(v=>v[0]+"="+v[1]).join(" · ")}</div>}
         </div>;
       })}
@@ -1274,6 +1311,17 @@ const eqFollowupQueryCache=new Map();
 // Only this teacher writes these collections and every local write patches the cache, so the persisted copy stays accurate.
 const EQ_FQ_PREFIX="eq_fq_v433|", EQ_FQ_TTL=30*24*3600*1000;
 const eqFqTimers=new Map();
+window.eqClearAllCaches=function(){
+  // V439: one switch that drops every local cache. Used after bulk admin writes (year reset, import, class/student delete).
+  try{window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
+  try{window.eqClearFollowupCache&&window.eqClearFollowupCache();}catch(_e){}
+  try{localStorage.removeItem("eq_rp_taskdefs_v432");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;}catch(_e){}
+  try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
+  try{eqInvalidateDashboardHydrate();}catch(_e){}
+  try{window.__EQ_RP_HISTORY_V429={};}catch(_e){}
+  try{window.__EQ_RP_TEACHER_CACHE&&window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
+  try{window.__EQ_RT_TEACHER_CACHE&&window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
+};
 window.eqClearFollowupCache=function(){try{Object.keys(localStorage).filter(k=>k.indexOf(EQ_FQ_PREFIX)===0).forEach(k=>localStorage.removeItem(k));}catch(_e){} try{eqFollowupQueryCache.clear();}catch(_e){}};
 function eqFqLoad(key){
   try{
@@ -12327,7 +12375,7 @@ async function adminBatchDelete(col, rows, onProgress){
     const batch=db.batch();
     let chunkCount=0;
     slice.forEach(r=>{const id=r._id||r.id; if(id){ batch.delete(db.collection(col).doc(String(id))); chunkCount++; }});
-    if(chunkCount){ await batch.commit(); count+=chunkCount; if(onProgress) onProgress(chunkCount,col,count,rows.length); }
+    if(chunkCount){ await batch.commit(); try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){} count+=chunkCount; if(onProgress) onProgress(chunkCount,col,count,rows.length); }
   }
   return count;
 }
@@ -12340,6 +12388,7 @@ async function adminBatchSet(col, rows){
     const batch=db.batch();
     rows.slice(i,i+450).forEach(r=>{const id=r.id||r._id; if(id){ const clean=eqCleanFirestoreData({...r,id:String(id)}); delete clean._id; batch.set(db.collection(col).doc(String(id)),clean,{merge:false}); count++; }});
     await batch.commit();
+    try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){}
   }
   return count;
 }
@@ -12372,6 +12421,7 @@ async function adminBatchSetMergeQuick(col, rows, timeoutMs){
         if(id){ const clean=eqCleanFirestoreData({...r,id:id}); delete clean._id; batch.set(db.collection(col).doc(id), clean, {merge:true}); count++; }
       });
       await batch.commit();
+      try{window.eqClearAllCaches&&window.eqClearAllCaches();}catch(_e){}
     }
     return count;
   })();
@@ -14732,7 +14782,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V436" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V439" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
