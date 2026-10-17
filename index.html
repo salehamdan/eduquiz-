@@ -1041,7 +1041,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V436", acc={total:0,by:{}};
+  const VER="V438", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1166,7 +1166,7 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V436</b>
+    <b>Firestore Diagnostics — V438</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0,1]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع</button>
       <button onClick={()=>{const report={version:"V436",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
@@ -1227,6 +1227,11 @@ async function fsAll(col) {
   const studentFirewallRows=eqStudentReadFirewallRows(col);
   if(studentFirewallRows!==null) return studentFirewallRows;
   if (!FIREBASE_OK) return local();
+  // V437: concurrent identical full reads of users/classes share ONE in-flight request (no staleness: released when it finishes).
+  const __dedupe=(col==="users"||col==="classes");
+  window.__EQ_FSALL_INFLIGHT=window.__EQ_FSALL_INFLIGHT||{};
+  if(__dedupe && window.__EQ_FSALL_INFLIGHT[col]) return window.__EQ_FSALL_INFLIGHT[col].then(r=>r.map(x=>({...x})));
+  const __run=(async()=>{
   try {
     const snap = await db.collection(col).get();
     try{window.__eqReadDiag&&window.__eqReadDiag("get:"+col,snap.size||snap.docs.length||0);}catch(_e){}
@@ -1235,6 +1240,9 @@ async function fsAll(col) {
     console.warn("Firestore read failed", col, e && e.message);
     return local();
   }
+  })();
+  if(__dedupe){ window.__EQ_FSALL_INFLIGHT[col]=__run; const rel=()=>{ if(window.__EQ_FSALL_INFLIGHT[col]===__run) delete window.__EQ_FSALL_INFLIGHT[col]; }; __run.then(rel,rel); }
+  return __run;
 }
 async function fsGetDoc(col, id) {
   const local = () => { try { return (JSON.parse(localStorage.getItem("eq_"+col) || "[]")||[]).find(x=>String(x.id||x._id||"")===String(id)) || null; } catch(e){ return null; } };
@@ -6761,6 +6769,8 @@ function StudentProjects({user,data,reload}){
         if(fileMeta&&fileMeta.url){try{await projectDeleteStoredFile({fileUrl:fileMeta.url,filePath:fileMeta.path});}catch(_e){}}
         throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
       }
+      // V438: tell the teacher live via ONE inbox doc (same pattern as rpInbox). Failure never affects the submission.
+      try{ if(FIREBASE_OK&&db&&db.collection&&p.teacherId) await db.collection("projectInbox").doc(String(p.teacherId)).set({submissionId:String(id),projectId:String(p.id||""),studentId:String(user.id||""),updatedAt:new Date().toISOString()},{merge:true}); }catch(e){console.warn("V438 projectInbox write failed",e&&e.message);}
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       submissionSaved=true;
@@ -16002,6 +16012,43 @@ function App() {
         }catch(e){console.warn("V417 RP inbox submission fetch failed",e&&e.message);}
       },e=>console.warn("V417 RP inbox listener unavailable",e&&e.message));
     }catch(e){console.warn("V417 RP inbox listener failed",e&&e.message);}
+    return ()=>{try{unsub&&unsub();}catch(_e){}};
+  },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
+
+  // V438: live project delivery. Student writes projectInbox/<teacherId>; teacher listens to that ONE doc
+  // and fetches only the exact new submission (1 read) instead of a full 1,200-read reload.
+  useEffect(()=>{
+    const rt=parkedTeacher||user;
+    if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
+    let unsub=null, first=true, lastId="";
+    try{
+      unsub=db.collection("projectInbox").doc(String(rt.id||"")).onSnapshot(async snap=>{
+        if(!snap || !snap.exists){ first=false; return; }
+        const box=snap.data?(snap.data()||{}):{};
+        const sid=String(box.submissionId||"");
+        const ms=Date.parse(box.updatedAt||"")||0;
+        if(first){ first=false; if(!sid||!ms||Date.now()-ms>120000){ lastId=sid; return; } }
+        if(!sid||sid===lastId) return;
+        lastId=sid;
+        try{
+          const doc=await db.collection("projectSubmissions").doc(sid).get();
+          if(!doc||!doc.exists) return;
+          const rec={id:doc.id,...(doc.data?doc.data():{})};
+          if(String(rec.teacherId||"")!==String(rt.id||"") || String(rec.source||"")==="project_file_chunk") return;
+          setData(prev=>{
+            if(!prev) return prev;
+            const rows=Array.isArray(prev.projectSubmissions)?prev.projectSubmissions.slice():[];
+            const i=rows.findIndex(r=>String(r&&(r.id||r._id)||"")===String(rec.id));
+            if(i>=0) rows[i]={...rows[i],...rec}; else rows.push(rec);
+            const next={...prev,projectSubmissions:rows};
+            window.__EQ_CURRENT_DATA=next;
+            try{eqSaveFastDataCache(next);}catch(_e){}
+            return next;
+          });
+          try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
+        }catch(e){console.warn("V438 project inbox fetch failed",e&&e.message);}
+      },e=>console.warn("V438 project inbox listener unavailable",e&&e.message));
+    }catch(e){console.warn("V438 project inbox listener failed",e&&e.message);}
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
