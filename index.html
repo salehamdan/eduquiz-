@@ -925,7 +925,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     const key=String(kind||"read")+":"+String(label||"unknown");
     T.by[key]=(T.by[key]||0)+count;
     const ev={t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count};
-    // V443: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
+    // V444: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
     if(count>=20){ try{ ev.by=String(new Error().stack||"").split("\n").slice(2,9).map(function(l){var m=l.match(/at\s+(?:async\s+)?([^\s(]+)/);return m?m[1]:"";}).filter(function(n){return n&&!/eqFsTraceAdd|patch|labelOf|Object\.|Array\./.test(n);}).slice(0,4).join(" < "); }catch(_e){} }
     T.events.push(ev);
     if(T.events.length>300)T.events.splice(0,T.events.length-300);
@@ -1045,7 +1045,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V443", acc={total:0,by:{}};
+  const VER="V444", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1188,12 +1188,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V443</b>
+    <b>Firestore Diagnostics — V444</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"V443",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V444",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1599,7 +1599,7 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
-// V443: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
+// V444: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
 async function eqStudentLiteData(sidRaw, extra){
   extra=extra||{};
   const entered=String(sidRaw||"").trim().replace(/\s/g,"");
@@ -4062,7 +4062,7 @@ function eqBalancedAnswerTargets(n){
 function eqRebalanceGeneratedMCQ(questions, sourceType, expectedOptions){
   const qs=(questions||[]).map(q=>({...q,options:(q.options||[]).slice()}));
   // Preserve teacher-authored/extracted option order and True/False conventions.
-  if(Number(expectedOptions)!==4 || sourceType==="extract" || sourceType==="image") return qs;
+  if(Number(expectedOptions)!==4) return qs;
   const targets=eqBalancedAnswerTargets(qs.length);
   return qs.map((q,i)=>{
     if(!Array.isArray(q.options)||q.options.length!==4||typeof q.correct!=="number"||q.correct<0||q.correct>3) return q;
@@ -4219,7 +4219,7 @@ QUESTION RULES:
 - Create exactly ${count} questions.
 - Every question must have exactly 4 options with ONE correct answer.
 - If True/False is selected, write it as a four-option recognition question such as "Which statement is true?" or "Which statement is false?" so the platform still has A/B/C/D.
-- Vary the correct answer position across questions.
+- IMPORTANT: Vary the correct answer position across questions. Spread A, B, C, and D evenly. Do not put all correct answers in B or C.
 - Avoid repeated questions and repeated options.
 - Each answer must be supported by the passage.
 
@@ -4331,7 +4331,7 @@ QUESTION REQUIREMENTS:
 - Easy: mostly direct detail questions.
 - Intermediate: direct detail + sequence + simple inference.
 - Advanced: detail + inference + implied meaning + distractor options.
-- Vary the correct answer position across questions.
+- IMPORTANT: Vary the correct answer position across questions. Spread A, B, C, and D evenly. Do not put all correct answers in B or C.
 
 Return ONLY valid JSON (no markdown, no explanation) in this EXACT format:
 {"script":"the full listening script text here","questions":[{"text":"question here","options":["option A","option B","option C","option D"],"correct":0,"skill":"Listening Comprehension","difficulty":"${difficulty}"}]}`;
@@ -11674,6 +11674,7 @@ Return ONLY valid JSON (no markdown):
   if(s>=0&&e>s) txt=txt.slice(s,e+1);
   let parsed = JSON.parse(txt);
   if(!parsed.passage||!parsed.questions||parsed.questions.length<3) throw new Error("Invalid AI response");
+  parsed.questions = eqRebalanceGeneratedMCQ(parsed.questions, "topic", 4);
   return parsed;
 }
 
@@ -14896,7 +14897,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V443" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V444" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
