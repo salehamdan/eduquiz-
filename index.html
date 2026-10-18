@@ -1746,7 +1746,7 @@ async function eqQueryTeacherRows(col, teacherId){
     return (rows||[]).filter(x=>String(x&&x.teacherId||"")===String(teacherId));
   }
   try{
-    let q = db.collection(col).where("teacherId","==",String(teacherId)); if (col === "projectSubmissions" || col === "responses") { q = q.limit(150); } const snap=await q.get();
+    let q = db.collection(col).where("teacherId","==",String(teacherId)); if (col === "projectSubmissions" || col === "responses") { q = q.limit(30); } const snap=await q.get();
     try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":teacherId",Math.max(1,Number(snap.size||0)));}catch(_e){}
     return snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
   }catch(e){
@@ -1767,7 +1767,7 @@ async function eqQueryResponsesForQuizIds(quizIds){
   for(let i=0;i<ids.length;i+=10){
     const chunk=ids.slice(i,i+10);
     try{
-      const snap=await db.collection("responses").where("quizId","in",chunk).get();
+      const snap=await db.collection("responses").where("quizId","in",chunk).limit(30).get();
       try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(doc=>{const x=doc.data()||{};out.set(String(doc.id),{...x,id:x.id||doc.id,_id:doc.id});});
     }catch(e){
