@@ -925,7 +925,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     const key=String(kind||"read")+":"+String(label||"unknown");
     T.by[key]=(T.by[key]||0)+count;
     const ev={t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count};
-    // V467: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
+    // V472: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
     if(count>=20){ try{ ev.by=String(new Error().stack||"").split("\n").slice(2,9).map(function(l){var m=l.match(/at\s+(?:async\s+)?([^\s(]+)/);return m?m[1]:"";}).filter(function(n){return n&&!/eqFsTraceAdd|patch|labelOf|Object\.|Array\./.test(n);}).slice(0,4).join(" < "); }catch(_e){} }
     T.events.push(ev);
     if(T.events.length>300)T.events.splice(0,T.events.length-300);
@@ -1045,7 +1045,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V467", acc={total:0,by:{}};
+  const VER="V472", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1071,7 +1071,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     try{
       const s=JSON.parse(localStorage.getItem("eq_session")||"null")||{};
       const id=String(s.id||s._id||s.studentId||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,40);
-      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v467")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v467",dv); } }catch(_e){}
+      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v472")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v472",dv); } }catch(_e){}
       return {key:id||("anon_"+(dv||"x")), name:String(s.name||"").slice(0,40)||(id?"":"قبل الدخول"), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
     }catch(_e){ return {key:"anon",name:"قبل الدخول",cls:""}; }
   }
@@ -1188,12 +1188,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V467</b>
+    <b>Firestore Diagnostics — V472</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"V467",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V472",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1537,7 +1537,7 @@ const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_log
 function eqSaveFastDataCache(d){
   try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){}
 }
-// V467: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
+// V472: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
 let __EQ_PERSIST_TIMER=null;
 function eqPersistFastSoon(){
@@ -1554,12 +1554,12 @@ function eqPersistFastSoon(){
     },1500);
   }catch(_e){}
 }
-// V467: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
+// V472: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
 // which collection, which doc ids, from which device. Other teacher devices listen to that single doc and patch/invalidate only what changed.
 // This replaces short cache expiry times: caches live until the marker says something changed.
 const EQ_SYNC_EXCLUDE=new Set(["readStats","projectInbox","rpInbox","syncMarker","readingSubmissions","projectSubmissions"]);
 function eqDevId(){
-  try{ let d=localStorage.getItem("eq_dev_id_v467"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v467",d);} return d; }
+  try{ let d=localStorage.getItem("eq_dev_id_v472"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v472",d);} return d; }
   catch(_e){ return "d_anon"; }
 }
 let __EQ_SYNC_PENDING={}, __EQ_SYNC_TIMER=null;
@@ -1586,7 +1586,7 @@ async function eqSyncFlush(){
     const now=new Date().toISOString(), dev=eqDevId(), inc=firebase.firestore.FieldValue.increment, cols={};
     names.forEach(function(c){ cols[c]={n:inc(1),at:now,dev:dev,bulk:!!pend[c].bulk,ids:pend[c].bulk?[]:pend[c].ids}; });
     await db.collection("syncMarker").doc(String(sess.id)).set({updatedAt:now,cols:cols},{merge:true});
-  }catch(e){ console.warn("V467 syncMarker write failed",e&&e.message); }
+  }catch(e){ console.warn("V472 syncMarker write failed",e&&e.message); }
 }
 function eqFqDropCol(col){
   try{ Object.keys(localStorage).filter(function(k){return k.indexOf(EQ_FQ_PREFIX+col+"|")===0;}).forEach(function(k){localStorage.removeItem(k);}); }catch(_e){}
@@ -1600,7 +1600,7 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
-// V467: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
+// V472: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
 async function eqStudentLiteData(sidRaw, extra){
   extra=extra||{};
   const entered=String(sidRaw||"").trim().replace(/\s/g,"");
@@ -1696,7 +1696,7 @@ async function loadLoginData(sessionHint) {
 }
 // V426 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
-// V467: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in V432).
+// V472: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in V432).
 // V432: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
 // Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
 const EQ_ROSTER_CACHE_KEY="eq_roster_users_v432";
@@ -11733,12 +11733,41 @@ function rtLevelChangeForAttempt(previous,attempt){
   return after.id!==before.id?{before,after}:null;
 }
 
-async function generateReadingTheorySession(apiKey, level, topic) {
-  const prompt = `Create an English reading comprehension exercise for EFL students.
-Level: ${level.name} (about ${level.words} words).
+async function generateReadingTheorySession(apiKey, level, topic, totalKp) {
+  let targetWords = level.words;
+  if (level.id === 5) {
+    if (totalKp < 400) targetWords = 250;
+    else if (totalKp < 850) targetWords = 350;
+    else targetWords = 450;
+  }
+
+  const patterns = [
+    "1. Main Idea, 2. Detail, 3. Vocabulary, 4. Inference, 5. Tone",
+    "1. Author's Purpose, 2. Detail, 3. Vocabulary, 4. Cause & Effect, 5. Inference",
+    "1. Detail, 2. Vocabulary, 3. Inference, 4. Sequencing, 5. Detail",
+    "1. Summary, 2. Detail, 3. Vocabulary, 4. Inference, 5. Fact vs Opinion"
+  ];
+  const selectedPattern = patterns[Math.floor(Math.random() * patterns.length)];
+
+  const prompt = `You are a Senior Reading Comprehension Expert (Cambridge/IELTS).
+Create an English reading comprehension exercise for EFL students.
+Level: ${level.name} (about ${targetWords} words).
 Topic: ${topic}.
 
-Write a reading passage of exactly about ${level.words} words. Then create exactly 5 multiple-choice comprehension questions. Each question has 4 options (A,B,C,D) with ONE correct answer. Mix question types: Main Idea, Detail, Inference, Vocabulary, Cause & Effect.
+Write a reading passage of exactly about ${targetWords} words. Then create exactly 5 multiple-choice comprehension questions.
+
+CRITICAL RULE FOR QUESTION ORDER AND TYPES:
+You MUST follow this exact sequence of question types:
+[ ${selectedPattern} ]
+
+CRITICAL EXPERT RULES FOR DISTRACTORS:
+1. Main Idea / Summary / Author's Purpose: Correct option covers the whole text. Distractors must be true statements that only cover ONE paragraph, or are too broad, or use text words but misrepresent the focus.
+2. Detail: Correct option is exactly what the text says (Paraphrased for Advanced). Distractors must be true facts from OTHER parts of the text, or swapped cause/effect.
+3. Vocabulary: Correct is exact meaning in context. Distractors MUST NOT BE DERIVATIONS. Distractors must be: (A) Valid dictionary meaning that doesn't fit context, (B) Synonym of an adjacent word in the sentence, (C) Different intensity/nuance.
+4. Inference (Level 4+ only): Correct is supported by text. Distractors must be real-world assumptions NOT in text (Not Given), or extreme overstatements (All, Never).
+5. Tone / Fact vs Opinion: Correct reflects the author. Distractors are wrong tones or opinions not stated.
+
+${level.id <= 2 ? "Keep language simple and literal. NO Inference or Tone questions." : "Ensure distractors are highly challenging and require deep analysis."}
 
 Return ONLY valid JSON (no markdown):
 {"topic":"${topic}","level":"${level.name}","passage":"full passage text","questions":[{"text":"question","options":["A","B","C","D"],"correct":0}]}
@@ -12177,7 +12206,7 @@ function ReadingTheoryStudent({user,data,reload}){
     if(!key){setErrMsg("No AI key. Ask your teacher to set it in Settings ⚙️.");setPhase("list");return;}
     const topic=RT_TOPICS[Math.floor(Math.random()*RT_TOPICS.length)];
     try{
-      const sess=await generateReadingTheorySession(key,adaptLevel,topic);
+      const sess=await generateReadingTheorySession(key,adaptLevel,topic, totalKp);
       sess.questions=sess.questions.slice(0,5).map((q,i)=>({...q,id:i+1}));
       sess.levelId=adaptLevel.id;
       setSession(sess);setAnswers({});setResult(null);readingStartedAtRef.current=Date.now();setPhase("reading");
@@ -14981,7 +15010,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V467" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V472" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16146,7 +16175,7 @@ function App() {
       const now=Date.now(); if(busy || now-last<45000) return; last=now;
       busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
-    const onVis=()=>{ /* V467: Disabled background reload to save Firebase reads */ };
+    const onVis=()=>{ /* V472: Disabled background reload to save Firebase reads */ };
     // V378: do not reload all Firestore collections on browser focus/visibility.
     // Realtime listeners and explicit actions keep live data current without a 16-collection reload.
     return ()=>{};
@@ -16264,11 +16293,11 @@ function App() {
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
-  // V467: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
+  // V472: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
   useEffect(()=>{
     const rt=parkedTeacher||user;
     if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v467|"+String(rt.id||"");
+    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v472|"+String(rt.id||"");
     let unsub=null, chain=Promise.resolve();
     const log=(m)=>{ try{ const L=window.__EQ_SYNC_LOG||(window.__EQ_SYNC_LOG=[]); L.push({t:new Date().toISOString(),m:m}); if(L.length>30)L.shift(); }catch(_e){} };
     const loadSeen=()=>{ try{ return JSON.parse(localStorage.getItem(SEEN_KEY)||"null"); }catch(_e){ return null; } };
@@ -16281,7 +16310,7 @@ function App() {
         const next=await eqRefreshTeacherRosterOnly(cur);
         setData(prev=>{ if(!prev) return prev; const n={...prev,users:next.users,classes:next.classes,firebaseUsers:next.firebaseUsers,firebaseClasses:next.firebaseClasses}; window.__EQ_CURRENT_DATA=n; try{eqPersistFastSoon();}catch(_e){} return n; });
         log("roster refreshed");
-      }catch(e){ console.warn("V467 roster refresh failed",e&&e.message); }
+      }catch(e){ console.warn("V472 roster refresh failed",e&&e.message); }
     }
     async function patchIds(col,ids){
       const isFq=(col==="dailyFollowup"||String(col).indexOf("followup")===0);
@@ -16301,7 +16330,7 @@ function App() {
               const n={...prev,[col]:rows}; window.__EQ_CURRENT_DATA=n; return n;
             });
           }
-        }catch(e){ console.warn("V467 patch failed",col,id,e&&e.message); }
+        }catch(e){ console.warn("V472 patch failed",col,id,e&&e.message); }
       }
       if(col==="readingTasks"){ try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){} }
       if(!isFq){ try{ eqInvalidateDashboardHydrate(); eqPersistFastSoon(); }catch(_e){} }
@@ -16314,7 +16343,7 @@ function App() {
         eqInvalidateDashboardHydrate();
         try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){}
         await reload(); log("bulk reload for "+col);
-      }catch(e){ console.warn("V467 bulk reload failed",e&&e.message); }
+      }catch(e){ console.warn("V472 bulk reload failed",e&&e.message); }
       
     }
     async function apply(changed){
@@ -16342,10 +16371,10 @@ function App() {
           saveSeen({...seen,...nowSeen});
           if(!changed.length) return;
           log("remote change: "+changed.map(c=>c.col+"("+(c.bulk||c.diff>1?"bulk":c.ids.length)+")").join(","));
-          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("V467 apply failed",e&&e.message));
-        }catch(e){ console.warn("V467 sync snapshot failed",e&&e.message); }
-      },e=>console.warn("V467 syncMarker listener unavailable",e&&e.message));
-    }catch(e){ console.warn("V467 syncMarker listener failed",e&&e.message); }
+          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("V472 apply failed",e&&e.message));
+        }catch(e){ console.warn("V472 sync snapshot failed",e&&e.message); }
+      },e=>console.warn("V472 syncMarker listener unavailable",e&&e.message));
+    }catch(e){ console.warn("V472 syncMarker listener failed",e&&e.message); }
     return ()=>{ try{unsub&&unsub();}catch(_e){} };
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
