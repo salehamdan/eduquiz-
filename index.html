@@ -925,7 +925,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     const key=String(kind||"read")+":"+String(label||"unknown");
     T.by[key]=(T.by[key]||0)+count;
     const ev={t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count};
-    // V452: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
+    // V454: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
     if(count>=20){ try{ ev.by=String(new Error().stack||"").split("\n").slice(2,9).map(function(l){var m=l.match(/at\s+(?:async\s+)?([^\s(]+)/);return m?m[1]:"";}).filter(function(n){return n&&!/eqFsTraceAdd|patch|labelOf|Object\.|Array\./.test(n);}).slice(0,4).join(" < "); }catch(_e){} }
     T.events.push(ev);
     if(T.events.length>300)T.events.splice(0,T.events.length-300);
@@ -1045,7 +1045,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="V452", acc={total:0,by:{}};
+  const VER="V454", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1071,7 +1071,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     try{
       const s=JSON.parse(localStorage.getItem("eq_session")||"null")||{};
       const id=String(s.id||s._id||s.studentId||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,40);
-      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v452")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v452",dv); } }catch(_e){}
+      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v454")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v454",dv); } }catch(_e){}
       return {key:id||("anon_"+(dv||"x")), name:String(s.name||"").slice(0,40)||(id?"":"قبل الدخول"), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
     }catch(_e){ return {key:"anon",name:"قبل الدخول",cls:""}; }
   }
@@ -1188,12 +1188,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — V452</b>
+    <b>Firestore Diagnostics — V454</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"V452",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"V454",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1537,7 +1537,7 @@ const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_log
 function eqSaveFastDataCache(d){
   try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){}
 }
-// V452: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
+// V454: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
 let __EQ_PERSIST_TIMER=null;
 function eqPersistFastSoon(){
@@ -1554,12 +1554,12 @@ function eqPersistFastSoon(){
     },1500);
   }catch(_e){}
 }
-// V452: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
+// V454: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
 // which collection, which doc ids, from which device. Other teacher devices listen to that single doc and patch/invalidate only what changed.
 // This replaces short cache expiry times: caches live until the marker says something changed.
 const EQ_SYNC_EXCLUDE=new Set(["readStats","projectInbox","rpInbox","syncMarker","readingSubmissions","projectSubmissions"]);
 function eqDevId(){
-  try{ let d=localStorage.getItem("eq_dev_id_v452"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v452",d);} return d; }
+  try{ let d=localStorage.getItem("eq_dev_id_v454"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v454",d);} return d; }
   catch(_e){ return "d_anon"; }
 }
 let __EQ_SYNC_PENDING={}, __EQ_SYNC_TIMER=null;
@@ -1586,7 +1586,7 @@ async function eqSyncFlush(){
     const now=new Date().toISOString(), dev=eqDevId(), inc=firebase.firestore.FieldValue.increment, cols={};
     names.forEach(function(c){ cols[c]={n:inc(1),at:now,dev:dev,bulk:!!pend[c].bulk,ids:pend[c].bulk?[]:pend[c].ids}; });
     await db.collection("syncMarker").doc(String(sess.id)).set({updatedAt:now,cols:cols},{merge:true});
-  }catch(e){ console.warn("V452 syncMarker write failed",e&&e.message); }
+  }catch(e){ console.warn("V454 syncMarker write failed",e&&e.message); }
 }
 function eqFqDropCol(col){
   try{ Object.keys(localStorage).filter(function(k){return k.indexOf(EQ_FQ_PREFIX+col+"|")===0;}).forEach(function(k){localStorage.removeItem(k);}); }catch(_e){}
@@ -1600,7 +1600,7 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
-// V452: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
+// V454: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
 async function eqStudentLiteData(sidRaw, extra){
   extra=extra||{};
   const entered=String(sidRaw||"").trim().replace(/\s/g,"");
@@ -1696,7 +1696,7 @@ async function loadLoginData(sessionHint) {
 }
 // V426 ROSTER RESTORE: keep V423 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
-// V452: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in V432).
+// V454: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in V432).
 // V432: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
 // Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
 const EQ_ROSTER_CACHE_KEY="eq_roster_users_v432";
@@ -7068,19 +7068,32 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",marginBottom:"8px"}}>Project List</strong>
     {projects.length===0?<Card><p style={{textAlign:"center",color:C.mu,fontFamily:F,padding:"14px"}}>No projects yet.</p></Card>:projects.map(p=>{const targets=projectTargetStudents(p,myStudents);const ps=subs.filter(s=>s.projectId===p.id);const status=projectDateStatus(p);const assignedCount=targets.filter(st=>projectTopicForStudent(p,st)).length;const bank=projectTopicBank(data);return <Card key={p.id} style={{marginBottom:"8px"}}><div style={{display:"flex",gap:"8px",alignItems:"flex-start"}}><div style={{fontSize:"22px"}}>🧩</div><div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"900",color:C.tx,fontFamily:F}}>{p.title}</div><div style={{fontSize:"10px",color:C.mu,fontFamily:F}}>{p.type} · {projectTermArabic(p.term)} · {projectPeriodArabic(p.assessmentPeriod)} · {targets.length} students · {p.startDate||"—"} → {p.endDate||"—"} · {status}</div><div style={{fontSize:"10px",fontWeight:"800",color:C.p,fontFamily:F}}>Topics {assignedCount}/{targets.length} · Submitted {ps.length} · Approved {ps.filter(x=>x.status==="approved").length}</div></div><div style={{display:"flex",gap:"5px",flexWrap:"wrap",justifyContent:"flex-end"}}><Btn size="sm" color={C.s} onClick={()=>assignTopicsRandomly(p)}>🎲 Assign Topics</Btn><Btn size="sm" color={C.pu} onClick={()=>{setEditProject(p);setScreen("edit");}}>Edit</Btn><Btn size="sm" color={C.d} onClick={()=>delProject(p)}>Delete</Btn></div></div>{targets.length>0&&<details style={{marginTop:"8px",borderTop:"1px solid "+C.br,paddingTop:"7px"}}><summary style={{cursor:"pointer",fontSize:"11px",fontWeight:900,color:C.p,fontFamily:F}}>Student Topics — view / change individually</summary><div style={{display:"grid",gap:"5px",marginTop:"7px",maxHeight:"300px",overflowY:"auto"}}>{targets.slice().sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""))).map(st=>{const t=projectTopicForStudent(p,st);const cls=data.classes.find(c=>sameClassId(c.id,st.classId));return <div key={projectStudentKey(st)} style={{display:"grid",gridTemplateColumns:"minmax(110px,1fr) minmax(130px,2fr) 32px",gap:"6px",alignItems:"center",fontSize:"11px"}}><div><b>{st.name}</b><span style={{color:C.mu}}> · {cls?cls.name:""}</span></div><select value={t?t.id:""} onChange={e=>setStudentTopic(p,st,e.target.value)} style={{padding:"7px",border:"1px solid "+C.br,borderRadius:"7px",fontSize:"10px",fontFamily:F}}><option value="">Not assigned</option>{bank.map(x=><option key={x.id} value={x.id}>U{x.unit} · {x.title}</option>)}</select><button onClick={()=>randomizeStudentTopic(p,st)} title="Random topic for this student" style={{border:"1px solid "+C.br,borderRadius:"7px",padding:"6px",cursor:"pointer",background:"#eff6ff"}}>🎲</button></div>})}</div></details>}</Card>})}
     <strong style={{fontSize:"13px",color:C.tx,fontFamily:F,display:"block",margin:"12px 0 8px"}}>Submissions</strong>
-    {(()=>{
-            const needsFix = visibleSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected"||s.status==="resubmit_allowed");
-            const done = visibleSubs.filter(s=>s.status==="approved");
-            const missingList = [];
-            followupProjects.forEach(p=>{projectTargetStudents(p,myStudents).forEach(st=>{if(!projectSubmissionsForStudent(subs,p.id,st).length) missingList.push({p,st});})});
-            const renderSection = (title, color, bg, items, isMissing) => <details style={{background:bg,border:"1px solid "+color,borderRadius:"12px",padding:"10px",marginBottom:"10px"}} open><summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:color}}>{title} ({items.length}) ▼</summary><div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"8px"}}>{items.length===0 ? <div style={{fontSize:"11px",color:C.mu,fontStyle:"italic"}}>لا يوجد</div> : (isMissing ? items.map((x,i)=><div key={i} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px"}}><b style={{fontSize:"12px"}}>{x.st.name}</b> <span style={{fontSize:"10px",color:C.mu}}>#{x.st.studentId} · {x.p.title}</span></div>) : items.map(renderSubmissionCard))}</div></details>;
-            return <div>
-                {renderSection("🔴 يحتاج إلى تصحيح", "#dc2626", "#fef2f2", needsFix, false)}
-                {renderSection("🟡 لم يسلم", "#d97706", "#fffbeb", missingList, true)}
-                {renderSection("🟢 تم التصحيح", "#16a34a", "#f0fdf4", done, false)}
-            </div>;
-          })()}
-    {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length>0&&<details style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"10px",padding:"9px",marginBottom:"8px"}}><summary style={{cursor:"pointer",fontWeight:900,fontFamily:F}}>Other / Unmatched Class — {visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).length} submissions</summary>{visibleSubs.filter(s=>!myClasses.some(c=>{const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x));return st&&sameClassId(st.classId,c.id);})).map(renderSubmissionCard)}</details>}
+        {(()=>{
+          const needsFix = visibleSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected"||s.status==="resubmit_allowed");
+          const done = visibleSubs.filter(s=>s.status==="approved");
+          const missingList = [];
+          projects.forEach(p=>{
+            projectTargetStudents(p,myStudents).forEach(st=>{
+              if(!projectSubmissionsForStudent(subs,p.id,st).length) missingList.push({p,st});
+            });
+          });
+          const renderSection = (title, color, bg, items, isMissing) => (
+            <details style={{background:bg,border:"1px solid "+color,borderRadius:"12px",padding:"10px",marginBottom:"10px"}} open>
+              <summary style={{cursor:"pointer",fontWeight:900,fontSize:"14px",color:color}}>{title} ({items.length}) ▼</summary>
+              <div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"8px"}}>
+                {items.length===0 ? <div style={{fontSize:"11px",color:C.mu,fontStyle:"italic"}}>لا يوجد</div> : 
+                  (isMissing ? items.map((x,i)=><div key={i} style={{background:"#fff",border:"1px solid "+C.br,borderRadius:"8px",padding:"8px"}}><b style={{fontSize:"12px"}}>{x.st.name}</b> <span style={{fontSize:"10px",color:C.mu}}>#{x.st.studentId} · {x.p.title}</span></div>) : items.map(renderSubmissionCard))}
+              </div>
+            </details>
+          );
+          return (
+            <div>
+              {renderSection("🔴 يحتاج إلى تصحيح", "#dc2626", "#fef2f2", needsFix, false)}
+              {renderSection("🟡 لم يسلم", "#d97706", "#fffbeb", missingList, true)}
+              {renderSection("🟢 تم التصحيح", "#16a34a", "#f0fdf4", done, false)}
+            </div>
+          );
+        })()}
 
   </div>;
 }
@@ -14938,7 +14951,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V452" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ V454" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16221,11 +16234,11 @@ function App() {
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
-  // V452: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
+  // V454: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
   useEffect(()=>{
     const rt=parkedTeacher||user;
     if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v452|"+String(rt.id||"");
+    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v454|"+String(rt.id||"");
     let unsub=null, chain=Promise.resolve();
     const log=(m)=>{ try{ const L=window.__EQ_SYNC_LOG||(window.__EQ_SYNC_LOG=[]); L.push({t:new Date().toISOString(),m:m}); if(L.length>30)L.shift(); }catch(_e){} };
     const loadSeen=()=>{ try{ return JSON.parse(localStorage.getItem(SEEN_KEY)||"null"); }catch(_e){ return null; } };
@@ -16238,7 +16251,7 @@ function App() {
         const next=await eqRefreshTeacherRosterOnly(cur);
         setData(prev=>{ if(!prev) return prev; const n={...prev,users:next.users,classes:next.classes,firebaseUsers:next.firebaseUsers,firebaseClasses:next.firebaseClasses}; window.__EQ_CURRENT_DATA=n; try{eqPersistFastSoon();}catch(_e){} return n; });
         log("roster refreshed");
-      }catch(e){ console.warn("V452 roster refresh failed",e&&e.message); }
+      }catch(e){ console.warn("V454 roster refresh failed",e&&e.message); }
     }
     async function patchIds(col,ids){
       const isFq=(col==="dailyFollowup"||String(col).indexOf("followup")===0);
@@ -16258,7 +16271,7 @@ function App() {
               const n={...prev,[col]:rows}; window.__EQ_CURRENT_DATA=n; return n;
             });
           }
-        }catch(e){ console.warn("V452 patch failed",col,id,e&&e.message); }
+        }catch(e){ console.warn("V454 patch failed",col,id,e&&e.message); }
       }
       if(col==="readingTasks"){ try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){} }
       if(!isFq){ try{ eqInvalidateDashboardHydrate(); eqPersistFastSoon(); }catch(_e){} }
@@ -16271,7 +16284,7 @@ function App() {
         eqInvalidateDashboardHydrate();
         try{ localStorage.removeItem("eq_rp_taskdefs_v432"); }catch(_e){}
         await reload(); log("bulk reload for "+col);
-      }catch(e){ console.warn("V452 bulk reload failed",e&&e.message); }
+      }catch(e){ console.warn("V454 bulk reload failed",e&&e.message); }
       
     }
     async function apply(changed){
@@ -16299,10 +16312,10 @@ function App() {
           saveSeen({...seen,...nowSeen});
           if(!changed.length) return;
           log("remote change: "+changed.map(c=>c.col+"("+(c.bulk||c.diff>1?"bulk":c.ids.length)+")").join(","));
-          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("V452 apply failed",e&&e.message));
-        }catch(e){ console.warn("V452 sync snapshot failed",e&&e.message); }
-      },e=>console.warn("V452 syncMarker listener unavailable",e&&e.message));
-    }catch(e){ console.warn("V452 syncMarker listener failed",e&&e.message); }
+          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("V454 apply failed",e&&e.message));
+        }catch(e){ console.warn("V454 sync snapshot failed",e&&e.message); }
+      },e=>console.warn("V454 syncMarker listener unavailable",e&&e.message));
+    }catch(e){ console.warn("V454 syncMarker listener failed",e&&e.message); }
     return ()=>{ try{unsub&&unsub();}catch(_e){} };
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
