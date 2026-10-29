@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v497</title>
+<title>EduQuiz — Smart Assessment v498</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -67,7 +67,7 @@
 <!-- RT_ACCESS_CONTROL_20260613 -->
 <!-- RT_KEY_IN_TAB_20260613 -->
 <!-- RT_AI_KEY_FIREBASE_SHARED_20260613 -->
-<!-- EDUQUIZ_v497_FOLLOWUP_CACHE_20261015 -->
+<!-- EDUQUIZ_v498_FOLLOWUP_CACHE_20261015 -->
 <!-- READING_THEORY_ADAPTIVE_KP_BADGES_20260613 -->
 <!-- READING_THEORY_AI_GENERATED_20260613 -->
 <!-- ZIPGRADE_IMPROVEMENT_PERCENT_FROM_TOTAL_20260612 -->
@@ -215,7 +215,7 @@ try{
 <!-- V343_WRITING_EVALUATION_RP_WORKFLOW_20261008 -->
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
-<!-- EDUQUIZ_v497_FINAL_READ_GUARD_20261015 -->
+<!-- EDUQUIZ_v498_FINAL_READ_GUARD_20261015 -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -537,7 +537,7 @@ function activeStudentInData(user,data){
         u.deleted!==true && String(u.status||"").toLowerCase()!=="deleted" && u.hidePreloaded!==true && u.permanentDeleted!==true;
     });
     if(live){
-      // v497: the active Firebase row is authoritative. Never infer class from student-number digits.
+      // v498: the active Firebase row is authoritative. Never infer class from student-number digits.
       activeOverride=live;
     }
   }
@@ -578,7 +578,7 @@ function sameClassId(a,b){ return canonicalClassId(a) === canonicalClassId(b); }
 function eqResolveClassForStudent(student, classes){
   if(!student) return null;
   const vals=[student.classId,student.className,student.class,student.grade,student.section,student.sectionName].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=="");
-  // v497: resolve class only from stored class fields. Student-number digits are never class metadata.
+  // v498: resolve class only from stored class fields. Student-number digits are never class metadata.
   for(const c of (classes||[])){
     const aliases=adminClassAliases(c);
     for(const v of vals){
@@ -914,7 +914,7 @@ try {
   }
 } catch(e) { console.error("Firebase init failed:", e); }
 
-// v497 FIRESTORE LIVE TRACE — instruments the Firebase SDK itself, including direct reads
+// v498 FIRESTORE LIVE TRACE — instruments the Firebase SDK itself, including direct reads
 // that bypass EduQuiz wrappers. It performs no Firestore reads of its own.
 window.__EQ_FS_TRACE = window.__EQ_FS_TRACE || {startedAt:Date.now(), total:0, by:{}, events:[]};
 window.__eqFsTraceAdd = function(kind,label,count){
@@ -925,7 +925,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     const key=String(kind||"read")+":"+String(label||"unknown");
     T.by[key]=(T.by[key]||0)+count;
     const ev={t:Date.now(),kind:String(kind||"read"),source:String(label||"unknown"),count};
-    // v497: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
+    // v498: name the caller for any read of 20+ docs, so a big spike is attributable (function names from the JS stack).
     if(count>=20){ try{ ev.by=String(new Error().stack||"").split("\n").slice(2,9).map(function(l){var m=l.match(/at\s+(?:async\s+)?([^\s(]+)/);return m?m[1]:"";}).filter(function(n){return n&&!/eqFsTraceAdd|patch|labelOf|Object\.|Array\./.test(n);}).slice(0,4).join(" < "); }catch(_e){} }
     T.events.push(ev);
     if(T.events.length>300)T.events.splice(0,T.events.length-300);
@@ -933,7 +933,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
   }catch(_e){}
 };
 (function eqInstallFirestoreTrace(){
-  // v497: patch the prototype that REALLY owns get/onSnapshot. v497-v497 patched only CollectionReference, so every
+  // v498: patch the prototype that REALLY owns get/onSnapshot. v498-v498 patched only CollectionReference, so every
   // where()/limit()/orderBy() query (Follow-up, RP, students, Reading Theory...) and transaction read was invisible.
   if(!FIREBASE_OK||!db||!db.collection||window.__EQ_FS_TRACE_INSTALLED)return;
   window.__EQ_FS_TRACE_INSTALLED=true;
@@ -1016,7 +1016,7 @@ window.__eqFsTraceAdd = function(kind,label,count){
     patchQueryLike(col);
     try{patchQueryLike(col.where("__eq_probe__","==",1));}catch(_e){}   // plain Query class (where/limit/orderBy results)
     patchDocLike(col.doc("__probe__"));
-  }catch(e){console.warn("v497 Firestore live trace install failed",e&&e.message);}
+  }catch(e){console.warn("v498 Firestore live trace install failed",e&&e.message);}
   // Transactions: tx.get(docRef) is a billed read too.
   try{
     const rt=db.runTransaction;
@@ -1036,16 +1036,16 @@ window.__eqFsTraceAdd = function(kind,label,count){
       };
       wrappedRT.__eqWrapped=true; db.runTransaction=wrappedRT;
     }
-  }catch(e){console.warn("v497 transaction trace failed",e&&e.message);}
+  }catch(e){console.warn("v498 transaction trace failed",e&&e.message);}
 })();
 
-// v497 USAGE METER (all users): every browser counts the Firestore reads the SDK returns, by collection, and sends ONE small
+// v498 USAGE METER (all users): every browser counts the Firestore reads the SDK returns, by collection, and sends ONE small
 // increment write to readStats/<Pacific date> (same day boundary as Firebase quota). The teacher panel shows teacher vs students.
 // It performs no reads. If Firestore rules block the write, window.__EQ_STATS_ERR explains it in the panel.
 (function eqUsageMeter(){
   if(!FIREBASE_OK||!db||window.__EQ_METER_INSTALLED) return;
   window.__EQ_METER_INSTALLED=true;
-  const VER="v497", acc={total:0,by:{}};
+  const VER="v498", acc={total:0,by:{}};
   let newSession=true, flushing=false, fails=0, earlyTimer=null;
   const orig=window.__eqFsTraceAdd;
   window.__eqFsTraceAdd=function(kind,label,count){
@@ -1066,12 +1066,12 @@ window.__eqFsTraceAdd = function(kind,label,count){
   function role(){
     try{ const s=JSON.parse(localStorage.getItem("eq_session")||"null"); return s&&s.role==="teacher"?"teacher":(s&&s.role==="student"?"student":"anon"); }catch(_e){ return "anon"; }
   }
-  // v497: who is this device? (name + class only; used for the teacher-only diagnostics panel)
+  // v498: who is this device? (name + class only; used for the teacher-only diagnostics panel)
   function who(){
     try{
       const s=JSON.parse(localStorage.getItem("eq_session")||"null")||{};
       const id=String(s.id||s._id||s.studentId||"").replace(/[^A-Za-z0-9_-]/g,"_").slice(0,40);
-      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v497")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v497",dv); } }catch(_e){}
+      let dv=""; try{ dv=localStorage.getItem("eq_dev_id_v498")||""; if(!dv){ dv="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v498",dv); } }catch(_e){}
       return {key:id||("anon_"+(dv||"x")), name:String(s.name||"").slice(0,40)||(id?"":"قبل الدخول"), cls:String(s.className||s.classId||s.class||"").slice(0,30)};
     }catch(_e){ return {key:"anon",name:"قبل الدخول",cls:""}; }
   }
@@ -1188,12 +1188,12 @@ function FirestoreReadBox(){
   const top=Object.entries(T.by||{}).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const recent=(T.events||[]).slice(-8).reverse();
   return <div id="eq-read-diag" style={{background:"#111827",color:"#fff",padding:"9px 11px",borderRadius:"10px",font:"11px/1.45 system-ui",width:"100%",boxSizing:"border-box",boxShadow:"0 4px 12px #0003",maxHeight:"420px",overflowY:"auto"}}>
-    <b>Firestore Diagnostics — v497</b>
+    <b>Firestore Diagnostics — v498</b>
     <div style={{display:"flex",gap:"6px",margin:"7px 0"}}>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"v497",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"v498",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1264,12 +1264,12 @@ function eqStudentReadFirewallRows(col){
 }
 async function fsAll(col) {
   const local = () => { try { return JSON.parse(localStorage.getItem("eq_"+col) || "[]"); } catch(e){ return []; } };
-  // v497: enforce the existing student firewall for legacy/hidden callers too.
+  // v498: enforce the existing student firewall for legacy/hidden callers too.
   // Student bootstrap uses targeted queries for these collections, so a later fsAll() must reuse memory rather than read the whole collection.
   const studentFirewallRows=eqStudentReadFirewallRows(col);
   if(studentFirewallRows!==null) return studentFirewallRows;
   if (!FIREBASE_OK) return local();
-  // v497: concurrent identical full reads of users/classes share ONE in-flight request (no staleness: released when it finishes).
+  // v498: concurrent identical full reads of users/classes share ONE in-flight request (no staleness: released when it finishes).
   const __dedupe=(col==="users"||col==="classes");
   window.__EQ_FSALL_INFLIGHT=window.__EQ_FSALL_INFLIGHT||{};
   if(__dedupe && window.__EQ_FSALL_INFLIGHT[col]) return window.__EQ_FSALL_INFLIGHT[col].then(r=>r.map(x=>({...x})));
@@ -1299,7 +1299,7 @@ async function fsGetDoc(col, id) {
   }
 }
 
-// v497: Follow-up collections can grow into thousands of documents.
+// v498: Follow-up collections can grow into thousands of documents.
 // Read only the current teacher/term/period/class scope. Never fall back to a full collection GET.
 function eqFollowupScopeMatch(row, teacherId, term, period, classId){
   if(!row) return false;
@@ -1309,21 +1309,21 @@ function eqFollowupScopeMatch(row, teacherId, term, period, classId){
   if(classId && String(classId)!=="all" && !sameClassId(row.classId||"",classId)) return false;
   return true;
 }
-// v497: bounded Follow-up query cache; reuse period data across date navigation.
+// v498: bounded Follow-up query cache; reuse period data across date navigation.
 const eqFollowupQueryCache=new Map();
-// v497/v497: Follow-up period data (dailyFollowup/referrals/homework) is persisted per browser for up to 30 days (manual sync button available).
+// v498/v498: Follow-up period data (dailyFollowup/referrals/homework) is persisted per browser for up to 30 days (manual sync button available).
 // Opening Follow-up or switching class/term/period used to re-read the whole period (class x school days) on every page load.
 // Only this teacher writes these collections and every local write patches the cache, so the persisted copy stays accurate.
-const EQ_FQ_PREFIX="eq_fq_v497|", EQ_FQ_TTL=30*24*3600*1000;
+const EQ_FQ_PREFIX="eq_fq_v498|", EQ_FQ_TTL=30*24*3600*1000;
 const eqFqTimers=new Map();
 window.eqClearAllCaches=function(){
-  // v497: one switch that drops every local cache. Used after bulk admin writes (year reset, import, class/student delete).
+  // v498: one switch that drops every local cache. Used after bulk admin writes (year reset, import, class/student delete).
   try{window.eqClearRosterCache&&window.eqClearRosterCache();}catch(_e){}
   try{window.eqClearFollowupCache&&window.eqClearFollowupCache();}catch(_e){}
-  try{localStorage.removeItem("eq_rp_taskdefs_v497");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;}catch(_e){}
+  try{localStorage.removeItem("eq_rp_taskdefs_v498");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;}catch(_e){}
   try{localStorage.removeItem(EQ_FAST_DATA_CACHE_KEY);}catch(_e){}
   try{eqInvalidateDashboardHydrate();}catch(_e){}
-  try{window.__EQ_RP_HISTORY_v497={};}catch(_e){}
+  try{window.__EQ_RP_HISTORY_v498={};}catch(_e){}
   try{window.__EQ_RP_TEACHER_CACHE&&window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   try{window.__EQ_RT_TEACHER_CACHE&&window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 };
@@ -1340,7 +1340,7 @@ function eqFqSave(key,rows,immediate){
   try{
     clearTimeout(eqFqTimers.get(key));
     eqFqTimers.set(key,setTimeout(function(){
-      // v497: compact copy (drop empty fields) so several classes fit in browser storage.
+      // v498: compact copy (drop empty fields) so several classes fit in browser storage.
       const slim=(rows||[]).map(function(r){const o={};Object.keys(r||{}).forEach(function(k){const v=r[k];if(v===""||v===null||v===undefined||(Array.isArray(v)&&!v.length))return;o[k]=v;});return o;});
       const payload=JSON.stringify({at:Date.now(),rows:slim});
       try{localStorage.setItem(EQ_FQ_PREFIX+key,payload);}
@@ -1356,7 +1356,7 @@ function eqInvalidateFollowupQueryCache(col){
     eqFollowupQueryCache.delete(key);
   }
 }
-// v497: keep already-loaded Follow-up scopes warm after local writes/deletes.
+// v498: keep already-loaded Follow-up scopes warm after local writes/deletes.
 // Cache keys are col|teacherId|term|period|classId.
 function eqPatchFollowupQueryCache(col,type,id,data){
   if(!col || (!String(col).startsWith("followup") && col!=="dailyFollowup")) return;
@@ -1384,14 +1384,14 @@ function eqPatchFollowupQueryCache(col,type,id,data){
 async function eqFollowupScopedRows(col,teacherId,term,period,classId){
   const key=[col,teacherId||"",term||"",period||"",classId||""].join("|");
   const old=eqFollowupQueryCache.get(key);
-  // v497: session cache. Navigation between students/classes must not expire after 5 minutes.
+  // v498: session cache. Navigation between students/classes must not expire after 5 minutes.
   if(old && (old.pending || Array.isArray(old.rows))){
     try{window.__EQ_FOLLOWUP_CACHE_HITS=(window.__EQ_FOLLOWUP_CACHE_HITS||0)+1;}catch(_e){}
     return old.pending ? old.pending : old.rows.slice();
   }
   const persisted=eqFqLoad(key);
   if(persisted){
-    try{window.__eqReadDiag&&window.__eqReadDiag("cache:followup-v497:"+col,0);}catch(_e){}
+    try{window.__eqReadDiag&&window.__eqReadDiag("cache:followup-v498:"+col,0);}catch(_e){}
     eqFollowupQueryCache.set(key,{at:Date.now(),rows:persisted});
     eqFqLog(key,"persisted-cache",persisted.length);
     return persisted.slice();
@@ -1428,7 +1428,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
   }catch(e){
     // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
     // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
-    console.warn("v497 scoped follow-up query fallback",col,e&&e.message);
+    console.warn("v498 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
       if(dateFilter) q=q.where("date","==",String(dateFilter));
@@ -1439,7 +1439,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
       try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
       return filterRows(mapSnap(snap));
     }catch(e2){
-      console.warn("v497 follow-up fallback failed",col,e2&&e2.message);
+      console.warn("v498 follow-up fallback failed",col,e2&&e2.message);
       return [];
     }
   }
@@ -1463,7 +1463,7 @@ async function projectSubmissionsForStudentRemote(projectId, st) {
   }
 }
 
-// v497: mutate the already-loaded dashboard in memory after writes/deletes.
+// v498: mutate the already-loaded dashboard in memory after writes/deletes.
 function eqPatchCurrentCollection(col,type,id,data){
   try{
     const cur=window.__EQ_CURRENT_DATA;
@@ -1504,7 +1504,7 @@ async function fsSet(col, id, data) {
   if(ok) try{eqPatchFollowupQueryCache(col,"upsert",id,data);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"upsert",id,data);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:String(id),record:{...data,id:String(id)}}}));}catch(_e){}
-  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v497");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
+  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v498");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 async function fsSetStrict(col, id, data) {
@@ -1527,7 +1527,7 @@ async function fsDel(col, id) {
   if(ok) try{eqPatchFollowupQueryCache(col,"delete",id,null);}catch(_e){}
   if(ok) try{eqPatchCurrentCollection(col,"delete",id,null);}catch(_e){}
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
-  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v497");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
+  if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v498");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
 }
 
@@ -1537,7 +1537,7 @@ const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_log
 function eqSaveFastDataCache(d){
   try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){}
 }
-// v497: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
+// v498: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
 let __EQ_PERSIST_TIMER=null;
 function eqPersistFastSoon(){
@@ -1554,12 +1554,12 @@ function eqPersistFastSoon(){
     },1500);
   }catch(_e){}
 }
-// v497: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
+// v498: LIVE CROSS-DEVICE SYNC. Every teacher write drops a tiny note in ONE document (syncMarker/<teacherId>):
 // which collection, which doc ids, from which device. Other teacher devices listen to that single doc and patch/invalidate only what changed.
 // This replaces short cache expiry times: caches live until the marker says something changed.
 const EQ_SYNC_EXCLUDE=new Set(["readStats","projectInbox","rpInbox","syncMarker","readingSubmissions","projectSubmissions"]);
 function eqDevId(){
-  try{ let d=localStorage.getItem("eq_dev_id_v497"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v497",d);} return d; }
+  try{ let d=localStorage.getItem("eq_dev_id_v498"); if(!d){ d="d"+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem("eq_dev_id_v498",d);} return d; }
   catch(_e){ return "d_anon"; }
 }
 let __EQ_SYNC_PENDING={}, __EQ_SYNC_TIMER=null;
@@ -1586,7 +1586,7 @@ async function eqSyncFlush(){
     const now=new Date().toISOString(), dev=eqDevId(), inc=firebase.firestore.FieldValue.increment, cols={};
     names.forEach(function(c){ cols[c]={n:inc(1),at:now,dev:dev,bulk:!!pend[c].bulk,ids:pend[c].bulk?[]:pend[c].ids}; });
     await db.collection("syncMarker").doc(String(sess.id)).set({updatedAt:now,cols:cols},{merge:true});
-  }catch(e){ console.warn("v497 syncMarker write failed",e&&e.message); }
+  }catch(e){ console.warn("v498 syncMarker write failed",e&&e.message); }
 }
 function eqFqDropCol(col){
   try{ Object.keys(localStorage).filter(function(k){return k.indexOf(EQ_FQ_PREFIX+col+"|")===0;}).forEach(function(k){localStorage.removeItem(k);}); }catch(_e){}
@@ -1600,7 +1600,7 @@ function eqLoadFastDataCache(){
   }catch(e){ return null; }
 }
 
-// v497: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
+// v498: targeted lookups for student login paths that used to download the whole database (loadAllData) or all users.
 async function eqStudentLiteData(sidRaw, extra){
   extra=extra||{};
   const entered=String(sidRaw||"").trim().replace(/\s/g,"");
@@ -1676,7 +1676,7 @@ async function eqFetchLoginUser(role, identifier){
   }catch(_e){return null;}
 }
 async function loadLoginData(sessionHint) {
-  // v497: logged-out/student startup must NOT download the whole users collection.
+  // v498: logged-out/student startup must NOT download the whole users collection.
   // Only classes + one policy document are needed to paint Login. If a saved student session exists,
   // validate that ONE student document. The teacher roster is loaded once only after teacher authentication.
   const [classesRaw,googlePolicyRow,rtAccessRow] = await Promise.all([
@@ -1694,18 +1694,18 @@ async function loadLoginData(sessionHint) {
   return {users,classes,firebaseUsers:users.slice(),firebaseClasses:(classesRaw||[]).filter(c=>c&&!c.deleted&&c.status!=="deleted"&&!c.hidePreloaded&&!c.permanentDeleted),appSettings:lightSettings,deletedStudents:[],deletedClasses:[],loginLight:true,
     quizzes:[],responses:[],announcements:[],notes:[],readingTasks:[],readingSubmissions:[],readingAttemptResets:[],readingTheoryItems:[],readingTheoryResponses:[],projects:[],projectSubmissions:[]};
 }
-// v497 ROSTER RESTORE: keep v497 fast/heavy-data cache, but refresh the LIVE teacher roster
+// v498 ROSTER RESTORE: keep v498 fast/heavy-data cache, but refresh the LIVE teacher roster
 // exactly once per page session. Eye / RP / RT all consume data.users + data.classes from this same source.
-// v497: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in v497).
-// v497: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
+// v498: roster cache now lives up to 24h and is invalidated live by syncMarker (was 20 min in v498).
+// v498: teacher roster (users) is cached for 20 minutes so every page open / re-login does not re-read ~160 documents.
 // Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
-const EQ_ROSTER_CACHE_KEY="eq_roster_users_v497";
+const EQ_ROSTER_CACHE_KEY="eq_roster_users_v498";
 window.eqClearRosterCache=function(){try{localStorage.removeItem(EQ_ROSTER_CACHE_KEY);}catch(_e){}};
 async function eqUsersCached(){
   try{
     const x=JSON.parse(localStorage.getItem(EQ_ROSTER_CACHE_KEY)||"null");
     if(x&&Array.isArray(x.rows)&&x.rows.length&&Date.now()-Number(x.at||0)<86400000){
-      try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-users-v497",0);}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-users-v498",0);}catch(_e){}
       return x.rows;
     }
   }catch(_e){}
@@ -1723,7 +1723,7 @@ async function eqRefreshTeacherRosterOnly(base){
     const next={...(base||{}),users:activeUsers,classes:activeClasses,firebaseUsers:activeUsers.slice(),firebaseClasses:activeClasses.slice(),loginLight:false};
     try{window.__EQ_RP_TEACHER_CACHE&&window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
     try{window.__EQ_RT_TEACHER_CACHE&&window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
-    try{window.__eqReadDiag&&window.__eqReadDiag("teacher-roster-v497",activeUsers.length);}catch(_e){}
+    try{window.__eqReadDiag&&window.__eqReadDiag("teacher-roster-v498",activeUsers.length);}catch(_e){}
     return next;
   })();
   try{return await __EQ_TEACHER_ROSTER_PROMISE;}finally{__EQ_TEACHER_ROSTER_PROMISE=null;}
@@ -1739,7 +1739,7 @@ function eqInvalidateDashboardHydrate(){
   __EQ_DASHBOARD_HYDRATE_AT=0;
 }
 
-// v497: teacher dashboard reads must be scoped. Never hydrate whole teacher-owned collections.
+// v498: teacher dashboard reads must be scoped. Never hydrate whole teacher-owned collections.
 async function eqQueryTeacherRows(col, teacherId){
   if(!teacherId) return [];
   if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
@@ -1751,7 +1751,7 @@ async function eqQueryTeacherRows(col, teacherId){
     try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":teacherId",Math.max(1,Number(snap.size||0)));}catch(_e){}
     return snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
   }catch(e){
-    console.warn("v497 teacher-scoped query failed",col,e&&e.message);
+    console.warn("v498 teacher-scoped query failed",col,e&&e.message);
     return [];
   }
 }
@@ -1772,7 +1772,7 @@ async function eqQueryResponsesForQuizIds(quizIds){
       try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(doc=>{const x=doc.data()||{};out.set(String(doc.id),{...x,id:x.id||doc.id,_id:doc.id});});
     }catch(e){
-      console.warn("v497 response query failed",e&&e.message);
+      console.warn("v498 response query failed",e&&e.message);
       // Never fall back to a full collection scan in normal teacher dashboard flow.
     }
   }
@@ -1781,9 +1781,9 @@ async function eqQueryResponsesForQuizIds(quizIds){
 
 async function loadDashboardDataWithRoster(base) {
   if(!base || !Array.isArray(base.users) || !Array.isArray(base.classes)) return loadAllData();
-  // v497: the Login screen intentionally has no student roster. A teacher needs it once after authentication.
+  // v498: the Login screen intentionally has no student roster. A teacher needs it once after authentication.
   if(base.loginLight){
-    // v497: daily teacher startup loads the live roster only.
+    // v498: daily teacher startup loads the live roster only.
     // Historical deletedStudents/deletedClasses are administrative data and must not be downloaded on every login.
     const usersRaw=await eqUsersCached();
     const activeUsers=(usersRaw||[]).filter(u=>u&&!isStudentTombstone(u)&&u.deleted!==true&&String(u.status||"").toLowerCase()!=="deleted");
@@ -1803,7 +1803,7 @@ async function loadDashboardDataWithRoster(base) {
     try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:reused",0);}catch(_e){}
     return __EQ_DASHBOARD_HYDRATE_RESULT;
   }
-  // v497: a fresh re-login within 15 minutes reuses the saved dashboard collections (same teacher) instead of re-reading
+  // v498: a fresh re-login within 15 minutes reuses the saved dashboard collections (same teacher) instead of re-reading
   // quizzes + every response + notes + projects (~1,600 reads). Teacher can force a full reload with window.__EQ_FORCE_HEAVY=true.
   try{
     const raw=JSON.parse(localStorage.getItem(EQ_FAST_DATA_CACHE_KEY)||"null");
@@ -1820,7 +1820,7 @@ async function loadDashboardDataWithRoster(base) {
         appSettings:Array.isArray(cd.appSettings)?cd.appSettings:(Array.isArray(base.appSettings)?base.appSettings:[]),
         __cacheTeacherId:tid0};
       __EQ_DASHBOARD_HYDRATE_RESULT=reuse; __EQ_DASHBOARD_HYDRATE_AT=Date.now();
-      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:fast-cache-v497",0);}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:fast-cache-v498",0);}catch(_e){}
       return reuse;
     }
   }catch(_e){}
@@ -1864,7 +1864,7 @@ async function loadDashboardDataWithRoster(base) {
 // Student login must never call loadAllData(). It reuses the authenticated roster and loads only
 // student-facing collections. Large per-student result collections are queried by student identity.
 async function eqQueryStudentRows(col, st){
-  // v497 audit: the previous generic student lookup could issue up to 20 Firestore queries
+  // v498 audit: the previous generic student lookup could issue up to 20 Firestore queries
   // per collection (5 fields x 4 values). Empty queries can still be billable, while the
   // old diagnostic showed them as zero. Use the schemas actually written by EduQuiz and
   // stop once the canonical key returns data; then use only narrow legacy fallbacks.
@@ -1891,7 +1891,7 @@ async function eqQueryStudentRows(col, st){
 }
 
 
-// v497 TARGETED STUDENT TASK DEFINITIONS:
+// v498 TARGETED STUDENT TASK DEFINITIONS:
 // Never download the complete quizzes/projects collections for a real student.
 // Query only rows explicitly assigned to this student or class. Empty audience quizzes are teacher-only.
 // Reading Progress tasks stay full-loaded because legacy/public RP tasks may intentionally have no audience fields.
@@ -1923,7 +1923,7 @@ async function eqQueryStudentAssignedDefs(col, st){
   }catch(e){
     // Compatibility fallback only when Firestore rejects the targeted query.
     // Never fallback merely because the student has zero assigned work.
-    console.warn("v497 targeted student definitions failed",col,e&&e.message);
+    console.warn("v498 targeted student definitions failed",col,e&&e.message);
     return await fsAll(col);
   }
 }
@@ -1954,22 +1954,22 @@ async function eqQueryStudentAnnouncements(st, classes){
 let __EQ_RP_TASK_DEFS_CACHE=null;
 let __EQ_RP_TASK_DEFS_PROMISE=null;
 async function eqQueryStudentReadingTasks(st){
-  // v497 compatibility with V370: RP task definitions are loaded as one small collection,
+  // v498 compatibility with V370: RP task definitions are loaded as one small collection,
   // then the existing ReadingProgressStudent assignment filter decides what this student sees.
   // This preserves legacy/manual students whose task audience used an older id/class token.
   if(Array.isArray(__EQ_RP_TASK_DEFS_CACHE)) return __EQ_RP_TASK_DEFS_CACHE.slice();
   if(__EQ_RP_TASK_DEFS_PROMISE) return (await __EQ_RP_TASK_DEFS_PROMISE).slice();
   try{
-    const x=JSON.parse(localStorage.getItem("eq_rp_taskdefs_v497")||"null");
+    const x=JSON.parse(localStorage.getItem("eq_rp_taskdefs_v498")||"null");
     if(x&&Array.isArray(x.rows)&&Date.now()-Number(x.at||0)<300000){
       __EQ_RP_TASK_DEFS_CACHE=x.rows.slice();
-      try{window.__eqReadDiag&&window.__eqReadDiag("cache:readingTasks-v497",0);}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:readingTasks-v498",0);}catch(_e){}
       return __EQ_RP_TASK_DEFS_CACHE.slice();
     }
   }catch(_e){}
   __EQ_RP_TASK_DEFS_PROMISE=(async()=>{
     const rows=await fsAll("readingTasks");
-    try{localStorage.setItem("eq_rp_taskdefs_v497",JSON.stringify({at:Date.now(),rows:(rows||[]).filter(Boolean)}));}catch(_e){}
+    try{localStorage.setItem("eq_rp_taskdefs_v498",JSON.stringify({at:Date.now(),rows:(rows||[]).filter(Boolean)}));}catch(_e){}
     const clean=(rows||[]).filter(Boolean);
     __EQ_RP_TASK_DEFS_CACHE=clean.slice();
     try{window.__eqReadDiag&&window.__eqReadDiag("get:readingTasks:v370-compat",clean.length);}catch(_e){}
@@ -1999,7 +1999,7 @@ async function loadStudentDataWithRoster(base, st){
       eqQueryStudentRows("responses",st),
       eqQueryStudentRows("projectSubmissions",st)
     ]);
-    // v497: Reading Theory history is section-lazy. Do not bill it during login or while testing RP.
+    // v498: Reading Theory history is section-lazy. Do not bill it during login or while testing RP.
     const rtResponses=Array.isArray(base.readingTheoryResponses)?base.readingTheoryResponses:[];
     const appSettings=(base.appSettings||[]).filter(function(x){
       const id=String(x&& (x.id||x._id) ||"");
@@ -2017,7 +2017,7 @@ async function loadStudentDataWithRoster(base, st){
   try{return await job;}finally{__EQ_STUDENT_HYDRATE_PROMISES.delete(studentKey);}
 }
 async function loadAllData() {
-  // v497 hard containment: no browser running a real student session may ever execute the global 16-collection loader.
+  // v498 hard containment: no browser running a real student session may ever execute the global 16-collection loader.
   // Any legacy/hidden caller is redirected to the scoped student hydrate instead.
   try{
     const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
@@ -3495,7 +3495,7 @@ async function rpUploadAudio(blob, path){
   // demo fallback: store small data URL. For real class use, Firebase Storage is required.
   return await rpBlobToDataUrl(blob);
 }
-async function rpSetReadingSubmissionStrict(id, data){ // v497: strict RP write + one-doc teacher inbox notification; RP session caches invalidate only on real writes.
+async function rpSetReadingSubmissionStrict(id, data){ // v498: strict RP write + one-doc teacher inbox notification; RP session caches invalidate only on real writes.
 try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
 if(FIREBASE_OK && typeof db!=="undefined" && db && db.collection){
   await db.collection("readingSubmissions").doc(id).set(data);
@@ -4841,7 +4841,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     let users = Array.isArray(d.users)?d.users:[];
     let firebaseUsers = Array.isArray(d.firebaseUsers)?d.firebaseUsers:[];
     const id = f.email.trim().toLowerCase();
-    // v497: authenticate only the entered account; never download all 489 users on every student device.
+    // v498: authenticate only the entered account; never download all 489 users on every student device.
     let teacher = users.find(u=>u.role==="teacher" && (u.email||"").toLowerCase()===id);
     if(!teacher && id.includes("@")) teacher=await eqFetchLoginUser("teacher",id);
     if(teacher && teacher.password!==f.password) teacher=null;
@@ -4881,7 +4881,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     if(!u) u=await eqFetchLoginUser("student",idDigits||id);
     if(u){ users=[...users.filter(x=>String(x.id)!==String(u.id)),u]; firebaseUsers=[...firebaseUsers.filter(x=>String(x.id)!==String(u.id)),u]; d={...d,users,firebaseUsers}; loginDataRef.current=d; }
     if(!u){setErr("This student account is not active. Please contact your teacher.\nحساب الطالب غير نشط أو غير موجود حاليًا. تواصل مع المعلم.");setLoading(false);return;}
-    // v497: never rewrite or infer a student's class from the school number. Use the current Firebase classId only.
+    // v498: never rewrite or infer a student's class from the school number. Use the current Firebase classId only.
     const cid=canonicalClassId(u.classId||u.className||u.class||"");
     // LOGIN_ROSTER_FALLBACK_267: an ACTIVE current student row wins over stale class tombstones.
     // The live login-class list below is the final authority.
@@ -5512,9 +5512,14 @@ function GameQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
         <div style={{background:"rgba(255,255,255,0.10)",border:"1px solid rgba(255,255,255,0.18)",borderRadius:"14px",padding:"12px",color:"#fff",fontFamily:F}}>
           <div style={{fontSize:"12px",fontWeight:"800",marginBottom:"8px"}}>🎧 Listening Audio</div>
           <audio ref={gameAudioRef} src={gameForceDeviceVoice?"":quiz.audioFile} preload="auto" controls onEnded={()=>setGameAudioPlayed(true)} style={{width:"100%",marginBottom:"8px",display:gameForceDeviceVoice?"none":"block"}}/>
-          <button onClick={gamePlayAudio} disabled={gameAudioLoading} style={{width:"100%",border:"0",borderRadius:"11px",background:gameAudioLoading?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F,opacity:gameAudioLoading?0.9:1}}>
-            {gameAudioLoading?"⏳ Preparing audio…":(gameForceDeviceVoice?"⚡ Play Device Voice":"▶ Play Listening")}
-          </button>
+          <div style={{display:"flex",gap:"8px",marginBottom:"8px"}}>
+            <button onClick={()=>{ const a=gameAudioRef.current; if(a){ if(a.paused) gamePlayAudio(); else a.pause(); } }} disabled={gameAudioLoading} style={{flex:1,border:"0",borderRadius:"11px",background:gameAudioLoading?"#64748b":"#2563eb",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
+              {gameAudioLoading?"⏳ Preparing...":(gameForceDeviceVoice?"⚡ Play Device Voice":"▶ Play / Pause")}
+            </button>
+            <button onClick={()=>{ const a=gameAudioRef.current; if(a){ a.pause(); a.currentTime=0; } stopDeviceVoice(); }} style={{flex:1,border:"0",borderRadius:"11px",background:"#334155",color:"#fff",fontWeight:"900",fontSize:"15px",padding:"12px",fontFamily:F}}>
+              ⏹ Stop
+            </button>
+          </div>
           {gameForceDeviceVoice && <button onClick={stopDeviceVoice} style={{width:"100%",border:"0",borderRadius:"11px",background:"#334155",color:"#fff",fontWeight:"800",fontSize:"14px",padding:"10px",fontFamily:F,marginTop:"8px"}}>
             ⏹ Stop Voice
           </button>}
@@ -5914,7 +5919,7 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
                   <p style={{color:C.mu,fontSize:"12px",margin:"0 0 13px",fontFamily:F}}>{canListen?"Use the controls to listen.":"You have used all your listens."}</p>
                   <div style={{display:"flex",gap:"7px",justifyContent:"center",flexWrap:"wrap",marginBottom:"10px"}}>
                     {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(-10)} disabled={!canListen}>⏪ 10s</Btn>}
-                    {(!isPlaying || !AC.pause) ? <Btn onClick={playAudio} disabled={!canListen||(isPlaying&&!AC.pause)}>▶ Play</Btn> : <Btn color={C.w} onClick={pauseAudio}>⏸ Pause</Btn>}
+                    {(!isPlaying) ? <Btn onClick={playAudio} disabled={!canListen}>▶ Play</Btn> : <Btn color={C.w} onClick={pauseAudio}>⏸ Pause</Btn>}
                     {AC.restart && <Btn size="sm" color={C.p} onClick={restartAudio} disabled={!canListen}>🔁 Restart</Btn>}
                     {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>10s ⏩</Btn>}
                     {AC.speed && <Btn size="sm" color={C.pu} onClick={cycleSpeed}>⚡ {playSpeed}x</Btn>}
@@ -5964,7 +5969,8 @@ function TakeQuiz({quiz: rawQuiz, student, allResponses, onDone, onSaved}) {
               {skip10Enabled && <Btn size="sm" color={C.mu} onClick={()=>seekAudio(10)} disabled={!canListen}>⏩</Btn>}
               {AC.speed && <Btn size="sm" color={C.pu} onClick={cycleSpeed}>⚡ {playSpeed}x</Btn>}
               {listensLeft!==null && <span style={{color:listensLeft>0?C.s:C.d,fontSize:"11px",fontWeight:"700",fontFamily:F}}>({listensLeft} left)</span>}
-              {!quiz.audioFile && getTTSChunks().length>1 && <span style={{color:C.mu,fontSize:"11px",fontWeight:"700",fontFamily:F}}>Sentence {ttsIndex+1}/{getTTSChunks().length}</span>}
+              {<Btn size="sm" color={C.d} onClick={()=>{ const a=audioElRef.current; if(a){a.pause();a.currentTime=0;} try{window.speechSynthesis.cancel();}catch(e){} setIsPlaying(false); }}>⏹ Stop</Btn>
+              !quiz.audioFile && getTTSChunks().length>1 && <span style={{color:C.mu,fontSize:"11px",fontWeight:"700",fontFamily:F}}>Sentence {ttsIndex+1}/{getTTSChunks().length}</span>}
             </div>
             {quiz.audioFile && <div style={{marginTop:"8px"}}>
               <p style={{fontSize:"10px",color:C.mu,margin:"0 0 4px",fontFamily:F,textAlign:"center"}}></p>
@@ -6890,7 +6896,7 @@ async function projectAllowSubmissionAgain(p,s){
   if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection)) return;
   const sid=s.studentId||s.studentNumber||""; if(!sid)return;
   try{
-    // v497: Delete the lock completely so the student can upload again
+    // v498: Delete the lock completely so the student can upload again
     const lockId = projectSubmissionGuardId(p.id,sid);
     await db.collection("projectSubmissionLocks").doc(lockId).delete();
   }catch(e){console.warn("submission guard reset failed",e&&e.message);}
@@ -6934,7 +6940,7 @@ function StudentProjects({user,data,reload}){
     projectSubmitLock.current=true;
     setSubmitting(true);
     try{
-      // v497: Check status BEFORE acquiring lock
+      // v498: Check status BEFORE acquiring lock
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
       const isResubmit = prior.length > 0 && prior[0].status === "resubmit_allowed";
       if(prior.length && !isResubmit) throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
@@ -6957,8 +6963,8 @@ function StudentProjects({user,data,reload}){
         if(fileMeta&&fileMeta.url){try{await projectDeleteStoredFile({fileUrl:fileMeta.url,filePath:fileMeta.path});}catch(_e){}}
         throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
       }
-      // v497: tell the teacher live via ONE inbox doc (same pattern as rpInbox). Failure never affects the submission.
-      try{ if(FIREBASE_OK&&db&&db.collection&&p.teacherId) await db.collection("projectInbox").doc(String(p.teacherId)).set({ids:firebase.firestore.FieldValue.arrayUnion(String(id)),updatedAt:new Date().toISOString()},{merge:true}); }catch(e){console.warn("v497 projectInbox write failed",e&&e.message);}
+      // v498: tell the teacher live via ONE inbox doc (same pattern as rpInbox). Failure never affects the submission.
+      try{ if(FIREBASE_OK&&db&&db.collection&&p.teacherId) await db.collection("projectInbox").doc(String(p.teacherId)).set({ids:firebase.firestore.FieldValue.arrayUnion(String(id)),updatedAt:new Date().toISOString()},{merge:true}); }catch(e){console.warn("v498 projectInbox write failed",e&&e.message);}
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       submissionSaved=true;
@@ -8465,7 +8471,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     return false;
   }
 
-  // v497: preserve V370 identity coverage without the old whole-collection listener.
+  // v498: preserve V370 identity coverage without the old whole-collection listener.
   // Merge every supported identity alias, then deduplicate by document id.
   useEffect(()=>{
     if(!user || !FIREBASE_OK || !(db&&db.collection)) return;
@@ -8482,7 +8488,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         const email=String(user.email||"").trim();
         const probes=[];
         function add(field,value){if(value&&!probes.some(p=>p[0]===field&&p[1]===value))probes.push([field,value]);}
-        // v497: primary probes first; legacy probes only if nothing was found (avoids 4x duplicate reads per record).
+        // v498: primary probes first; legacy probes only if nothing was found (avoids 4x duplicate reads per record).
         add("studentNumber",sid); add("studentUserId",uidv);
         const legacy=[]; function addL(f,v){if(v)legacy.push([f,v]);}
         addL("studentId",uidv); addL("studentId",sid); addL("userId",uidv); addL("studentEmail",email);
@@ -8504,7 +8510,7 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         const arr=Array.from(out.values()).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
         if(sidCache && probeOk) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
         setLocalRpSubmissions(arr);
-      }catch(err){ console.warn("v497 student RP scoped load unavailable",err&&err.message); }
+      }catch(err){ console.warn("v498 student RP scoped load unavailable",err&&err.message); }
     })();
     return function(){alive=false;};
   },[user&&user.id,user&&user.studentId,user&&user.email]);
@@ -9202,20 +9208,20 @@ function rpDeletedPatch(r, teacherId){
   return {...r,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",teacherReview:"deleted",teacherReviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,pending:false,accepted:false,approved:false,teacherAccepted:false,teacherApproved:false,deletedAt:now,reviewedAt:now,updatedAt:now,deletedBy:teacherId||"teacher",visibleToStudent:false,scoreVisible:false};
 }
 
-// v497: ONE shared, bounded teacher RP history loader (used by the RP page and the RP drawer).
+// v498: ONE shared, bounded teacher RP history loader (used by the RP page and the RP drawer).
 // Reads only this teacher's own submissions (teacherId filter; audio chunks have no teacherId so they are never read).
 // Memoised per page session -> a single query, no matter how many RP screens ask for it.
 window.__eqRpTeacherHistory=function(teacherId,force){
   const tid=String(teacherId||"").trim();
   if(!tid||tid==="unknown"||tid==="teacher") return Promise.resolve([]);
-  const store=window.__EQ_RP_HISTORY_v497||(window.__EQ_RP_HISTORY_v497={});
+  const store=window.__EQ_RP_HISTORY_v498||(window.__EQ_RP_HISTORY_v498={});
   if(!force&&store[tid]&&store[tid].promise) return store[tid].promise;
   const p=(async function(){
     const out=new Map();
     try{
       if(!(typeof db!=="undefined"&&db&&db.collection)) return [];
       const snap=await db.collection("readingSubmissions").where("teacherId","==",tid).get();
-      try{window.__eqReadDiag&&window.__eqReadDiag("get:rp-v497-teacher-history",Math.max(1,Number(snap.size||0)));}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("get:rp-v498-teacher-history",Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(function(doc){
         const r={id:doc.id,...(doc.data?doc.data():{})};
         if(String(r.source||"")==="rp_audio_chunk"||String(doc.id).indexOf("_chunk_")>=0||String(doc.id).indexOf("__rp_audio_chunk__")===0) return;
@@ -9223,7 +9229,7 @@ window.__eqRpTeacherHistory=function(teacherId,force){
         out.set(String(doc.id),r);
       });
     }catch(e){
-      console.warn("v497 RP teacher history failed",e&&e.message);
+      console.warn("v498 RP teacher history failed",e&&e.message);
       try{delete store[tid];}catch(_e){}   // allow retry on next open
       return [];
     }
@@ -9234,7 +9240,7 @@ window.__eqRpTeacherHistory=function(teacherId,force){
   return p;
 };
 function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
-  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rp-roster-v497",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
+  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rp-roster-v498",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
   const [historicalTeacherSubs,setHistoricalTeacherSubs]=useState([]);
   const [historicalTeacherTasks,setHistoricalTeacherTasks]=useState([]);
   useEffect(()=>{
@@ -9242,8 +9248,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     let alive=true;
     const teacherKey=String(user.id||"teacher");
     const memoryCache=window.__EQ_RP_TEACHER_CACHE||(window.__EQ_RP_TEACHER_CACHE=new Map());
-    const memKey=teacherKey+"::v497-direct";
-    const persistedKey="eq_rp_teacher_direct_cache_v497_"+teacherKey;
+    const memKey=teacherKey+"::v498-direct";
+    const persistedKey="eq_rp_teacher_direct_cache_v498_"+teacherKey;
 
     function cleanDirectRows(arr){
       const out=new Map();
@@ -9260,7 +9266,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
 
     function loadLegacyLocal(){
       const merged=[];
-      const keys=["eq_rp_teacher_direct_cache_v497_"+teacherKey,"rp_attempt_records_v11","rp_student_attempts","eq_readingSubmissions"];
+      const keys=["eq_rp_teacher_direct_cache_v498_"+teacherKey,"rp_attempt_records_v11","rp_student_attempts","eq_readingSubmissions"];
       keys.forEach(function(k){
         try{
           const x=JSON.parse(localStorage.getItem(k)||"[]");
@@ -9276,17 +9282,17 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       const clean=cleanDirectRows(rows);
       setHistoricalTeacherSubs(clean);
       if(Array.isArray(tasks)) setHistoricalTeacherTasks(tasks);
-      try{window.__eqReadDiag&&window.__eqReadDiag(source||"rp-v497-publish",clean.length);}catch(_e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag(source||"rp-v498-publish",clean.length);}catch(_e){}
     }
 
     // 1) Instant path: memory cache, then V370 legacy local cache.
     const mem=memoryCache.get(memKey);
     if(mem&&Array.isArray(mem.rows)&&mem.rows.length){
-      publish(mem.rows,mem.tasks||[],"cache:teacher-rp-v497-memory");
+      publish(mem.rows,mem.tasks||[],"cache:teacher-rp-v498-memory");
     }else{
       const localRows=loadLegacyLocal();
       if(localRows.length){
-        publish(localRows,[],"cache:teacher-rp-v497-local");
+        publish(localRows,[],"cache:teacher-rp-v498-local");
         memoryCache.set(memKey,{rows:localRows,tasks:[]});
       }
     }
@@ -9301,8 +9307,8 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
           const x={id:doc.id,...(doc.data?doc.data():{})};
           taskMap.set(String(doc.id),x);
         });
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-tasks-v497",Math.max(1,Number(owned.size||0)));}catch(_e){}
-      }catch(e){console.warn("v497 RP task load failed",e&&e.message);}
+        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rp-tasks-v498",Math.max(1,Number(owned.size||0)));}catch(_e){}
+      }catch(e){console.warn("v498 RP task load failed",e&&e.message);}
 
       // If we already have a rich V370/local snapshot, do not perform another full collection read.
       let existing=[];
@@ -9310,16 +9316,16 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
         const m=memoryCache.get(memKey);
         existing=(m&&Array.isArray(m.rows))?m.rows:loadLegacyLocal();
       }catch(_e){}
-      // v497: show cached rows instantly, then load the teacher's full history ONCE (shared with the RP drawer).
+      // v498: show cached rows instantly, then load the teacher's full history ONCE (shared with the RP drawer).
       const tasks=Array.from(taskMap.values());
       if(tasks.length) setHistoricalTeacherTasks(tasks);
-      if(existing.length) publish(existing,tasks,"cache:teacher-rp-v497-cache");
+      if(existing.length) publish(existing,tasks,"cache:teacher-rp-v498-cache");
       const fresh=await window.__eqRpTeacherHistory(teacherKey,false);
       if(!alive) return;
       const merged=cleanDirectRows([...(existing||[]),...(fresh||[])]);
       memoryCache.set(memKey,{rows:merged,tasks});
       try{localStorage.setItem(persistedKey,JSON.stringify({rows:merged.slice(-400).map(function(r){const c={...r};delete c.audioDataUrl;return c;})}));}catch(_e){}
-      publish(merged,tasks,"get:teacher-rp-v497-merged");
+      publish(merged,tasks,"get:teacher-rp-v498-merged");
     })();
 
     return ()=>{alive=false;};
@@ -9381,7 +9387,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(!s || rpOldDeleted(s)) return false;
     const sid=eqDigits(s.studentNumber||s.studentId||s.studentUserId||s.userId||"");
     if(rpDeletedStudents.has(String(s.studentId||""))||rpDeletedStudents.has(String(s.studentNumber||""))||(sid&&(rpDeletedStudents.has(sid)||rpDeletedStudents.has("student_"+sid)))) return false;
-    // v497: a real RP attempt stays visible even if its old task was renamed/deleted.
+    // v498: a real RP attempt stays visible even if its old task was renamed/deleted.
     // Current official student roster is the authority; task existence is NOT required.
     const rosterMatch=!!rpResolveStudentForSubmission(s,myStudents||[]);
     if(rosterMatch) return true;
@@ -9390,7 +9396,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     return (myClasses||[]).some(c=>sameClassId(s.classId||s.className||"",c.id||c.classId||c.name||""));
   }
   const subs=rawSubs.filter(rpSubIsActive).sort(function(a,b){return rpAttemptTimeMs(b)-rpAttemptTimeMs(a);});
-  // v497: never hydrate audio chunks merely by opening RP.
+  // v498: never hydrate audio chunks merely by opening RP.
   // Chunk documents are fetched only on explicit Play / Analyze for that one recording.
   useEffect(()=>{
     try{window.__eqReadDiag&&window.__eqReadDiag("teacher-rp:auto-audio-chunk-load-disabled",0);}catch(_e){}
@@ -11776,7 +11782,7 @@ function rtAdaptiveLevel(resps){
     const twoPerfectSameLevel=!!(prev && Number(prev.score)===100 && prevLv && prevLv.id===lastLv.id);
     if(twoPerfectSameLevel && newIdx<RT_ADAPTIVE_LEVELS.length-1) newIdx++;
   } else if(score<=40 && newIdx>0){
-    // v497: 60% never lowers the level. A downgrade requires TWO consecutive weak
+    // v498: 60% never lowers the level. A downgrade requires TWO consecutive weak
     // attempts (40% or below) at the same level.
     const prev=resps.length>1?(resps[resps.length-2]||{}):null;
     const prevLv=prev?(RT_ADAPTIVE_LEVELS.find(l=>l.name===(prev.level||"")||l.id===Number(prev.levelId))||null):null;
@@ -11875,9 +11881,9 @@ Return ONLY valid JSON (no markdown):
 
 // ── Reading Theory Teacher: مفتاح + تحكم + نتائج
 function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
-  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rt-roster-v497",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
+  React.useEffect(()=>{try{window.__eqReadDiag&&window.__eqReadDiag("rt-roster-v498",(myStudents||[]).length);}catch(_e){}},[(myStudents||[]).length]);
   const [rtTeacherRows,setRtTeacherRows]=useState([]);
-  // v497: load saved Reading Theory attempts only for the teacher's current classes.
+  // v498: load saved Reading Theory attempts only for the teacher's current classes.
   // Reading Theory response documents do not contain teacherId, so class-scoped queries are the correct server-side boundary.
   React.useEffect(()=>{
     if(!FIREBASE_OK || !(db&&db.collection)) return;
@@ -11897,7 +11903,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         try{
           const snap=await db.collection("readingTheoryResponses").where("classId","==",cid).get();
           snap.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};out.set(String(doc.id),x);});
-        }catch(e){console.warn("v497 RT class history load failed",cid,e&&e.message);}
+        }catch(e){console.warn("v498 RT class history load failed",cid,e&&e.message);}
       }
       if(alive){
         const rows=Array.from(out.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
@@ -11989,7 +11995,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     setSelStudents(cleanStudentIds);
     try{
       await fsSetStrict("appSettings","rt_access",payload);
-      // v497: do not spend an extra read verifying our own acknowledged write.
+      // v498: do not spend an extra read verifying our own acknowledged write.
       const live={...payload,id:"rt_access"};
       setStatus(live.status||"closed");
       setSelClasses((live.classIds||[]).map(canonicalClassId).filter(Boolean));
@@ -12247,7 +12253,7 @@ function ReadingTheoryStudent({user,data,reload}){
   // This prevents stale View-as-Student state without ever loading global collections.
   const rtAccessFromData=(data.appSettings||[]).find(d=>d.id==="rt_access")||{status:"closed",classIds:[],studentIds:[]};
   const [rtAccessLive,setRtAccessLive]=useState(rtAccessFromData);
-  // v497: rt_access comes from login bootstrap and stays live through the single app-level document listener.
+  // v498: rt_access comes from login bootstrap and stays live through the single app-level document listener.
   React.useEffect(()=>{setRtAccessLive(rtAccessFromData);},[rtAccessFromData.status,JSON.stringify(rtAccessFromData.classIds||[]),JSON.stringify(rtAccessFromData.studentIds||[]),rtAccessFromData.updatedAt]);
   const rtAccess=rtAccessLive||rtAccessFromData;
   const isOpen=rtAccess.status==="open";
@@ -13870,13 +13876,13 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       map.set(key,{...(map.get(key)||{}),...clean});
     };
     (Array.isArray(data.users)?data.users:[]).forEach(add);
-    // v497: local patches are lower priority than the current raw Firebase roster.
+    // v498: local patches are lower priority than the current raw Firebase roster.
     (Array.isArray(localStudentPatch)?localStudentPatch:[]).forEach(add);
     // The active Firebase row is applied LAST so stale/deleted/local metadata cannot replace it.
     (Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).forEach(add);
     return Array.from(map.values());
   })();
-  // v497: never infer or invent a class from a student number.
+  // v498: never infer or invent a class from a student number.
   // Show only the real current class stored on the active student record.
   const eqTeacherClassById=new Map(myClasses.map(function(c){return [canonicalClassId(c.id||c.classId||c.name||""),c];}));
   function eqEffectiveTeacherStudent(u){
@@ -13898,7 +13904,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     return {...base,classId:cid};
   }
   const myStudents=eqAllUsersForTeacher.map(eqEffectiveTeacherStudent).filter(Boolean).map(fixAhmedStudent);
-  // v497: Writing must use the exact same teacher roster/classes as every other module.
+  // v498: Writing must use the exact same teacher roster/classes as every other module.
   try{window.__EQ_WRITING_CLASSES=myClasses.slice();window.__EQ_WRITING_USERS=myStudents.slice();}catch(_e){}
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
@@ -13909,7 +13915,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     calc();window.addEventListener("eq-rt-seen",calc);return()=>window.removeEventListener("eq-rt-seen",calc);
   },[data.readingTheoryResponses,myStudents.length,user.id]);
 
-  // v497: referral badge is calculated inside DailyFollowupTeacher from its already-scoped rows.
+  // v498: referral badge is calculated inside DailyFollowupTeacher from its already-scoped rows.
   // This removes the second full dailyFollowup GET that previously doubled Follow-up reads.
   // TEACHER_ALL_OLD_RESULTS_SYNC_20260610
   // في حساب المعلم: اعرض كل نتائج الطلاب المرتبطة بأرقامهم، حتى لو كانت قديمة أو quizId غير موجود في قائمة الاختبارات الحالية.
@@ -14842,7 +14848,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const all=(await loadAllData()).users;
     if(all.find(u=>u.id!==editStu.id && !u.deleted && (u.studentId||"")===esForm.studentId.trim())){setEsMsg("That Student ID is used by another student.");return;}
     const typedSid=eqDigits(esForm.studentId.trim());
-    // v497: class selection is explicit. Never derive or override class from student-number digits.
+    // v498: class selection is explicit. Never derive or override class from student-number digits.
     let targetClass=esForm.classId;
     const oldSid=eqDigits(editStu.studentId||"");
     const targetCls=(myClasses||[]).find(c=>sameClassId(c.id||c.classId||c.grade||c.name,targetClass));
@@ -15112,7 +15118,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v497" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v498" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16032,7 +16038,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   );
 }
 
-// v497: background dashboard hydration must never overwrite newer realtime/local state.
+// v498: background dashboard hydration must never overwrite newer realtime/local state.
 function eqMergeDashboardFresh(prev,fresh){
   if(!prev) return fresh;
   const merged={...fresh};
@@ -16092,7 +16098,7 @@ function App() {
     window.addEventListener("eq-project-mutation",onProjectMutation);
     return ()=>window.removeEventListener("eq-project-mutation",onProjectMutation);
   },[]);
-  // v497: patch lazy Reading Theory history into React state; never reload global data.
+  // v498: patch lazy Reading Theory history into React state; never reload global data.
   React.useEffect(()=>{
     const fn=(ev)=>{const rows=(ev&&ev.detail&&ev.detail.rows)||[];setData(prev=>{if(!prev)return prev;const next={...prev,readingTheoryResponses:rows};window.__EQ_CURRENT_DATA=next;return next;});};
     window.addEventListener("eq-rt-history-loaded",fn);
@@ -16152,7 +16158,7 @@ function App() {
       try{if(typeof window.rpV11MergeCloudRecords==="function")window.rpV11MergeCloudRecords(d.readingSubmissions||[]);const rp=document.getElementById("rp-v11-panel");if(rp&&rp.style.display==="block"&&typeof window.rpV11RenderNow==="function")setTimeout(()=>window.rpV11RenderNow(),30);}catch(e){}
       return d;
     }
-    // v497: a teacher-side refresh must not fall back to the global 16-collection loader.
+    // v498: a teacher-side refresh must not fall back to the global 16-collection loader.
     // Reuse the current roster and refresh only dashboard collections; the RP realtime listener remains the single source for readingSubmissions.
     const teacherBase=window.__EQ_CURRENT_DATA||data;
     if(teacherBase && Array.isArray(teacherBase.users) && Array.isArray(teacherBase.classes)){
@@ -16167,7 +16173,7 @@ function App() {
 
   // Teacher taps "View as Student" -> pick a student to impersonate (view only their experience)
   async function eqLoadStudentReadingTheoryHistory(studentUser){
-    // v497: targeted Reading Theory history restore; canonical key first, narrow legacy fallbacks only.
+    // v498: targeted Reading Theory history restore; canonical key first, narrow legacy fallbacks only.
     // This restores historical Reading Theory attempts without reading the whole collection.
     if(!FIREBASE_OK || !db || !db.collection || !studentUser) return [];
     const out=new Map();
@@ -16186,7 +16192,7 @@ function App() {
     return Array.from(out.values());
   }
   async function viewAsStudent(studentUser){
-      // v497: instant memory-only impersonation. Do not block the eye action on RT history queries.
+      // v498: instant memory-only impersonation. Do not block the eye action on RT history queries.
       setParkedTeacher(user);
       setUser(studentUser);
       try{window.__eqReadDiag&&window.__eqReadDiag("view-as-student:instant-memory",0);}catch(_e){}
@@ -16207,7 +16213,7 @@ function App() {
       const sess=loadSession();
       // Show cached dashboard immediately when available, then refresh Firebase in the background.
       const cached=eqLoadFastDataCache();
-      // v497: teacher dashboard cache belongs only to a teacher session.
+      // v498: teacher dashboard cache belongs only to a teacher session.
       // Never paint it for a real student; that caused 11/161/120 and RP cards to flash, then disappear.
       const useCachedStartup = cached && !data && (!sess || String(sess.role||"")!=="student");
       if(useCachedStartup){
@@ -16226,14 +16232,14 @@ function App() {
       // V381: a valid cached teacher session already has the roster needed to paint/login.
       // Avoid a second full users/classes read before the background dashboard refresh.
       const cachedTeacherFast = !!(cached && sess && String(sess.role||"")!=="student");
-      // v497: cached heavy dashboard is fine, but the roster must never come from a stale cache.
+      // v498: cached heavy dashboard is fine, but the roster must never come from a stale cache.
       // Refresh only users/classes once; do not hydrate RP/RT/results here.
       const d = cachedTeacherFast ? await eqRefreshTeacherRosterOnly(cached) : await loadLoginData(sess);
       // V334: when a valid teacher session already has a cached dashboard, keep that usable
       // dashboard on screen. The lightweight auth snapshot is only for validation; full data
       // refreshes in the background. This removes the long blank/login wait without touching data.
       const keepCachedTeacher = !!(cached && sess && String(sess.role||"")!=="student");
-      // v497: even with cached heavy collections, replace roster immediately with the fresh V385-style live roster.
+      // v498: even with cached heavy collections, replace roster immediately with the fresh V385-style live roster.
       if(!keepCachedTeacher) setData(d);
       else { setData(d); window.__EQ_CURRENT_DATA=d; try{eqSaveFastDataCache(d);}catch(_e){} }
       // Check for ?quiz=CODE link
@@ -16241,7 +16247,7 @@ function App() {
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d)){
           const fixedU=fixAhmedStudent(u);
           if(String(fixedU.role||"")==="student"){
-            // v497: one deterministic student hydrate before StudentApp mounts.
+            // v498: one deterministic student hydrate before StudentApp mounts.
             // This prevents RT access/tasks from appearing seconds later and avoids empty-state flicker.
             try{
               const studentFresh=await loadStudentDataWithRoster(d,fixedU);
@@ -16258,7 +16264,7 @@ function App() {
       setLoading(false);
       // V333: hydrate heavy collections only after the usable screen is already visible.
       if(sess && String(sess.role||"")!=="student"){
-        // v497: a valid cached teacher session reopens from cache with zero heavy dashboard reads.
+        // v498: a valid cached teacher session reopens from cache with zero heavy dashboard reads.
         // Section-specific results are refreshed lazily when the teacher opens that section.
         if(!cachedTeacherFast){
           setTimeout(function(){
@@ -16266,13 +16272,13 @@ function App() {
             loadDashboardDataWithRoster(d).then(function(fresh){
               setData(prev=>{const next=eqMergeDashboardFresh(prev,fresh);window.__EQ_CURRENT_DATA=next;return next;}); window.__EQ_STARTUP_MS=Math.round(performance.now()-started);
               try{window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}catch(e){}
-            }).catch(function(e){console.warn("v497 teacher dashboard hydrate failed",e);});
+            }).catch(function(e){console.warn("v498 teacher dashboard hydrate failed",e);});
           },250);
         }else{
           try{window.__eqReadDiag&&window.__eqReadDiag("teacher-startup:cached-zero-heavy-hydrate",0);}catch(_e){}
         }
       } else if(sess && String(sess.role||"")==="student"){
-        // v497: no second background hydrate here.
+        // v498: no second background hydrate here.
         // A saved student session is validated by one user document, and student data is loaded once below
         // after the account is resolved. Avoid duplicate queries and delayed state replacement.
         try{window.__eqReadDiag&&window.__eqReadDiag("student-startup:single-hydrate",0);}catch(_e){}
@@ -16291,7 +16297,7 @@ function App() {
       const now=Date.now(); if(busy || now-last<45000) return; last=now;
       busy=true; try{ await reload(); }catch(e){} finally{ busy=false; }
     };
-    const onVis=()=>{ /* v497: Disabled background reload to save Firebase reads */ };
+    const onVis=()=>{ /* v498: Disabled background reload to save Firebase reads */ };
     // V378: do not reload all Firestore collections on browser focus/visibility.
     // Realtime listeners and explicit actions keep live data current without a 16-collection reload.
     return ()=>{};
@@ -16315,7 +16321,7 @@ function App() {
     return ()=>{ events.forEach(ev=>window.removeEventListener(ev,mark)); document.removeEventListener("visibilitychange",onVis); };
   },[user&&user.id,user&&user.role]);
 
-  // v497: one rt_access document listener for the real logged-in account (teacher or student).
+  // v498: one rt_access document listener for the real logged-in account (teacher or student).
   // This makes Open/Closed and selected students/classes propagate immediately across Chrome/Edge/Safari.
   useEffect(()=>{
     if(parkedTeacher || !user || !FIREBASE_OK || !(db&&db.collection)) return;
@@ -16333,8 +16339,8 @@ function App() {
           try{ if(String(user.role||"")!=="student") eqSaveFastDataCache(next); }catch(_e){}
           return next;
         });
-      },function(err){console.warn("v497 rt_access live sync unavailable",err&&err.message);});
-    }catch(e){console.warn("v497 rt_access live sync failed",e&&e.message);}
+      },function(err){console.warn("v498 rt_access live sync unavailable",err&&err.message);});
+    }catch(e){console.warn("v498 rt_access live sync failed",e&&e.message);}
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[parkedTeacher?"teacher-view":"real-student",user&&user.id,user&&user.role]);
 
@@ -16354,13 +16360,13 @@ function App() {
         return {...prev, [col]: arr};
       });
     }
-    // v497: disabled duplicate full readingTasks realtime snapshot for real students.
+    // v498: disabled duplicate full readingTasks realtime snapshot for real students.
     // Targeted startup already loads task definitions once.
     try{window.__eqReadDiag&&window.__eqReadDiag("student-readingTasks-listener:disabled",0);}catch(_e){}
     return ()=>{unsubs.forEach(u=>{try{u&&u();}catch(e){}});};
   },[user&&user.id,user&&user.role]);
 
-  // v497: automatic RP correction uses ONE inbox document per teacher.
+  // v498: automatic RP correction uses ONE inbox document per teacher.
   // Student submission updates rpInbox/<teacherId>; the teacher listens to that single document,
   // then fetches only the exact new submission. No readingSubmissions backlog snapshot at startup.
   useEffect(()=>{
@@ -16403,17 +16409,17 @@ function App() {
             try{window.rpRunTeacherAutoRecord(rec);}catch(_e){}
           }
           try{window.dispatchEvent(new Event("eq-pending-counts-changed"));}catch(_e){}
-        }catch(e){console.warn("v497 RP inbox submission fetch failed",e&&e.message);}
-      },e=>console.warn("v497 RP inbox listener unavailable",e&&e.message));
-    }catch(e){console.warn("v497 RP inbox listener failed",e&&e.message);}
+        }catch(e){console.warn("v498 RP inbox submission fetch failed",e&&e.message);}
+      },e=>console.warn("v498 RP inbox listener unavailable",e&&e.message));
+    }catch(e){console.warn("v498 RP inbox listener failed",e&&e.message);}
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
-  // v497: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
+  // v498: live cross-device sync (see eqSyncTouch). One document listener per teacher device.
   useEffect(()=>{
     const rt=parkedTeacher||user;
     if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v497|"+String(rt.id||"");
+    const myDev=eqDevId(), SEEN_KEY="eq_sync_seen_v498|"+String(rt.id||"");
     let unsub=null, chain=Promise.resolve();
     const log=(m)=>{ try{ const L=window.__EQ_SYNC_LOG||(window.__EQ_SYNC_LOG=[]); L.push({t:new Date().toISOString(),m:m}); if(L.length>30)L.shift(); }catch(_e){} };
     const loadSeen=()=>{ try{ return JSON.parse(localStorage.getItem(SEEN_KEY)||"null"); }catch(_e){ return null; } };
@@ -16426,7 +16432,7 @@ function App() {
         const next=await eqRefreshTeacherRosterOnly(cur);
         setData(prev=>{ if(!prev) return prev; const n={...prev,users:next.users,classes:next.classes,firebaseUsers:next.firebaseUsers,firebaseClasses:next.firebaseClasses}; window.__EQ_CURRENT_DATA=n; try{eqPersistFastSoon();}catch(_e){} return n; });
         log("roster refreshed");
-      }catch(e){ console.warn("v497 roster refresh failed",e&&e.message); }
+      }catch(e){ console.warn("v498 roster refresh failed",e&&e.message); }
     }
     async function patchIds(col,ids){
       const isFq=(col==="dailyFollowup"||String(col).indexOf("followup")===0);
@@ -16446,9 +16452,9 @@ function App() {
               const n={...prev,[col]:rows}; window.__EQ_CURRENT_DATA=n; return n;
             });
           }
-        }catch(e){ console.warn("v497 patch failed",col,id,e&&e.message); }
+        }catch(e){ console.warn("v498 patch failed",col,id,e&&e.message); }
       }
-      if(col==="readingTasks"){ try{ localStorage.removeItem("eq_rp_taskdefs_v497"); }catch(_e){} }
+      if(col==="readingTasks"){ try{ localStorage.removeItem("eq_rp_taskdefs_v498"); }catch(_e){} }
       if(!isFq){ try{ eqInvalidateDashboardHydrate(); eqPersistFastSoon(); }catch(_e){} }
       log("patched "+col+" ×"+ids.length);
     }
@@ -16457,9 +16463,9 @@ function App() {
       if(ROSTER.has(col)) return; // handled once by refreshRoster
       try{
         eqInvalidateDashboardHydrate();
-        try{ localStorage.removeItem("eq_rp_taskdefs_v497"); }catch(_e){}
+        try{ localStorage.removeItem("eq_rp_taskdefs_v498"); }catch(_e){}
         await reload(); log("bulk reload for "+col);
-      }catch(e){ console.warn("v497 bulk reload failed",e&&e.message); }
+      }catch(e){ console.warn("v498 bulk reload failed",e&&e.message); }
       
     }
     async function apply(changed){
@@ -16487,14 +16493,14 @@ function App() {
           saveSeen({...seen,...nowSeen});
           if(!changed.length) return;
           log("remote change: "+changed.map(c=>c.col+"("+(c.bulk||c.diff>1?"bulk":c.ids.length)+")").join(","));
-          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("v497 apply failed",e&&e.message));
-        }catch(e){ console.warn("v497 sync snapshot failed",e&&e.message); }
-      },e=>console.warn("v497 syncMarker listener unavailable",e&&e.message));
-    }catch(e){ console.warn("v497 syncMarker listener failed",e&&e.message); }
+          chain=chain.then(()=>apply(changed)).catch(e=>console.warn("v498 apply failed",e&&e.message));
+        }catch(e){ console.warn("v498 sync snapshot failed",e&&e.message); }
+      },e=>console.warn("v498 syncMarker listener unavailable",e&&e.message));
+    }catch(e){ console.warn("v498 syncMarker listener failed",e&&e.message); }
     return ()=>{ try{unsub&&unsub();}catch(_e){} };
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
-  // v497: live project delivery. Student writes projectInbox/<teacherId>; teacher listens to that ONE doc
+  // v498: live project delivery. Student writes projectInbox/<teacherId>; teacher listens to that ONE doc
   // and fetches only the exact new submission (1 read) instead of a full 1,200-read reload.
   useEffect(()=>{
     const rt=parkedTeacher||user;
@@ -16538,7 +16544,7 @@ function App() {
       window.__EQ_LOGIN_CLICK_TS=performance.now();
       try{window.__eqMark&&window.__eqMark("login");}catch(_e){}
       setUser(fixAhmedStudent(u));
-      // v497: keep the authenticated account in the light login snapshot so student validation and scoped hydrate work without a roster download.
+      // v498: keep the authenticated account in the light login snapshot so student validation and scoped hydrate work without a roster download.
       if(data&&Array.isArray(data.users)){const merged={...data,users:[...data.users.filter(x=>String(x.id)!==String(u.id)),u],firebaseUsers:[...(Array.isArray(data.firebaseUsers)?data.firebaseUsers:[]).filter(x=>String(x.id)!==String(u.id)),u]};setData(merged);window.__EQ_CURRENT_DATA=merged;}
       // V388 STARTUP + RP SYNC FIX: Login has already fetched users/classes. Reuse that exact snapshot.
       // The old path called reload()->loadAllData(), downloading the full roster again before Main.
@@ -16862,10 +16868,10 @@ document.addEventListener("click", function(e){
     return Object.values(map).filter(function(r){ return r && !(rpIsLocallyDeletedAttempt(r) && !(isDeleted(r)||rpAttemptState(r)==="deleted")); });
   }
 
-  let __rpv497CloudLoaded=false;
-  let __rpv497CloudPromise=null;
+  let __rpv498CloudLoaded=false;
+  let __rpv498CloudPromise=null;
   async function cloudRecords(force){
-    // v497: restore the V370 teacher-history discovery only when RP is opened.
+    // v498: restore the V370 teacher-history discovery only when RP is opened.
     // Use bounded direct-submission queries; never read audio chunk documents or keep a full listener.
     try{
       const d=window.__EQ_CURRENT_DATA||{};
@@ -16886,19 +16892,19 @@ document.addEventListener("click", function(e){
         map.set(id,{...r,id:id});
       }
       [...live,...cached,...recordsLive()].forEach(add);
-      if(!force && __rpv497CloudLoaded) return Array.from(map.values());
-      if(__rpv497CloudPromise) return await __rpv497CloudPromise;
+      if(!force && __rpv498CloudLoaded) return Array.from(map.values());
+      if(__rpv498CloudPromise) return await __rpv498CloudPromise;
       if(!(typeof db!=="undefined" && db && db.collection)) return Array.from(map.values());
 
-      __rpv497CloudPromise=(async function(){
+      __rpv498CloudPromise=(async function(){
         async function runQuery(q,label){
           try{
             const snap=await q.get();
             try{window.__eqReadDiag&&window.__eqReadDiag(label,Math.max(1,Number(snap.size||0)));}catch(_e){}
             snap.forEach(function(doc){add({id:doc.id,...(doc.data?doc.data():{})});});
-          }catch(e){console.warn("v497 RP history query failed",label,e&&e.message);}
+          }catch(e){console.warn("v498 RP history query failed",label,e&&e.message);}
         }
-        // v497: the teacher's own submissions (shared single query; chunks have no teacherId so they are never read).
+        // v498: the teacher's own submissions (shared single query; chunks have no teacherId so they are never read).
         // The old `source==rp_shared_submission` query missed older records and also read other teachers' documents.
         const u=user();
         if(u&&u.id){
@@ -16911,15 +16917,15 @@ document.addEventListener("click", function(e){
           try{await rpRefreshRosters(false);}catch(_e){}
           const vals=Array.from(new Set((rpRosterBase()||[]).map(x=>String(x&&x.studentId||"").trim()).filter(Boolean)));
           for(let i=0;i<vals.length;i+=10){
-            await runQuery(db.collection("readingSubmissions").where("studentNumber","in",vals.slice(i,i+10)),"get:rp-v497-studentNumber:"+(i/10+1));
+            await runQuery(db.collection("readingSubmissions").where("studentNumber","in",vals.slice(i,i+10)),"get:rp-v498-studentNumber:"+(i/10+1));
           }
         }
-        __rpv497CloudLoaded=true;
+        __rpv498CloudLoaded=true;
         return Array.from(map.values());
       })();
-      try{return await __rpv497CloudPromise;}
-      finally{__rpv497CloudPromise=null;}
-    }catch(e){console.warn("v497 RP cloudRecords failed",e&&e.message);return [];}
+      try{return await __rpv498CloudPromise;}
+      finally{__rpv498CloudPromise=null;}
+    }catch(e){console.warn("v498 RP cloudRecords failed",e&&e.message);return [];}
   }
 
   async function cloudSaveRecord(record){
@@ -17183,7 +17189,7 @@ document.addEventListener("click", function(e){
     return merged;
   }
   function recordsFastWithBackgroundSync(){
-    // v497: memory only; no timed Firestore read.
+    // v498: memory only; no timed Firestore read.
     return recordsLive();
   }
 
@@ -17853,7 +17859,7 @@ document.addEventListener("click", function(e){
     panel.innerHTML=`
       <div style="position:sticky;top:0;background:#fff;z-index:2;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div id="rp-v497-diag" dir="ltr" style="font-size:11px;color:#64748b;font-weight:800;line-height:1.5">v497 diag…</div></div>
+          <div><h2 style="margin:0;color:#1e293b;font-size:19px">📖 التسجيلات المنتظرة للتقييم</h2><div id="rp-v498-diag" dir="ltr" style="font-size:11px;color:#64748b;font-weight:800;line-height:1.5">v498 diag…</div></div>
           <button id="rp-v11-hide" type="button" style="width:38px;height:38px;border:0;border-radius:12px;background:#64748b;color:white;font-weight:900;font-size:18px">×</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
@@ -18271,13 +18277,13 @@ document.addEventListener("click", function(e){
     const classSel=document.getElementById("rp-v11-class"), stuSel=document.getElementById("rp-v11-student"), taskSel=document.getElementById("rp-v11-task");
     const clsVal=classSel?classSel.value:"";
     try{
-      const dg=document.getElementById("rp-v497-diag");
+      const dg=document.getElementById("rp-v498-diag");
       if(dg){
         const snap=window.__EQ_CURRENT_DATA||{};
         const live=Array.isArray(snap.classes)?snap.classes:[];
         const delSet=rpDeletedClassSet();
         const hidden=live.filter(function(c){const id=String((c&&(c.id||c._id||c.classId||c.name))||"");const nm=String((c&&(c.name||c.grade))||"");return rpIsDeletedClass(id)||rpIsDeletedClass(nm);}).map(function(c){return String(c.name||c.grade||c.id);});
-        const st=(window.__EQ_RP_HISTORY_v497||{});const tid=String(user().id||"");
+        const st=(window.__EQ_RP_HISTORY_v498||{});const tid=String(user().id||"");
         dg.textContent="sid="+tid+" role="+user().role+" | classes live="+live.length+" cache="+RP_ACTIVE_CLASSES_CACHE.length+" shown="+rpClassesBase().length+" | deletedIds="+delSet.size+" hiddenLive=["+hidden.slice(0,8).join(",")+"] | users live="+((snap.users||[]).length)+" roster="+RP_ACTIVE_STUDENTS_CACHE.length+" | teacherQuery="+((st[tid]&&st[tid].count)!=null?st[tid].count:"?")+" records="+((all||[]).length);
       }
     }catch(_e){}
@@ -18513,7 +18519,7 @@ document.addEventListener("click", function(e){
     // Current React snapshot + the single teacher realtime listener are the source of truth.
     try{ await rpRefreshRosters(false); }catch(_e){}
     const snap=window.__EQ_CURRENT_DATA;
-    // v497: always merge the React snapshot WITH the synced cloud history (an empty/partial snapshot array must not hide it).
+    // v498: always merge the React snapshot WITH the synced cloud history (an empty/partial snapshot array must not hide it).
     let allLocalRaw=mergeRecords((snap&&Array.isArray(snap.readingSubmissions))?snap.readingSubmissions:[], recordsLive());
     try{RP_LIVE_CACHE=allLocalRaw.slice();}catch(_e){}
     const allLocal=allLocalRaw.filter(rpRecordVisible);
@@ -19100,7 +19106,7 @@ function classes(){
   const m=new Map();
   (LIVE_WRITING_CLASSES||[]).forEach(c=>{
     if(!c||c.deleted===true||c.status==="deleted"||c.hidePreloaded||c.permanentDeleted)return;
-    // v497: this list already is TeacherApp myClasses; never remove valid classes a second time.
+    // v498: this list already is TeacherApp myClasses; never remove valid classes a second time.
     const clean=(typeof eqCleanClassRow==="function"?eqCleanClassRow(c):c)||c;
     const rawId=String(clean.id||clean.classId||clean.name||""); if(!rawId)return;
     const id=(typeof canonicalClassId==="function"?canonicalClassId(rawId):rawId)||rawId;
@@ -19518,7 +19524,7 @@ setTimeout(function(){fab();},1500);
 
 <!-- QUIZ_CREATE_USES_LIVE_MYCLASSES_FIX_20260919 -->
 
-<!-- v497_FULL_FIRESTORE_AUDIT_20261014: preserves v398/v399 zero-global-reload, Projects, RP, Writing, Quizzes, RT assignments/history. Student-owned lookup query fan-out reduced from up to 20 probes/collection to canonical-first narrow fallback. No background polling added. -->
+<!-- v498_FULL_FIRESTORE_AUDIT_20261014: preserves v398/v399 zero-global-reload, Projects, RP, Writing, Quizzes, RT assignments/history. Student-owned lookup query fan-out reduced from up to 20 probes/collection to canonical-first narrow fallback. No background polling added. -->
 
 </body>
 </html>
