@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v508</title>
+<title>EduQuiz — Smart Assessment v507</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1195,7 +1195,7 @@ function FirestoreReadBox(){
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"v508",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"v507",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -6881,44 +6881,35 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
 function projectSubmissionGuardId(projectId,studentId){
   return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
 }
-// v508: one canonical student ID for lock acquisition, approval and resubmission.
-async function projectAcquireSubmissionGuard(p,st,isResubmit){
+async function projectAcquireSubmissionGuard(p,st){
   const token=uid();
-  if(!(FIREBASE_OK&&db&&db.collection&&db.runTransaction)) throw new Error("Firebase unavailable; submission not permitted offline.");
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection&&db.runTransaction)) return {token,remote:false};
   const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id));
   const now=Date.now(), staleMs=120000;
   await db.runTransaction(async tx=>{
-    const snap=await tx.get(ref), row=snap.exists?snap.data():null;
-    if(row&&row.status==="submitting"&&(now-Number(row.startedAtMs||0))<staleMs) throw new Error("Your project submission is already being processed.");
-    if(isResubmit){
-      if(!row||row.status!=="resubmit_allowed") throw new Error("Teacher resubmission permission not found. Ask the teacher to enable it again.");
-    }else if(row&&row.status==="submitted") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+    const snap=await tx.get(ref); const row=snap&&snap.exists?snap.data():null;
+    if(row&&row.status==="submitted") throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
+    if(row&&row.status==="submitting"&&(now-Number(row.startedAtMs||0))<staleMs) throw new Error("Your project submission is already being processed. Please wait; do not submit it again.");
     tx.set(ref,{projectId:p.id,studentId:st.id,studentNumber:st.studentId||"",status:"submitting",token,startedAtMs:now,updatedAt:new Date().toISOString()},{merge:true});
   });
   return {token,remote:true,ref};
 }
 async function projectFinishSubmissionGuard(guard,submissionId){
-  if(!guard||!guard.remote||!guard.ref)return;
-  await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"submitted",submissionId:submissionId||"",finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});});
+  if(!guard||!guard.remote||!guard.ref) return;
+  await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"submitted",submissionId:submissionId||"",finishedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true});});
 }
 async function projectReleaseSubmissionGuard(guard){
-  if(!guard||!guard.remote||!guard.ref)return;
-  try{await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"idle",token:"",updatedAt:new Date().toISOString()},{merge:true});});}catch(e){console.warn("submission guard release failed",e&&e.message);}
+  if(!guard||!guard.remote||!guard.ref) return;
+  try{await db.runTransaction(async tx=>{const snap=await tx.get(guard.ref);const row=snap&&snap.exists?snap.data():null;if(row&&row.token===guard.token)tx.set(guard.ref,{status:"idle",token:"",updatedAt:new Date().toISOString()},{merge:true});});}catch(e){console.warn("submission guard release failed",e&&e.message);}
 }
-async function projectAllowSubmissionAgain(p,st){
-  if(!(FIREBASE_OK&&db&&db.collection)) throw new Error("Firebase unavailable");
-  if(!p||!p.id||!st||!st.id) throw new Error("Missing canonical project/student ID");
-  const ref=db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id));
-  await db.runTransaction(async tx=>{
-    const snap=await tx.get(ref),row=snap.exists?snap.data():null;
-    if(row&&row.status==="submitting"&&Date.now()-Number(row.startedAtMs||0)<120000)throw new Error("Student is submitting now; retry shortly.");
-    tx.set(ref,{projectId:p.id,studentId:st.id,studentNumber:st.studentId||"",status:"resubmit_allowed",token:"",updatedAt:new Date().toISOString()},{merge:true});
-  });
-}
-async function projectRemoteResubmitPermission(p,st){
-  if(!(FIREBASE_OK&&db&&db.collection))return false;
-  const snap=await db.collection("projectSubmissionLocks").doc(projectSubmissionGuardId(p.id,st.id)).get();
-  return !!(snap.exists&&snap.data().status==="resubmit_allowed");
+async function projectAllowSubmissionAgain(p,s){
+  if(!(FIREBASE_OK&&typeof db!=="undefined"&&db&&db.collection)) return;
+  const sid=s.studentId||s.studentNumber||""; if(!sid)return;
+  try{
+    // v504: Delete the lock completely so the student can upload again
+    const lockId = projectSubmissionGuardId(p.id,sid);
+    await db.collection("projectSubmissionLocks").doc(lockId).delete();
+  }catch(e){console.warn("submission guard reset failed",e&&e.message);}
 }
 function StudentProjects({user,data,reload}){
   const [openProject,setOpenProject]=useState(null);
@@ -6927,16 +6918,6 @@ function StudentProjects({user,data,reload}){
   const [file,setFile]=useState(null);
   const [msg,setMsg]=useState("");
   const [submitting,setSubmitting]=useState(false);
-  const [remoteResubmit,setRemoteResubmit]=useState(false);
-  const [resubmitChecking,setResubmitChecking]=useState(false);
-  useEffect(()=>{
-    let active=true;
-    setRemoteResubmit(false);
-    if(!openProject||!user||!user.id)return ()=>{active=false;};
-    setResubmitChecking(true);
-    projectRemoteResubmitPermission(openProject,user).then(v=>{if(active)setRemoteResubmit(v);}).catch(e=>{if(active)setMsg("Could not check resubmission permission: "+(e.message||e));}).finally(()=>{if(active)setResubmitChecking(false);});
-    return ()=>{active=false;};
-  },[openProject&&openProject.id,user&&user.id]);
   const projectSubmitLock=useRef(false);
   const projects=(data.projects||[]).filter(p=>projectAssignedToStudent(p,user)).sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const submissions=data.projectSubmissions||[];
@@ -6946,7 +6927,7 @@ function StudentProjects({user,data,reload}){
     setMsg("");
     const dstat=projectDateStatus(p);
     if(dstat==="not_started"){setMsg("Project submission has not started yet.");return;}
-    if(dstat==="ended"&&!remoteResubmit&&!projectAllowedToResubmit(p,user,submissions)){setMsg("Project submission time has ended.");return;}
+    if(dstat==="ended"&&!projectAllowedToResubmit(p,user,submissions)){setMsg("Project submission time has ended.");return;}
     const submitMode = p.submissionType==="bothChoice" ? mode : (p.submissionType==="file"?"file":"text");
     if(submitMode==="text"&&!text.trim()){setMsg("Write your project text first.");return;}
     if(submitMode==="file"&&!file){setMsg("Choose a file first.");return;}
@@ -6971,7 +6952,7 @@ function StudentProjects({user,data,reload}){
     try{
       // v504: Check status BEFORE acquiring lock
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
-      const isResubmit = prior.length > 0 && await projectRemoteResubmitPermission(p,user);
+      const isResubmit = prior.length > 0 && prior[0].status === "resubmit_allowed";
       if(prior.length && !isResubmit) throw new Error("This project is already submitted. Ask your teacher to allow resubmission.");
       
       // V369: acquire an atomic Firestore guard BEFORE upload/slow work.
@@ -7008,7 +6989,7 @@ function StudentProjects({user,data,reload}){
     }
   }
   if(openProject){
-    const p=openProject; const dstat=projectDateStatus(p); const mine=projectSubmissionsForStudent(submissions,p.id,user); const latest=mine[0]; const canResubmit=remoteResubmit||projectAllowedToResubmit(p,user,submissions); const disabled=(dstat!=="open"&&!canResubmit);
+    const p=openProject; const dstat=projectDateStatus(p); const mine=projectSubmissionsForStudent(submissions,p.id,user); const latest=mine[0]; const canResubmit=projectAllowedToResubmit(p,user,submissions); const disabled=(dstat!=="open"&&!canResubmit);
     const submitMode = p.submissionType==="bothChoice" ? mode : (p.submissionType==="file"?"file":"text");
     return <div>
       <button onClick={()=>setOpenProject(null)} style={{background:"none",border:"none",fontSize:"20px",color:C.mu,marginBottom:"8px"}}>←</button>
@@ -7145,10 +7126,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       // Storage and lock cleanup is secondary; failure cannot resurrect the deleted Firestore record.
       let cleanupWarning=false;
       try{if(s.fileUrl||s.filePath)await projectDeleteStoredFile(s);}catch(e){cleanupWarning=true;console.warn("v507 storage cleanup",e);}
-      try{
-        const remaining=await projectSubmissionsForStudentRemote(p.id,{id:s.studentId,studentId:s.studentNumber});
-        if(!remaining.length) await projectAllowSubmissionAgain(p,{id:s.studentId,studentId:s.studentNumber});
-      }catch(e){cleanupWarning=true;console.warn("v508 lock cleanup",e);}
+      try{await projectAllowSubmissionAgain(p,s);}catch(e){cleanupWarning=true;console.warn("v507 lock cleanup",e);}
       setMsg(cleanupWarning?"✅ Attempt deleted from Firestore; some file/lock cleanup may need attention.":"✅ Attempt deleted from Firestore. Other submissions preserved.");
     }catch(e){setMsg("❌ Attempt NOT deleted: "+(e.message||e));}
   }
@@ -7161,8 +7139,11 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       // Query the project's submissions, then match the student using the same identity helper as the UI.
       const snap=await db.collection("projectSubmissions").where("projectId","==",p.id).get();
       const matches=snap.docs.filter(doc=>projectSubmissionMatchesStudent({id:doc.id,...doc.data()},student) && !["approved","deleted"].includes(String(doc.data().status||"")));
-      // Permission is stored separately; NEVER rewrite historical submission status/grades.
+      if(matches.length>450) throw new Error("Too many matching submissions");
+      const now=new Date().toISOString();
+      if(matches.length){const batch=db.batch();matches.forEach(doc=>batch.update(doc.ref,{status:"resubmit_allowed",resubmitAllowedAt:now,updatedAt:now}));await batch.commit();}
       await projectAllowSubmissionAgain(p,student);
+      matches.forEach(doc=>{try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",{id:doc.id,...doc.data(),status:"resubmit_allowed",resubmitAllowedAt:now,updatedAt:now});}catch(_e){}});
       setMsg("✅ Resubmission enabled. Previously approved grades remain unchanged for "+(student.name||"student")+".");
     }catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));}
   }
@@ -15195,7 +15176,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v508" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v507" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -19610,5 +19591,3 @@ setTimeout(function(){fab();},1500);
 
 <!-- v505: atomic project grade + approval, no false manual grading success -->
 <!-- v507: strict project deletion and awaited resubmission updates -->
-
-<!-- v508: durable resubmission permission independent of approved attempts -->
