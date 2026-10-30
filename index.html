@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v512</title>
+<title>EduQuiz — Smart Assessment v513</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1765,6 +1765,7 @@ async function eqQueryResponsesForQuizIds(quizIds){
     return (all||[]).filter(r=>set.has(String(r&&r.quizId||"")));
   }
   const out=new Map();
+  let failed=0;
   // Use conservative batches of 10 for broad Firestore compatibility.
   for(let i=0;i<ids.length;i+=10){
     const chunk=ids.slice(i,i+10);
@@ -1773,10 +1774,12 @@ async function eqQueryResponsesForQuizIds(quizIds){
       try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(doc=>{const x=doc.data()||{};out.set(String(doc.id),{...x,id:x.id||doc.id,_id:doc.id});});
     }catch(e){
-      console.error("v512 RESPONSE QUERY FAILED — results are NOT confirmed empty", {quizIds:chunk,error:e&&e.message,code:e&&e.code}); window.__EQ_RESPONSE_QUERY_ERROR={quizIds:chunk,error:String(e&&e.message||e),code:String(e&&e.code||"")};
+      failed++;
+      console.error("v513 RESPONSE QUERY FAILED — results are NOT confirmed empty", {quizIds:chunk,error:e&&e.message,code:e&&e.code}); window.__EQ_RESPONSE_QUERY_ERROR={quizIds:chunk,error:String(e&&e.message||e),code:String(e&&e.code||"")};
       // Never fall back to a full collection scan in normal teacher dashboard flow.
     }
   }
+  if(failed) throw new Error("Quiz response queries failed: "+failed+" batch(es). Existing results must not be replaced with an incomplete list.");
   return Array.from(out.values());
 }
 
@@ -1848,8 +1851,15 @@ async function loadDashboardDataWithRoster(base) {
       fsGetDoc("appSettings","ai_key")
     ]);
     window.__EQ_RESPONSE_QUERY_ERROR=null;
-    const responses=await eqQueryResponsesForQuizIds((quizzes||[]).map(q=>q&&q.id).filter(Boolean));
-    if(quizzes.length && !responses.length) console.error("v512: zero quiz responses returned. Check __EQ_RESPONSE_QUERY_ERROR, teacherId and Firestore quizId mapping.",{teacherId,quizCount:quizzes.length});
+    let responses;
+    try{responses=await eqQueryResponsesForQuizIds((quizzes||[]).map(q=>q&&q.id).filter(Boolean));}
+    catch(e){
+      console.error("v513: preserving existing dashboard data because quiz result retrieval failed",e);
+      const existing=window.__EQ_CURRENT_DATA;
+      if(existing && Array.isArray(existing.responses) && existing.responses.length) return existing;
+      throw e;
+    }
+    if(quizzes.length && !responses.length) console.error("v513: zero quiz responses returned. Check __EQ_RESPONSE_QUERY_ERROR, teacherId and Firestore quizId mapping.",{teacherId,quizCount:quizzes.length});
     if(cloudKey&&cloudKey.value&&!localStorage.getItem("eq_aikey")){ try{localStorage.setItem("eq_aikey",cloudKey.value);}catch(e){} }
     const baseSettings=Array.isArray(base.appSettings)?base.appSettings.slice():[];
     const allData={
@@ -1895,8 +1905,11 @@ async function eqQueryStudentRows(col, st){
       const snap=await db.collection(col).where(field,"==",value).get();
       try{window.__eqReadDiag&&window.__eqReadDiag("query:"+col+":"+field,Math.max(1,Number(snap.size||0)));}catch(_e){}
       snap.forEach(function(doc){out.set(String(doc.id),{...doc.data(),_id:doc.id,id:(doc.data()&&doc.data().id)||doc.id});});
-      if(out.size) break;
-    }catch(_e){}
+      // v513: do not stop at the first matching identity field: legacy results may use other keys.
+    }catch(e){
+      console.error("v513 student result lookup failed",{collection:col,field,code:e&&e.code,message:e&&e.message});
+      if(col==="responses") window.__EQ_STUDENT_RESPONSE_QUERY_ERROR={field,code:String(e&&e.code||""),message:String(e&&e.message||e)};
+    }
   }
   return Array.from(out.values());
 }
@@ -14173,7 +14186,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setResumeAfterEdit(wasOpen);
     setEditingQuiz(editing);
     setView("edit");
-    // v512: entering edit mode must not change the published status in Firebase.
+    // v513: entering edit mode must not change the published status in Firebase.
   }
   // On save while editing: reopen the quiz if it was open before editing. No full reload.
   async function saveEditedQuiz(q){
@@ -15122,7 +15135,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v512" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v513" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16245,7 +16258,7 @@ function App() {
       const keepCachedTeacher = !!(cached && sess && String(sess.role||"")!=="student");
       // v504: even with cached heavy collections, replace roster immediately with the fresh V385-style live roster.
       if(!keepCachedTeacher) setData(d);
-      else { setData(d); window.__EQ_CURRENT_DATA=d; /* v512: never overwrite full dashboard cache with login-light roster */ }
+      else { setData(d); window.__EQ_CURRENT_DATA=d; /* v513: never overwrite full dashboard cache with login-light roster */ }
       // Check for ?quiz=CODE link
       if(code){const q=d.quizzes.find(x=>x.code===code.toUpperCase()&&x.status==="open"&&(((x.assignedStudents||[]).length>0)||((x.classIds||[]).length>0)));if(q)setDirectQuiz(q);}
       if(sess){const sidSess=eqDigits(sess.studentId||sess.id||"");const sessionList=(sess.role==="student"&&Array.isArray(d.firebaseUsers))?d.firebaseUsers:d.users;const u=(sessionList||[]).find(x=>String(x.id||"")===String(sess.id||"") || (sidSess && eqDigits(x.studentId||x.id||"")===sidSess));if(u&&activeStudentInData(u,d)){
