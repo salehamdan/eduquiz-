@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v508</title>
+<title>EduQuiz — Smart Assessment v509</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1195,7 +1195,7 @@ function FirestoreReadBox(){
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"v508",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"v509",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -6881,7 +6881,7 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
 function projectSubmissionGuardId(projectId,studentId){
   return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
 }
-// v508: one canonical student ID for lock acquisition, approval and resubmission.
+// v509: one canonical student ID for lock acquisition, approval and resubmission.
 async function projectAcquireSubmissionGuard(p,st,isResubmit){
   const token=uid();
   if(!(FIREBASE_OK&&db&&db.collection&&db.runTransaction)) throw new Error("Firebase unavailable; submission not permitted offline.");
@@ -7055,7 +7055,16 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   const visibleSubs=React.useMemo(()=> subs.filter(s=>{const p=projectMap.get(String(s.projectId));const st=subStudentMap.get(String(s.id));return p && (fProject==="all"||p.id===fProject) && (fStatus==="all"||s.status===fStatus) && (fClass==="all"||(st&&sameClassId(st.classId,fClass)));}), [subs, projectMap, subStudentMap, fProject, fStatus, fClass]);
 
   const { needsFix, done, missingList } = React.useMemo(() => {
-    const nFix = visibleSubs.filter(s=>s.status==="submitted"||s.status==="ai_corrected"||s.status==="resubmit_allowed");
+    const approvedKeys=new Set(visibleSubs.filter(s=>s.status==="approved").map(s=>{
+      const st=subStudentMap.get(String(s.id));
+      return String(s.projectId)+"|"+String(st?st.id:(s.studentId||s.studentNumber||s.studentName||""));
+    }));
+    const nFix = visibleSubs.filter(s=>{
+      if(s.status!=="submitted"&&s.status!=="ai_corrected")return false;
+      const st=subStudentMap.get(String(s.id));
+      const key=String(s.projectId)+"|"+String(st?st.id:(s.studentId||s.studentNumber||s.studentName||""));
+      return !approvedKeys.has(key);
+    });
     const dn = visibleSubs.filter(s=>s.status==="approved");
     const mList = [];
     const filteredProjects = fProject==="all" ? projects : projects.filter(p=>p.id===fProject);
@@ -7094,18 +7103,19 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       const now=new Date().toISOString();
       const respRow={id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:now};
       const approvedRow={...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:now,updatedAt:now};
-      if(FIREBASE_OK){
-        const batch=db.batch();
-        batch.set(db.collection("quizzes").doc(gbId),q);
-        batch.set(db.collection("responses").doc(respId),respRow);
-        batch.set(db.collection("projectSubmissions").doc(String(s.id)),approvedRow);
-        await batch.commit();
-      }else{
-        // Local-only fallback is not a Firebase approval and is explicitly labeled.
-        await fsSet("quizzes",gbId,q);
-        await fsSet("responses",respId,respRow);
-        await fsSet("projectSubmissions",s.id,approvedRow);
-      }
+      if(!FIREBASE_OK) throw new Error("Firebase unavailable; approval not saved");
+      // v509: transaction checks the authoritative submission, not the stale UI snapshot.
+      const submissionRef=db.collection("projectSubmissions").doc(String(s.id));
+      await db.runTransaction(async tx=>{
+        const latest=await tx.get(submissionRef);
+        if(!latest.exists) throw new Error("Submission no longer exists; cannot approve a deleted attempt");
+        const live=latest.data()||{};
+        if(String(live.projectId)!==String(p.id)) throw new Error("Submission project mismatch");
+        if(live.status==="deleted") throw new Error("Deleted submission cannot be approved");
+        tx.set(db.collection("quizzes").doc(gbId),q);
+        tx.set(db.collection("responses").doc(respId),respRow);
+        tx.update(submissionRef,{finalScore,teacherFeedback:approvedRow.teacherFeedback,status:"approved",gradebookResponseId:respId,approvedAt:now,updatedAt:now});
+      });
       try{eqSyncTouch("quizzes",gbId);eqSyncTouch("responses",respId);eqSyncTouch("projectSubmissions",s.id);}catch(_e){}
       try{window.eqProjectPatch&&window.eqProjectPatch("quizzes","upsert",q);window.eqProjectPatch&&window.eqProjectPatch("responses","upsert",respRow);window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",approvedRow);}catch(_e){}
       setMsg(FIREBASE_OK?"✅ Project approval saved in Firebase and Gradebook.":"⚠️ Saved locally only; Firebase is unavailable.");
@@ -7126,20 +7136,20 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
     if(!window.confirm("Delete ONLY this project attempt?\nStudent: "+(s.studentName||"")+"\nProject: "+p.title+"\nAttempt: "+(s.attempt||1)+"\nThis cannot be undone.")) return;
     try{
       if(!s||!s.id||!p||!p.id) throw new Error("Missing project or submission ID");
-      if(FIREBASE_OK){
-        const batch=db.batch();
-        batch.delete(db.collection("projectSubmissions").doc(String(s.id)));
-        if(s.gradebookResponseId) batch.delete(db.collection("responses").doc(String(s.gradebookResponseId)));
-        const chunkCount=s.fileChunked?Number(s.fileChunkCount||0):0;
-        if(!Number.isSafeInteger(chunkCount)||chunkCount<0||chunkCount>450) throw new Error("Invalid file chunk count");
-        for(let i=0;i<chunkCount;i++) batch.delete(db.collection("projectSubmissions").doc(String(projectFileChunkId(s.id,i))));
-        // Do not remove the student's submission lock until the deletion is durable.
-        await batch.commit();
-      }else{
-        await fsDelStrict506("projectSubmissions",s.id);
-        if(s.gradebookResponseId) await fsDelStrict506("responses",s.gradebookResponseId);
-        if(s.fileChunked&&s.fileChunkCount) for(let i=0;i<Number(s.fileChunkCount);i++) await fsDelStrict506("projectSubmissions",projectFileChunkId(s.id,i));
-      }
+      if(!FIREBASE_OK) throw new Error("Firebase unavailable; deletion not saved");
+      const submissionRef=db.collection("projectSubmissions").doc(String(s.id));
+      const chunkCount=s.fileChunked?Number(s.fileChunkCount||0):0;
+      if(!Number.isSafeInteger(chunkCount)||chunkCount<0||chunkCount>450) throw new Error("Invalid file chunk count");
+      const liveSnap=await submissionRef.get();
+      if(!liveSnap.exists) throw new Error("Attempt already deleted in Firebase; refresh the list");
+      const live=liveSnap.data()||{};
+      if(String(live.projectId)!==String(p.id)) throw new Error("Project mismatch; deletion stopped");
+      const batch=db.batch();
+      batch.delete(submissionRef);
+      const responseId=live.gradebookResponseId||s.gradebookResponseId;
+      if(responseId)batch.delete(db.collection("responses").doc(String(responseId)));
+      for(let i=0;i<chunkCount;i++)batch.delete(db.collection("projectSubmissions").doc(String(projectFileChunkId(s.id,i))));
+      await batch.commit();
       try{eqSyncTouch("projectSubmissions",s.id);if(s.gradebookResponseId)eqSyncTouch("responses",s.gradebookResponseId);}catch(_e){}
       try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","delete",s.id);if(s.gradebookResponseId)window.eqProjectPatch&&window.eqProjectPatch("responses","delete",s.gradebookResponseId);}catch(_e){}
       // Storage and lock cleanup is secondary; failure cannot resurrect the deleted Firestore record.
@@ -7148,7 +7158,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       try{
         const remaining=await projectSubmissionsForStudentRemote(p.id,{id:s.studentId,studentId:s.studentNumber});
         if(!remaining.length) await projectAllowSubmissionAgain(p,{id:s.studentId,studentId:s.studentNumber});
-      }catch(e){cleanupWarning=true;console.warn("v508 lock cleanup",e);}
+      }catch(e){cleanupWarning=true;console.warn("v509 lock cleanup",e);}
       setMsg(cleanupWarning?"✅ Attempt deleted from Firestore; some file/lock cleanup may need attention.":"✅ Attempt deleted from Firestore. Other submissions preserved.");
     }catch(e){setMsg("❌ Attempt NOT deleted: "+(e.message||e));}
   }
@@ -13978,7 +13988,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   try{window.__EQ_WRITING_CLASSES=myClasses.slice();window.__EQ_WRITING_USERS=myStudents.slice();}catch(_e){}
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
-  const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
+  const projectPendingRows=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId)));
+  const projectApprovedKeys=new Set(projectPendingRows.filter(s=>s.status==="approved").map(s=>String(s.projectId)+"|"+String(s.studentId||s.studentNumber||s.studentName||"")));
+  const projectPendingCount=projectPendingRows.filter(s=>(s.status==="submitted"||s.status==="ai_corrected")&&!projectApprovedKeys.has(String(s.projectId)+"|"+String(s.studentId||s.studentNumber||s.studentName||""))).length;
   // v315: red badge for unseen Reading Theory attempts.
   useEffect(()=>{
     function calc(){let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){} const mine=(data.readingTheoryResponses||[]).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));setRtUnreadCount(mine.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).length);}
@@ -15195,7 +15207,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v508" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v509" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -19611,4 +19623,4 @@ setTimeout(function(){fab();},1500);
 <!-- v505: atomic project grade + approval, no false manual grading success -->
 <!-- v507: strict project deletion and awaited resubmission updates -->
 
-<!-- v508: durable resubmission permission independent of approved attempts -->
+<!-- v509: durable resubmission permission independent of approved attempts -->
