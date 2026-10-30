@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v506</title>
+<title>EduQuiz — Smart Assessment v504</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -216,8 +216,6 @@ try{
 <!-- V394_STUDENT_TARGETED_LOAD_NO_FULL_APP_READ -->
 <!-- V398_RP_SUBMIT_NO_LOADALLDATA_STRICT_MUTATION -->
 <!-- EDUQUIZ_v504_FINAL_READ_GUARD_20261015 -->
-<!-- EDUQUIZ_v505_ATOMIC_PROJECT_APPROVAL_20261030 -->
-<!-- EDUQUIZ_v506_STRICT_PROJECT_DELETE_20261030 -->
 </head>
 <body>
 <!-- V334_FAST_START_RP_DRAFT_REASSESS_20261007 -->
@@ -1531,14 +1529,6 @@ async function fsDel(col, id) {
   if(ok && col==="readingSubmissions") try{if(window.__EQ_RP_STUDENT_CACHE)window.__EQ_RP_STUDENT_CACHE.clear();if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"delete",id:String(id)}}));}catch(_e){}
   if(ok && col==="readingTasks") try{localStorage.removeItem("eq_rp_taskdefs_v504");__EQ_RP_TASK_DEFS_CACHE=null;__EQ_RP_TASK_DEFS_PROMISE=null;if(window.__EQ_RP_TEACHER_CACHE)window.__EQ_RP_TEACHER_CACHE.clear();}catch(_e){}
   if(ok && col==="readingTheoryResponses") try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();}catch(_e){}
-}
-
-// v506: strict delete for project records; unlike legacy fsDel, failures propagate.
-async function fsDelStrict506(col,id){
-  if(!id) throw new Error("Missing document ID");
-  if(FIREBASE_OK){await db.collection(col).doc(String(id)).delete();}
-  else {const arr=JSON.parse(localStorage.getItem("eq_"+col)||"[]").filter(x=>String(x.id)!==String(id));localStorage.setItem("eq_"+col,JSON.stringify(arr));}
-  try{eqSyncTouch(col,id);eqPatchCurrentCollection(col,"delete",id,null);}catch(_e){}
 }
 
 // QUIZ_SPEED_OPTIMIZATION_20260630
@@ -7055,91 +7045,60 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
   }, [visibleSubs, projects, subs, subStudentMap, myStudents, fProject, fClass]);
   async function delProject(p){ if(!confirm("Delete project: "+p.title+"?"))return; const row={...p,status:"deleted",updatedAt:today()}; try{ await fsSetStrict("projects",p.id,row); }catch(e){ alert("تعذر حذف المشروع من Firebase، لم يتم الحذف. تأكد من الاتصال وأعد المحاولة.\n"+((e&&e.message)||e)); return; } try{window.eqProjectPatch&&window.eqProjectPatch("projects","upsert",row);}catch(_e){} try{eqPersistFastSoon();}catch(_e){} }
   async function runAI(p,s){ try{setMsg("⏳ AI is correcting..."); const st=myStudents.find(x=>projectSubmissionMatchesStudent(s,x)); const review=await aiCorrectProjectSubmission({project:p,submission:s,student:st}); const fp=projectCheckFingerprintAgainstSubmissions(p,s,review,subs); const sim=fp||s.similarityCheck||null; const updated={...s,aiReview:review,similarityCheck:sim,status:"ai_corrected",updatedAt:new Date().toISOString()}; await fsSet("projectSubmissions",s.id,updated); try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",updated);}catch(_e){} setMsg(fp?"⚠️ AI correction completed. Similarity detected: "+fp.score+"% with "+fp.matchedStudentName+".":"✅ AI correction completed successfully. Review the suggested score, then approve or edit it."); }catch(e){setMsg("❌ "+(e.message||e));} }
-  // v505: Commit the gradebook and final approval as one Firestore atomic batch.
-  // Never show a success message or patch the UI before the cloud confirms the commit.
   async function approve(p,s,score,feedback){
     try {
-      const numeric=Number(score);
-      if(!Number.isFinite(numeric)||numeric<0||numeric>10) {setMsg("❌ Enter a valid score between 0 and 10.");return false;}
-      const finalScore=numeric;
+      const finalScore=Math.max(0,Math.min(10,Number(score)||0));
       const gbId="project_grade_"+p.id;
       const q={id:gbId,code:"PRJ"+String(p.id).slice(-4).toUpperCase(),teacherId:user.id,title:p.title,type:"Project",difficulty:"Project",subject:"Project",classIds:p.assignMode==="class"?p.classIds:[],assignedStudents:p.assignMode==="student"?p.studentIds:[],status:"closed",questions:[{id:1,text:p.title,options:["Project"],correct:0,skill:"Project",difficulty:"Project"}],mode:"normal",masteryThreshold:60,importedIncludeInAverage:true,projectId:p.id,createdAt:p.createdAt||today(),updatedAt:today()};
+      await fsSet("quizzes",gbId,q);
       const respId="project_response_"+s.id;
-      const now=new Date().toISOString();
-      const respRow={id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:now};
-      const approvedRow={...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:now,updatedAt:now};
-      if(FIREBASE_OK){
-        const batch=db.batch();
-        batch.set(db.collection("quizzes").doc(gbId),q);
-        batch.set(db.collection("responses").doc(respId),respRow);
-        batch.set(db.collection("projectSubmissions").doc(String(s.id)),approvedRow);
-        await batch.commit();
-      }else{
-        // Local-only fallback is not a Firebase approval and is explicitly labeled.
-        await fsSet("quizzes",gbId,q);
-        await fsSet("responses",respId,respRow);
-        await fsSet("projectSubmissions",s.id,approvedRow);
-      }
-      try{eqSyncTouch("quizzes",gbId);eqSyncTouch("responses",respId);eqSyncTouch("projectSubmissions",s.id);}catch(_e){}
+      const respRow={id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:new Date().toISOString()};
+      await fsSet("responses",respId,respRow);
+      const approvedRow={...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+      await fsSet("projectSubmissions",s.id,approvedRow);
       try{window.eqProjectPatch&&window.eqProjectPatch("quizzes","upsert",q);window.eqProjectPatch&&window.eqProjectPatch("responses","upsert",respRow);window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",approvedRow);}catch(_e){}
-      setMsg(FIREBASE_OK?"✅ Project approval saved in Firebase and Gradebook.":"⚠️ Saved locally only; Firebase is unavailable.");
-      return true;
-    }catch(e){setMsg("❌ Approval NOT saved: "+((e&&e.message)||e));return false;}
+      // V504: No reload needed, eqProjectPatch updates the UI state safely
+      setMsg("✅ Score approved successfully and added to Gradebook.");
+    } catch(e) { setMsg("❌ Failed to approve: " + e.message); }
   }
-  async function manualGrade(p,s){
-    const v=prompt("Final score out of 10:",s.finalScore!=null?s.finalScore:(s.aiReview&&s.aiReview.score)||"");
-    if(v===null)return;
-    const n=Number(String(v).trim());
-    if(!String(v).trim()||!Number.isFinite(n)||n<0||n>10){setMsg("❌ Enter a valid score from 0 to 10.");return;}
-    const fb=prompt("Feedback for student:",s.teacherFeedback||(s.aiReview&&s.aiReview.studentFeedback)||"");
-    if(fb===null)return;
-    await approve(p,s,n,fb);
+  async function manualGrade(p,s){ 
+    const v=prompt("Final score out of 10:", s.finalScore!=null?s.finalScore:(s.aiReview&&s.aiReview.score)||""); 
+    if(v===null)return; 
+    const fb=prompt("Feedback for student:", s.teacherFeedback || (s.aiReview&&s.aiReview.studentFeedback)||"")||""; 
+    await approve(p,s,v,fb); 
+    setMsg("✅ Manual project grade saved successfully."); 
   }
-  // v506: Only report deletion after Firestore has committed it. Never hide a failed delete.
   async function deleteProjectAttempt(p,s){
     if(!window.confirm("Delete ONLY this project attempt?\nStudent: "+(s.studentName||"")+"\nProject: "+p.title+"\nAttempt: "+(s.attempt||1)+"\nThis cannot be undone.")) return;
     try{
-      if(!s||!s.id||!p||!p.id) throw new Error("Missing project or submission ID");
-      if(FIREBASE_OK){
-        const batch=db.batch();
-        batch.delete(db.collection("projectSubmissions").doc(String(s.id)));
-        if(s.gradebookResponseId) batch.delete(db.collection("responses").doc(String(s.gradebookResponseId)));
-        const chunkCount=s.fileChunked?Number(s.fileChunkCount||0):0;
-        if(!Number.isSafeInteger(chunkCount)||chunkCount<0||chunkCount>450) throw new Error("Invalid file chunk count");
-        for(let i=0;i<chunkCount;i++) batch.delete(db.collection("projectSubmissions").doc(String(projectFileChunkId(s.id,i))));
-        // Do not remove the student's submission lock until the deletion is durable.
-        await batch.commit();
-      }else{
-        await fsDelStrict506("projectSubmissions",s.id);
-        if(s.gradebookResponseId) await fsDelStrict506("responses",s.gradebookResponseId);
-        if(s.fileChunked&&s.fileChunkCount) for(let i=0;i<Number(s.fileChunkCount);i++) await fsDelStrict506("projectSubmissions",projectFileChunkId(s.id,i));
-      }
-      try{eqSyncTouch("projectSubmissions",s.id);if(s.gradebookResponseId)eqSyncTouch("responses",s.gradebookResponseId);}catch(_e){}
+      if(s.gradebookResponseId) await fsDel("responses",s.gradebookResponseId);
+      if(s.fileUrl||s.filePath){await projectDeleteStoredFile(s);}
+      if(s.fileChunked&&s.fileChunkCount){for(let i=0;i<Number(s.fileChunkCount||0);i++) await fsDel("projectSubmissions",projectFileChunkId(s.id,i));}
+      await fsDel("projectSubmissions",s.id);
+      await projectAllowSubmissionAgain(p,s);
+      setMsg("✅ Attempt deleted. Other submissions were preserved.");
       try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","delete",s.id);if(s.gradebookResponseId)window.eqProjectPatch&&window.eqProjectPatch("responses","delete",s.gradebookResponseId);}catch(_e){}
-      // Storage and lock cleanup is secondary; failure cannot resurrect the deleted Firestore record.
-      let cleanupWarning=false;
-      try{if(s.fileUrl||s.filePath)await projectDeleteStoredFile(s);}catch(e){cleanupWarning=true;console.warn("v506 storage cleanup",e);}
-      try{await projectAllowSubmissionAgain(p,s);}catch(e){cleanupWarning=true;console.warn("v506 lock cleanup",e);}
-      setMsg(cleanupWarning?"✅ Attempt deleted from Firestore; some file/lock cleanup may need attention.":"✅ Attempt deleted from Firestore. Other submissions preserved.");
-    }catch(e){setMsg("❌ Attempt NOT deleted: "+(e.message||e));}
+    }catch(e){setMsg("❌ Delete failed: "+(e.message||e));}
   }
   async function allowResubmit(p,s){
-    try{
-      setMsg("⏳ Enabling project resubmission...");
-      const student=s.st?s.st:myStudents.find(x=>projectSubmissionMatchesStudent(s,x));
-      if(!student) throw new Error("Student not found");
-      if(!FIREBASE_OK) throw new Error("Firebase is unavailable");
-      // Query the project's submissions, then match the student using the same identity helper as the UI.
-      const snap=await db.collection("projectSubmissions").where("projectId","==",p.id).get();
-      const matches=snap.docs.filter(doc=>projectSubmissionMatchesStudent({id:doc.id,...doc.data()},student));
-      if(matches.length>450) throw new Error("Too many matching submissions");
-      const now=new Date().toISOString();
-      if(matches.length){const batch=db.batch();matches.forEach(doc=>batch.update(doc.ref,{status:"resubmit_allowed",resubmitAllowedAt:now,updatedAt:now}));await batch.commit();}
-      await projectAllowSubmissionAgain(p,student);
-      matches.forEach(doc=>{try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",{id:doc.id,...doc.data(),status:"resubmit_allowed",resubmitAllowedAt:now,updatedAt:now});}catch(_e){}});
-      setMsg("✅ Project resubmission enabled for "+(student.name||"student")+".");
-    }catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));}
-  }
+      try{
+        setMsg("⏳ Enabling project resubmission...");
+        const student = s.st ? s.st : myStudents.find(x=>projectSubmissionMatchesStudent(s,x));
+        if(!student) return alert("Student not found.");
+        
+        await projectAllowSubmissionAgain(p, student);
+        
+        // Directly update the submission in Firebase to resubmit_allowed
+        const q = db.collection("projectSubmissions").where("projectId","==",p.id).where("studentId","==",student.id);
+        const snap = await q.get();
+        snap.forEach(async (doc) => {
+            await doc.ref.update({status:"resubmit_allowed", resubmitAllowedAt:new Date().toISOString(), updatedAt:new Date().toISOString()});
+            try{window.eqProjectPatch&&window.eqProjectPatch("projectSubmissions","upsert",{id:doc.id, ...doc.data(), status:"resubmit_allowed"});}catch(_e){}
+        });
+
+        setMsg("✅ Project resubmission enabled for "+(student.name||"student")+".");
+      }catch(e){setMsg("❌ Could not enable resubmission: "+(e.message||e));}
+    }
   async function assignTopicsRandomly(p){
     const bank=projectTopicBank(data); if(!bank.length){setMsg("❌ Topic Bank is empty.");return;}
     const targets=projectTargetStudents(p,myStudents); if(!targets.length){setMsg("❌ No students are assigned to this project.");return;}
@@ -19581,6 +19540,3 @@ setTimeout(function(){fab();},1500);
 
 </body>
 </html>
-
-<!-- v505: atomic project grade + approval, no false manual grading success -->
-<!-- v506: strict project deletion and awaited resubmission updates -->
