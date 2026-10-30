@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v510</title>
+<title>EduQuiz — Smart Assessment v509</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1195,7 +1195,7 @@ function FirestoreReadBox(){
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const out=[];for(const off of [0]){const d=window.__eqPtDate(off);const doc=await db.collection("readStats").doc(d).get();out.push({date:d,data:doc.exists?doc.data():null});}setUsage({at:Date.now(),days:out});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #16a34a",background:"#166534",color:"white",cursor:"pointer"}}>📊 استهلاك الجميع (اليوم)</button>
       <button onClick={async()=>{try{await (window.__eqFlushUsage&&window.__eqFlushUsage());const d=window.__eqPtDate(1);const doc=await db.collection("readStats").doc(d).get();setUsage({at:Date.now(),days:[{date:d,data:doc.exists?doc.data():null}]});}catch(e){setUsage({at:Date.now(),error:String(e&&e.message||e)});}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>أمس</button>
       <button onClick={()=>{if(window.confirm("مسح كل الكاشات المحلية (الطلاب، الفصول، الفولو أب، المهام، الكاش السريع)؟ أول فتح بعدها سيقرأ من Firebase مرة واحدة."))try{window.eqClearAllCaches();alert("تم المسح");}catch(e){alert(String(e&&e.message||e));}}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #b45309",background:"#78350f",color:"white",cursor:"pointer"}}>🧹 مسح الكاش</button>
-      <button onClick={()=>{const report={version:"v510",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
+      <button onClick={()=>{const report={version:"v509",at:new Date().toISOString(),followupCacheHits:window.__EQ_FOLLOWUP_CACHE_HITS||0,followupLog:window.__EQ_FQ_LOG||[],followupSaveFailures:window.__EQ_FQ_QUOTA_FAIL||0,syncLog:window.__EQ_SYNC_LOG||[],deviceId:(function(){try{return eqDevId();}catch(_e){return "";}})(),sdkTrace:window.__EQ_FS_TRACE||{},observed:window.__EQ_READ_DIAG||{}};const output=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(output).catch(()=>window.prompt("Copy report",output));else window.prompt("Copy report",output);}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Copy Report</button>
       <button onClick={()=>{window.__EQ_FS_TRACE={startedAt:Date.now(),total:0,by:{},events:[]};window.__EQ_READ_DIAG={startedAt:Date.now(),total:0,by:{},events:[]};window.dispatchEvent(new CustomEvent("eq-read-diag-update"));}} style={{padding:"5px 8px",borderRadius:"6px",border:"1px solid #64748b",background:"#334155",color:"white",cursor:"pointer"}}>Reset Counter</button>
     </div>
     <span style={{color:"#cbd5e1"}}>Estimated instrumented reads, not Firebase billing totals.</span><br/>
@@ -1545,12 +1545,7 @@ async function fsDelStrict506(col,id){
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
 const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_login";
 function eqSaveFastDataCache(d){
-  try{
-    // v510: cache lightweight metadata only. Submissions and responses are always loaded from Firebase.
-    const safe=d?{...d,readingSubmissions:[],projectSubmissions:[],responses:[],readingTheoryResponses:[]}:d;
-    localStorage.setItem(EQ_FAST_DATA_CACHE_KEY,JSON.stringify({savedAt:Date.now(),data:safe}));
-    return true;
-  }catch(e){console.warn("v510 fast cache save failed; Firebase remains authoritative:",e&&e.message);return false;}
+  try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){}
 }
 // v504: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
@@ -1848,20 +1843,7 @@ async function loadDashboardDataWithRoster(base) {
     const fetchWithLimit = async (col) => {
       if (!db || !db.collection) return [];
       let q = db.collection(col).where("teacherId","==",teacherId);
-      if (col === "projectSubmissions") {
-        // v510: fetch all teacher submissions in bounded pages. No arbitrary 150-row cutoff.
-        // Order by document ID to avoid needing a composite teacherId+timestamp index.
-        const result=[]; let cursor=null;
-        for(let page=0;page<1000;page++){
-          let pageQuery=q.orderBy(firebase.firestore.FieldPath.documentId()).limit(200);
-          if(cursor) pageQuery=pageQuery.startAfter(cursor);
-          const snap=await pageQuery.get();
-          snap.docs.forEach(d=>{const row=d.data()||{};if(row.source!=="project_file_chunk")result.push({...row,id:row.id||d.id,_id:d.id});});
-          if(snap.docs.length<200)return result;
-          cursor=snap.docs[snap.docs.length-1];
-        }
-        throw new Error("Project pagination exceeded safety limit; refusing incomplete data");
-      }
+      if (col === "projectSubmissions" || col === "responses") q = q.limit(150);
       const snap = await q.get();
       return snap.docs.map(d=>({...d.data(), id:d.data().id||d.id, _id:d.id}));
     };
@@ -6899,7 +6881,7 @@ function ProjectCreateForm({user,data,myClasses,myStudents,onSaved,onCancel,edit
 function projectSubmissionGuardId(projectId,studentId){
   return encodeURIComponent(String(projectId||"project"))+"__"+encodeURIComponent(String(studentId||"student"));
 }
-// v510: one canonical student ID for lock acquisition, approval and resubmission.
+// v509: one canonical student ID for lock acquisition, approval and resubmission.
 async function projectAcquireSubmissionGuard(p,st,isResubmit){
   const token=uid();
   if(!(FIREBASE_OK&&db&&db.collection&&db.runTransaction)) throw new Error("Firebase unavailable; submission not permitted offline.");
@@ -6986,7 +6968,6 @@ function StudentProjects({user,data,reload}){
     }
     projectSubmitLock.current=true;
     setSubmitting(true);
-    let submissionGuard=null, submissionSaved=false;
     try{
       // v504: Check status BEFORE acquiring lock
       const prior=await projectSubmissionsForStudentRemote(p.id,user);
@@ -7012,16 +6993,7 @@ function StudentProjects({user,data,reload}){
         throw new Error("Submission record could not be saved. The uploaded file was rolled back. "+((saveErr&&saveErr.message)||saveErr));
       }
       // v504: tell the teacher live via ONE inbox doc (same pattern as rpInbox). Failure never affects the submission.
-      try{
-        if(FIREBASE_OK&&db&&db.collection&&p.teacherId){
-          const inboxRef=db.collection("projectInbox").doc(String(p.teacherId));
-          await db.runTransaction(async tx=>{
-            const snap=await tx.get(inboxRef), oldIds=snap.exists&&Array.isArray(snap.data().ids)?snap.data().ids:[];
-            const ids=[...oldIds.filter(x=>String(x)!==String(id)),String(id)].slice(-40);
-            tx.set(inboxRef,{ids,updatedAt:new Date().toISOString()},{merge:true});
-          });
-        }
-      }catch(e){console.warn("v510 projectInbox write failed",e&&e.message);}
+      try{ if(FIREBASE_OK&&db&&db.collection&&p.teacherId) await db.collection("projectInbox").doc(String(p.teacherId)).set({ids:firebase.firestore.FieldValue.arrayUnion(String(id)),updatedAt:new Date().toISOString()},{merge:true}); }catch(e){console.warn("v504 projectInbox write failed",e&&e.message);}
       // Index only AFTER a successful submission. Failure here never loses the student's submission.
       try{await projectFastSimilarityIndexAdd(p,user,id,fastSimilarityFp,fileHash);}catch(e){console.warn("v362 similarity index write failed",e&&e.message);}
       submissionSaved=true;
@@ -7031,8 +7003,6 @@ function StudentProjects({user,data,reload}){
       console.error("Project submission failed:",e);
       setMsg("تعذر إرسال المشروع: "+((e&&e.message)||String(e))+" حاول مرة أخرى.");
     }finally{
-      // v510: release only when no submission record was committed.
-      if(submissionGuard && !submissionSaved) await projectReleaseSubmissionGuard(submissionGuard);
       projectSubmitLock.current=false;
       setSubmitting(false);
     }
@@ -7134,7 +7104,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       const respRow={id:respId,quizId:gbId,studentId:s.studentId,studentName:s.studentName,score:finalScore,totalQ:10,attempt:s.attempt||1,mode:"project",projectId:p.id,projectSubmissionId:s.id,completedAt:new Date().toLocaleString(),ts:Date.now(),approvedAt:now};
       const approvedRow={...s,finalScore,teacherFeedback:feedback||s.teacherFeedback||s.aiReview?.studentFeedback||"",status:"approved",gradebookResponseId:respId,approvedAt:now,updatedAt:now};
       if(!FIREBASE_OK) throw new Error("Firebase unavailable; approval not saved");
-      // v510: transaction checks the authoritative submission, not the stale UI snapshot.
+      // v509: transaction checks the authoritative submission, not the stale UI snapshot.
       const submissionRef=db.collection("projectSubmissions").doc(String(s.id));
       await db.runTransaction(async tx=>{
         const latest=await tx.get(submissionRef);
@@ -7168,12 +7138,12 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       if(!s||!s.id||!p||!p.id) throw new Error("Missing project or submission ID");
       if(!FIREBASE_OK) throw new Error("Firebase unavailable; deletion not saved");
       const submissionRef=db.collection("projectSubmissions").doc(String(s.id));
+      const chunkCount=s.fileChunked?Number(s.fileChunkCount||0):0;
+      if(!Number.isSafeInteger(chunkCount)||chunkCount<0||chunkCount>450) throw new Error("Invalid file chunk count");
       const liveSnap=await submissionRef.get();
       if(!liveSnap.exists) throw new Error("Attempt already deleted in Firebase; refresh the list");
       const live=liveSnap.data()||{};
       if(String(live.projectId)!==String(p.id)) throw new Error("Project mismatch; deletion stopped");
-      const chunkCount=live.fileChunked?Number(live.fileChunkCount||0):0;
-      if(!Number.isSafeInteger(chunkCount)||chunkCount<0||chunkCount>450) throw new Error("Invalid server file chunk count");
       const batch=db.batch();
       batch.delete(submissionRef);
       const responseId=live.gradebookResponseId||s.gradebookResponseId;
@@ -7188,7 +7158,7 @@ function ProjectsTeacher({user,data,reload,myClasses,myStudents}){
       try{
         const remaining=await projectSubmissionsForStudentRemote(p.id,{id:s.studentId,studentId:s.studentNumber});
         if(!remaining.length) await projectAllowSubmissionAgain(p,{id:s.studentId,studentId:s.studentNumber});
-      }catch(e){cleanupWarning=true;console.warn("v510 lock cleanup",e);}
+      }catch(e){cleanupWarning=true;console.warn("v509 lock cleanup",e);}
       setMsg(cleanupWarning?"✅ Attempt deleted from Firestore; some file/lock cleanup may need attention.":"✅ Attempt deleted from Firestore. Other submissions preserved.");
     }catch(e){setMsg("❌ Attempt NOT deleted: "+(e.message||e));}
   }
@@ -15237,7 +15207,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v510" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v509" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16491,8 +16461,7 @@ function App() {
   useEffect(()=>{
     const realtimeTeacher=parkedTeacher||user;
     if(!realtimeTeacher || String(realtimeTeacher.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    let unsub=null;
-    const checkedIds=new Set(); // v510: never re-fetch a missing/deleted historical ID in this session.
+    let unsub=null, first=true, lastId="";
     try{
       unsub=db.collection("rpInbox").doc(String(realtimeTeacher.id||"")).onSnapshot(async snap=>{
         if(!snap || !snap.exists){ first=false; return; }
@@ -16625,8 +16594,7 @@ function App() {
   useEffect(()=>{
     const rt=parkedTeacher||user;
     if(!rt || String(rt.role||"")!=="teacher" || !FIREBASE_OK || !(db&&db.collection)) return;
-    let unsub=null;
-    const checkedIds=new Set(); // v510: never re-fetch a missing/deleted historical ID in this session.
+    let unsub=null, first=true, lastId="";
     try{
       unsub=db.collection("projectInbox").doc(String(rt.id||"")).onSnapshot(async snap=>{
         if(!snap || !snap.exists) return;
@@ -16635,10 +16603,9 @@ function App() {
         if(!ids.length) return;
         const currentRows = window.__EQ_CURRENT_DATA?.projectSubmissions || [];
         const currentIds = new Set(currentRows.map(r => String(r.id)));
-        const newIds = ids.slice(-40).filter(id => !currentIds.has(String(id)) && !checkedIds.has(String(id)));
+        const newIds = ids.filter(id => !currentIds.has(String(id)));
         if(!newIds.length) return;
         for(const sid of newIds){
-            checkedIds.add(String(sid));
             try{
               const doc=await db.collection("projectSubmissions").doc(sid).get();
               if(!doc||!doc.exists) continue;
@@ -19656,4 +19623,4 @@ setTimeout(function(){fab();},1500);
 <!-- v505: atomic project grade + approval, no false manual grading success -->
 <!-- v507: strict project deletion and awaited resubmission updates -->
 
-<!-- v510: durable resubmission permission independent of approved attempts -->
+<!-- v509: durable resubmission permission independent of approved attempts -->
