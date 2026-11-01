@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v514</title>
+<title>EduQuiz — Smart Assessment v515</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1707,8 +1707,10 @@ async function loadLoginData(sessionHint) {
 // Cleared automatically when users/classes are written from this browser; window.eqClearRosterCache() forces a refresh.
 const EQ_ROSTER_CACHE_KEY="eq_roster_users_v504";
 window.eqClearRosterCache=function(){try{localStorage.removeItem(EQ_ROSTER_CACHE_KEY);}catch(_e){}};
-async function eqUsersCached(){
-  try{
+async function eqUsersCached(forceFresh=false){
+  // v515: a teacher roster refresh must read Firestore, not a 24-hour snapshot.
+  // No writes to users, classes, submissions or results are performed here.
+  if(!forceFresh) try{
     const x=JSON.parse(localStorage.getItem(EQ_ROSTER_CACHE_KEY)||"null");
     if(x&&Array.isArray(x.rows)&&x.rows.length&&Date.now()-Number(x.at||0)<86400000){
       try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-users-v504",0);}catch(_e){}
@@ -1716,6 +1718,7 @@ async function eqUsersCached(){
     }
   }catch(_e){}
   const rows=await fsAll("users");
+  if(!Array.isArray(rows) || !rows.length){ console.warn("v515: Firestore returned an empty users roster; retaining cached roster is safer than showing an empty class."); throw new Error("Live student roster unavailable"); }
   try{if(Array.isArray(rows)&&rows.length)localStorage.setItem(EQ_ROSTER_CACHE_KEY,JSON.stringify({at:Date.now(),rows:rows}));}catch(_e){}
   return rows;
 }
@@ -1723,7 +1726,7 @@ let __EQ_TEACHER_ROSTER_PROMISE=null;
 async function eqRefreshTeacherRosterOnly(base){
   if(__EQ_TEACHER_ROSTER_PROMISE) return __EQ_TEACHER_ROSTER_PROMISE;
   __EQ_TEACHER_ROSTER_PROMISE=(async function(){
-    const [usersRaw,classesRaw]=await Promise.all([eqUsersCached(),fsAll("classes")]);
+    const [usersRaw,classesRaw]=await Promise.all([eqUsersCached(true),fsAll("classes")]);
     const activeUsers=(usersRaw||[]).filter(u=>u && !isStudentTombstone(u) && u.deleted!==true && String(u.status||"").toLowerCase()!=="deleted");
     const activeClasses=normalizeClassRows((classesRaw||[]).filter(c=>c && c.deleted!==true && String(c.status||"").toLowerCase()!=="deleted"));
     const next={...(base||{}),users:activeUsers,classes:activeClasses,firebaseUsers:activeUsers.slice(),firebaseClasses:activeClasses.slice(),loginLight:false};
@@ -15146,7 +15149,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v514" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v515" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
