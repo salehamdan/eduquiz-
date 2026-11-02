@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v518</title>
+<title>EduQuiz — Smart Assessment v519</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1937,6 +1937,8 @@ async function eqQueryStudentAssignedDefs(col, st){
   if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection || !st) return [];
   const out=new Map();
   const sidTokens=Array.from(new Set([st.id,st.studentId,st.studentNumber,st.email].filter(Boolean).map(String)));
+  const numericSid=Number(eqDigits(st.studentId||st.studentNumber||""));
+
   const rawCid=String(st.classId||st.className||st.class||"").trim();
   const canonCid=canonicalClassId(rawCid);
   const classTokens=Array.from(new Set([rawCid,canonCid].filter(Boolean).map(String)));
@@ -1949,6 +1951,9 @@ async function eqQueryStudentAssignedDefs(col, st){
   try{
     if(col==="quizzes"){
       for(const v of sidTokens) await runArray("assignedStudents",v);
+      // Old quiz assignments may store the student number as a number, not a string.
+      if(Number.isSafeInteger(numericSid)&&numericSid>0) await runArray("assignedStudents",numericSid);
+
       for(const v of classTokens) await runArray("classIds",v);
     }else if(col==="projects"){
       for(const v of sidTokens) await runArray("studentIds",v);
@@ -9353,7 +9358,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       const tasks=Array.from(taskMap.values());
       if(tasks.length) setHistoricalTeacherTasks(tasks);
       if(existing.length) publish(existing,tasks,"cache:teacher-rp-v504-cache");
-      const fresh=await window.__eqRpTeacherHistory(teacherKey,true);
+      const fresh=await window.__eqRpTeacherHistory(teacherKey,false);
       if(!alive) return;
       const merged=cleanDirectRows([...(existing||[]),...(fresh||[])]);
       memoryCache.set(memKey,{rows:merged,tasks});
@@ -9361,24 +9366,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       publish(merged,tasks,"get:teacher-rp-v504-merged");
     })();
 
-    // v518: refresh teacher RP on returning to the app, with no global reads or polling.
-    let refreshing=false;
-    async function refreshRpOnReturn(){
-      if(!alive || refreshing || document.visibilityState!=="visible") return;
-      refreshing=true;
-      try{
-        const fresh=await window.__eqRpTeacherHistory(teacherKey,true);
-        if(!alive) return;
-        const previous=memoryCache.get(memKey);
-        const merged=cleanDirectRows([...(previous&&previous.rows||[]),...(fresh||[])]);
-        const tasks=previous&&previous.tasks||[];
-        memoryCache.set(memKey,{rows:merged,tasks});
-        publish(merged,tasks,"get:teacher-rp-v518-return");
-      }catch(e){console.warn("RP refresh failed",e&&e.message);}
-      finally{refreshing=false;}
-    }
-    document.addEventListener("visibilitychange",refreshRpOnReturn);
-    return ()=>{alive=false;document.removeEventListener("visibilitychange",refreshRpOnReturn);};
+    return ()=>{alive=false;};
   },[user&&user.id]);
 
   const [title,setTitle]=useState("Reading Progress Task"); const [level,setLevel]=useState("beginner"); const [wordCount,setWordCount]=useState(30); const [retakeLimit,setRetakeLimit]=useState(0); const [text,setText]=useState(""); const [classIds,setClassIds]=useState([]); const [studentIds,setStudentIds]=useState([]); const [editingTaskId,setEditingTaskId]=useState(null); const [autoAnalysis,setAutoAnalysis]=useState(true); const [openDate,setOpenDate]=useState(""); const [closeDate,setCloseDate]=useState("");
@@ -10102,7 +10090,20 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
   function miniBar(label,value,max,color){const w=max?Math.round((value/max)*100):0; return <div style={{marginBottom:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.mu,fontWeight:800}}><span>{label}</span><span>{value}</span></div><div style={{height:"9px",background:"#e2e8f0",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:w+"%",background:color,borderRadius:"999px"}}/></div></div>;}
 
-  const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id || myStudents.some(s=>responseBelongsToStudent(r,s)||responseBelongsToStudent(r,s)));
+  // v519: read the same teacher-scoped Firestore history used by the RP drawer.
+  // Keep this read-only and never alter student/teacher login or saved submissions.
+  const [rpReportHistory,setRpReportHistory]=useState([]);
+  useEffect(()=>{
+    let active=true;
+    const tid=String(user&&user.id||"");
+    if(!tid||typeof window.__eqRpTeacherHistory!=="function") return ()=>{active=false;};
+    window.__eqRpTeacherHistory(tid,true).then(rows=>{
+      if(active&&Array.isArray(rows)) setRpReportHistory(rows);
+    }).catch(e=>console.warn("v519 report RP read",e&&e.message));
+    return ()=>{active=false;};
+  },[user&&user.id,refreshTick]);
+
+  const cloud=[...(data.readingSubmissions||[]),...rpReportHistory].filter(r=>r.teacherId===user.id || myStudents.some(s=>responseBelongsToStudent(r,s)||responseBelongsToStudent(r,s)));
   const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));
   const map={}; raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||"")); if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});
   let all=Object.values(map);
@@ -13660,12 +13661,22 @@ class EduSafeSectionBoundary extends React.Component{
     return this.props.children;
   }
 }
-function ReadingPerformanceSafeFallback({data,myStudents}){
+function ReadingPerformanceSafeFallback({data,myStudents,user}){
+  const [liveHistory,setLiveHistory]=useState([]);
+  useEffect(()=>{
+    let active=true;
+    const tid=String(user&&user.id||"");
+    if(tid&&typeof window.__eqRpTeacherHistory==="function"){
+      window.__eqRpTeacherHistory(tid,true).then(rows=>{if(active&&Array.isArray(rows))setLiveHistory(rows);}).catch(()=>{});
+    }
+    return ()=>{active=false;};
+  },[]);
+
   function readLocal(){let out=[];try{['rp_attempt_records_v11','rp_attempt_records_v10','rp_attempt_records_v9','rp_attempt_records_v8','rp_attempt_records_v7','rp_student_attempts'].forEach(k=>{try{const a=JSON.parse(localStorage.getItem(k)||'[]'); if(Array.isArray(a)) out=out.concat(a);}catch(e){}});}catch(e){} return out;}
   function isDeletedSafe(r){return !!(r&&(r.deleted===true||String(r.status||'').toLowerCase()==='deleted'));}
   function isAcceptedSafe(r){const st=String(r&&r.status||'').toLowerCase(); const ts=Number(r&&r.teacherScore); return !isDeletedSafe(r)&&(st==='accepted'||st==='approved'||(Number.isFinite(ts)&&ts>0));}
   function scoreSafe(r){const vals=[r&&r.teacherScore,r&&r.finalScore,r&&r.aiScore,r&&r.accuracy,r&&r.analysis&&r.analysis.accuracy]; for(const v of vals){const n=Number(v); if(Number.isFinite(n)&&n>0)return Math.round(Math.max(0,Math.min(100,n)));} return null;}
-  const all=[...((data&&data.readingSubmissions)||[]),...readLocal()].filter(r=>r&&!isDeletedSafe(r));
+  const all=[...((data&&data.readingSubmissions)||[]),...liveHistory,...readLocal()].filter(r=>r&&!isDeletedSafe(r));
   const accepted=all.filter(isAcceptedSafe);
   const by={}; accepted.forEach(r=>{const id=String(r.studentId||r.studentNumber||r.id||r.name||'').trim()||String(Math.random()); const name=String(r.studentName||r.name||'Student'); if(!by[id])by[id]={id,name,count:0,scores:[]}; by[id].count++; const sc=scoreSafe(r); if(sc!==null)by[id].scores.push(sc);});
   const rows=Object.values(by).sort((a,b)=>a.name.localeCompare(b.name));
@@ -15166,7 +15177,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v518" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v519" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15257,7 +15268,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents} onReferralAlertCount={setReferralAlertCount}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
-        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
+        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents} user={user}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="cleanup" && <YearEndCleanupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
