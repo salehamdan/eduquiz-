@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v520</title>
+<title>EduQuiz — Smart Assessment v521</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -10013,28 +10013,6 @@ function cleanClassLabel(v){
 }
 
 function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
-  // v520: Lazy teacher-scoped RP history; never loaded at startup.
-  // Share the same bounded teacher query as the RP drawer; do not fetch audio chunks.
-  const [reportCloudRows,setReportCloudRows]=useState([]);
-  const [reportCloudBusy,setReportCloudBusy]=useState(false);
-  const [reportCloudError,setReportCloudError]=useState("");
-  const reportTeacherId=String(user&&user.id||"");
-  async function loadReportCloud(force){
-    if(!reportTeacherId||typeof window.__eqRpTeacherHistory!=="function") return;
-    setReportCloudBusy(true);setReportCloudError("");
-    try{
-      const rows=await window.__eqRpTeacherHistory(reportTeacherId,!!force);
-      setReportCloudRows(Array.isArray(rows)?rows:[]);
-    }catch(e){setReportCloudError(String(e&&e.message||e));}
-    finally{setReportCloudBusy(false);}
-  }
-  useEffect(()=>{let active=true;
-    if(!reportTeacherId)return;
-    // The history loader is only invoked after this report is mounted.
-    window.__eqRpTeacherHistory(reportTeacherId,false).then(rows=>{if(active)setReportCloudRows(Array.isArray(rows)?rows:[]);}).catch(e=>{if(active)setReportCloudError(String(e&&e.message||e));});
-    return ()=>{active=false;};
-  },[reportTeacherId]);
-
   const [search,setSearch]=useState("");
   const [sheetScope,setSheetScope]=useState("period");
   const [sheetMonth,setSheetMonth]=useState(isoToday().slice(0,7));
@@ -10081,7 +10059,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   async function refreshReport(){
     setRefreshMsg("Refreshing…");
     setRefreshTick(x=>x+1);
-    try{ await loadReportCloud(true); setRefreshMsg("✅ Reading history refreshed"); }
+    try{ if(typeof reload==="function") await reload(); setRefreshMsg("✅ Refreshed"); }
     catch(e){ setRefreshMsg("⚠️ Refresh failed"); }
     setTimeout(()=>{setRefreshTick(x=>x+1);setRefreshMsg("");},900);
   }
@@ -10107,9 +10085,8 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
   function toggle(arr,setter,v){setter(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);}
   function miniBar(label,value,max,color){const w=max?Math.round((value/max)*100):0; return <div style={{marginBottom:"7px"}}><div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:C.mu,fontWeight:800}}><span>{label}</span><span>{value}</span></div><div style={{height:"9px",background:"#e2e8f0",borderRadius:"999px",overflow:"hidden"}}><div style={{height:"100%",width:w+"%",background:color,borderRadius:"999px"}}/></div></div>;}
 
-  const cloud=[...(data.readingSubmissions||[]),...reportCloudRows].filter(r=>r&&(String(r.teacherId||"")===reportTeacherId || myStudents.some(s=>responseBelongsToStudent(r,s))));
-  // Only locally saved attempts belonging to this teacher's students are eligible.
-  const raw=[...cloud,...localRecords().filter(r=>myStudents.some(s=>responseBelongsToStudent(r,s)))].filter(r=>r&&!isDeleted(r));
+  const cloud=(data.readingSubmissions||[]).filter(r=>r.teacherId===user.id || myStudents.some(s=>responseBelongsToStudent(r,s)||responseBelongsToStudent(r,s)));
+  const raw=[...cloud,...localRecords()].filter(r=>r&&!isDeleted(r));
   const map={}; raw.forEach(r=>{const id=r.id||((r.taskId||"task")+"_"+(r.studentId||"student")+"_"+(r.createdAt||"")); if(!map[id]||timeOf(r)>=timeOf(map[id]))map[id]=r;});
   let all=Object.values(map);
 
@@ -10152,7 +10129,7 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
     return selectedClasses.includes(cid);
   }):studentList;
 
-  if(activeClassIds.size) all=all.filter(r=>activeClassIds.has(recordClassId(r)) || String(r.teacherId||"")===reportTeacherId);
+  if(activeClassIds.size) all=all.filter(r=>activeClassIds.has(recordClassId(r)));
   if(selectedClasses.length) all=all.filter(r=>selectedClasses.includes(recordClassId(r)));
   if(selectedStudents.length) all=all.filter(r=>selectedStudents.includes(fixedSid(r))||selectedStudents.includes(r.studentId));
   if(search.trim()){const q=search.toLowerCase(); all=all.filter(r=>(sname(r)+" "+fixedSid(r)+" "+recordClassName(r)+" "+(r.taskTitle||r.title||"")).toLowerCase().includes(q));}
@@ -10174,7 +10151,6 @@ function ReadingPerformanceReport({user,data,myClasses,myStudents,reload}){
     <Card style={{marginBottom:"11px",background:"linear-gradient(135deg,"+C.dk+","+C.md+")",border:"none"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
         <div><strong style={{color:"#fff",fontSize:"16px"}}>📊 Reading Performance</strong><p style={{color:C.mu,fontSize:"11px",margin:"4px 0 0"}}>Student and class performance report.</p></div>
-        <div style={{fontSize:"11px",color:"#fff"}}>{reportCloudBusy?"Loading reading history…":("Cloud records: "+reportCloudRows.length)}{reportCloudError?" · "+reportCloudError:""}</div>
         <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn size="sm" color={C.p} onClick={pageTop}>Page Up</Btn><Btn size="sm" color={C.pu} onClick={pageBottom}>Page Down</Btn><Btn size="sm" color={C.s} onClick={refreshReport}>Refresh</Btn></div>
       </div>
     </Card>
@@ -13667,6 +13643,126 @@ class EduSafeSectionBoundary extends React.Component{
     return this.props.children;
   }
 }
+
+// v521: Independent, read-only Reading Performance V2. Mounts only when the teacher opens this tab.
+function ReadingPerformanceV2({user,data,myClasses,myStudents}){
+  const [records,setRecords]=React.useState([]);
+  const [busy,setBusy]=React.useState(true);
+  const [error,setError]=React.useState("");
+  const [loadedAt,setLoadedAt]=React.useState(0);
+  const [classFilter,setClassFilter]=React.useState("all");
+  const [taskFilter,setTaskFilter]=React.useState("all");
+  const [studentFilter,setStudentFilter]=React.useState("all");
+  const [changeFilter,setChangeFilter]=React.useState("all");
+  const [scope,setScope]=React.useState("students");
+  const [metric,setMetric]=React.useState("score");
+  const teacherId=String(user&&user.id||"").trim();
+  const read=React.useCallback(async(force)=>{
+    if(!teacherId){setBusy(false);setError("Teacher ID unavailable");return;}
+    setBusy(true);setError("");
+    try{
+      if(typeof window.__eqRpTeacherHistory!=="function")throw Error("RP history loader unavailable");
+      const result=await window.__eqRpTeacherHistory(teacherId,!!force);
+      if(!Array.isArray(result))throw Error("Invalid reading history");
+      setRecords(result);setLoadedAt(Date.now());
+    }catch(e){setError(String(e&&e.message||e));}
+    finally{setBusy(false);}
+  },[teacherId]);
+  React.useEffect(()=>{read(false);},[read]);
+  const number=(v)=>v===null||v===undefined||v===""?null:(Number.isFinite(Number(v))?Number(v):null);
+  const pick=(r,keys)=>{for(const key of keys){const v=key.indexOf(".")<0?r[key]:key.split(".").reduce((o,k)=>o&&o[k],r);const n=number(v);if(n!==null)return n;}return null;};
+  const name=(r)=>String(r.studentName||r.name||"").trim();
+  const sid=(r)=>String(r.studentNumber||r.studentId||r.studentID||"").trim();
+  const taskId=(r)=>String(r.taskId||r.readingTaskId||r.assignmentId||r.taskTitle||r.title||"Unassigned");
+  const taskTitle=(r)=>String(r.taskTitle||r.title||((data.readingTasks||[]).find(t=>String(t.id)===taskId(r))||{}).title||taskId(r));
+  const date=(r)=>{for(const k of ["submittedAt","createdAt","reviewedAt","updatedAt"]){const v=r[k];if(v){const n=typeof v.toMillis==="function"?v.toMillis():Date.parse(v);if(Number.isFinite(n))return n;}}return 0;};
+  const score=(r)=>pick(r,["teacherScore","finalScore","aiScore"]);
+  const accuracy=(r)=>pick(r,["accuracy","analysis.accuracy"]);
+  const fluency=(r)=>pick(r,["fluency","analysis.fluency"]);
+  const wpm=(r)=>pick(r,["wcpm","analysis.wcpm","wpm","analysis.wpm"]);
+  const metricValue=(r,m)=>m==="accuracy"?accuracy(r):m==="fluency"?fluency(r):m==="wpm"?wpm(r):score(r);
+  const average=(a)=>{const v=a.filter(x=>x!==null&&Number.isFinite(x));return v.length?v.reduce((x,y)=>x+y,0)/v.length:null;};
+  const format=(n,suffix="")=>n===null?"—":(Math.round(n*10)/10)+suffix;
+  const roster=Array.isArray(myStudents)?myStudents:[];
+  const byStudent={};
+  roster.forEach(s=>{const ids=[s.studentId,s.studentNumber,s.id].filter(Boolean).map(String);ids.forEach(k=>{byStudent[k]=s;});});
+  const classOf=(r)=>{const st=byStudent[sid(r)];return String((st&&(st.classId||st.className||st.class))||r.classId||r.className||r.class||"Unknown").trim();};
+  const classLabel=(id)=>{const c=(myClasses||[]).find(x=>String(x.id)===id||String(x.classId)===id);return c?String(c.name||c.className||id):id;};
+  const status=(r)=>String(r.status||r.teacherReviewStatus||r.reviewStatus||"").toLowerCase();
+  const removed=(r)=>r.deleted===true||r.rpExactDeleted===true||r.exactAttemptDeleted===true||status(r)==="deleted"||r.source==="rp_audio_chunk"||String(r.id||"").includes("_chunk_")||r.decisionMarker===true;
+  const accepted=(r)=>!removed(r)&&!["rejected","pending","submitted","failed"].includes(status(r))&&(status(r)==="accepted"||status(r)==="approved"||r.teacherAccepted===true||r.teacherApproved===true||r.accepted===true);
+  // Deduplicate only by stable document/attempt identity; never collapse distinct tasks.
+  const dedup={};records.forEach(r=>{if(!r||removed(r))return;const k=String(r.id||r._id||[sid(r),taskId(r),r.submittedAt||r.createdAt||""].join("|"));if(!dedup[k]||date(r)>date(dedup[k]))dedup[k]=r;});
+  const all=Object.values(dedup);
+  const valid=all.filter(accepted);
+  const classes=[...new Set(valid.map(classOf))].sort();
+  const tasks=[...new Map(valid.map(r=>[taskId(r),{id:taskId(r),title:taskTitle(r)}])).values()].sort((a,b)=>a.title.localeCompare(b.title));
+  const scoped=valid.filter(r=>(classFilter==="all"||classOf(r)===classFilter)&&(taskFilter==="all"||taskId(r)===taskFilter));
+  const studentKey=(r)=>sid(r)||("name:"+name(r));
+  const histories={};scoped.forEach(r=>{const k=studentKey(r);if(!histories[k])histories[k]=[];histories[k].push(r);});
+  Object.values(histories).forEach(a=>a.sort((a,b)=>date(a)-date(b)));
+  // One latest approved attempt per task and student for cross-task comparisons.
+  const students=Object.entries(histories).map(([id,history])=>{
+    const taskLatest={};history.forEach(r=>{taskLatest[taskId(r)]=r;});
+    const latest=Object.values(taskLatest).sort((a,b)=>date(a)-date(b));
+    const first=latest[0],last=latest[latest.length-1];
+    const delta=latest.length>=2&&score(first)!==null&&score(last)!==null?score(last)-score(first):null;
+    return {id,name:name(last)||id,cls:classOf(last),history,latest,delta,score:average(latest.map(score)),accuracy:average(latest.map(accuracy)),fluency:average(latest.map(fluency)),wpm:average(latest.map(wpm))};
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+  const changeStatus=(s)=>s.delta===null?"insufficient":s.delta>0?"improved":s.delta<0?"declined":"stable";
+  const selected=students.filter(s=>(studentFilter==="all"||s.id===studentFilter)&&(changeFilter==="all"||changeStatus(s)===changeFilter));
+  const current=studentFilter==="all"?null:students.find(s=>s.id===studentFilter);
+  const groupItems=scope==="classes"?[...new Set(selected.map(s=>s.cls))].map(id=>({label:classLabel(id),members:selected.filter(s=>s.cls===id)})):[{label:"All selected students",members:selected}];
+  const groupMetric=(members,m)=>average(members.map(s=>s[m]));
+  const metricLabel={score:"Overall Score",accuracy:"Accuracy",fluency:"Fluency",wpm:"WPM / WCPM"};
+  const metricSuffix=metric==="wpm"?"":"%";
+  const comparison=scope==="classes"?groupItems.map(g=>({label:g.label,value:groupMetric(g.members,metric)})):selected.map(s=>({label:s.name,value:s[metric]})).sort((a,b)=>(b.value===null?-Infinity:b.value)-(a.value===null?-Infinity:a.value)).slice(0,15);
+  const maxBar=Math.max(1,...comparison.map(x=>x.value||0),metric==="wpm"?0:100);
+  const cardStyle={background:"#fff",border:"1px solid #dbe4ef",borderRadius:14,padding:14,boxShadow:"0 2px 8px rgba(15,23,42,.04)"};
+  const inputStyle={padding:"9px",border:"1px solid #cbd5e1",borderRadius:9,width:"100%",background:"white",fontSize:12};
+  const stat=(label,value,sub)=> <div style={cardStyle}><div style={{fontSize:11,color:"#64748b"}}>{label}</div><div style={{fontSize:23,fontWeight:900,color:"#0f172a",marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#64748b"}}>{sub}</div>}</div>;
+  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v521.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+  return <div style={{fontFamily:"inherit",color:"#0f172a"}}>
+    <div style={{padding:18,borderRadius:16,background:"linear-gradient(115deg,#0f172a,#1d4ed8)",color:"white",marginBottom:12}}>
+      <div style={{fontSize:21,fontWeight:900}}>Reading Performance V2</div>
+      <div style={{fontSize:12,opacity:.88,marginTop:5}}>Student Progress · Task Analysis · Class Analytics</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:13}}><button onClick={()=>read(true)} disabled={busy} style={{padding:"9px 13px",border:0,borderRadius:9,background:"#bfdbfe",fontWeight:800}}>{busy?"Loading…":"↻ Refresh from Firebase"}</button><button onClick={()=>window.print()} style={{padding:"9px 13px",border:0,borderRadius:9,background:"#fff",fontWeight:800}}>Print / Save PDF</button><button onClick={downloadCSV} style={{padding:"9px 13px",border:0,borderRadius:9,background:"#d1fae5",fontWeight:800}}>Export CSV</button></div>
+      <div style={{fontSize:11,opacity:.85,marginTop:9}}>Read-only · Loaded on opening · {loadedAt?new Date(loadedAt).toLocaleString():"Not loaded"}</div>
+    </div>
+    {error&&<div style={{...cardStyle,borderColor:"#fca5a5",color:"#991b1b",marginBottom:12}}>⚠ {error}</div>}
+    {busy&&<div style={{...cardStyle,marginBottom:12}}>Loading teacher's Reading Progress history…</div>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:12}}>
+      {stat("Records fetched",records.length,"Teacher history")}{stat("Accepted records",valid.length,"Distinct records")}{stat("Students",students.length,"With approved results")}{stat("Tasks",tasks.length,"Approved tasks")}
+    </div>
+    <div style={{...cardStyle,marginBottom:12}}>
+      <div style={{fontWeight:900,marginBottom:10}}>Filters & comparison</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:9}}>
+        <label style={{fontSize:11}}>Class<select value={classFilter} onChange={e=>{setClassFilter(e.target.value);setStudentFilter("all");}} style={inputStyle}><option value="all">All Classes</option>{classes.map(c=><option key={c} value={c}>{classLabel(c)}</option>)}</select></label>
+        <label style={{fontSize:11}}>Reading Task<select value={taskFilter} onChange={e=>{setTaskFilter(e.target.value);setStudentFilter("all");}} style={inputStyle}><option value="all">All Tasks</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
+        <label style={{fontSize:11}}>Student<select value={studentFilter} onChange={e=>setStudentFilter(e.target.value)} style={inputStyle}><option value="all">All Students</option>{students.map(s=><option key={s.id} value={s.id}>{s.name} · {s.id}</option>)}</select></label>
+        <label style={{fontSize:11}}>Progress<select value={changeFilter} onChange={e=>setChangeFilter(e.target.value)} style={inputStyle}><option value="all">All Students</option><option value="improved">Improved</option><option value="declined">Declined</option><option value="stable">Stable</option><option value="insufficient">Insufficient data</option></select></label>
+        <label style={{fontSize:11}}>Analysis<select value={scope} onChange={e=>setScope(e.target.value)} style={inputStyle}><option value="students">Students</option><option value="classes">Classes</option></select></label>
+        <label style={{fontSize:11}}>Metric<select value={metric} onChange={e=>setMetric(e.target.value)} style={inputStyle}>{Object.entries(metricLabel).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:12}}>
+      {stat("Average",format(average(selected.map(s=>s[metric])),metricSuffix),metricLabel[metric])}
+      {stat("Highest",format(selected.map(s=>s[metric]).filter(x=>x!==null).length?Math.max(...selected.map(s=>s[metric]).filter(x=>x!==null)):null,metricSuffix))}
+      {stat("Lowest",format(selected.map(s=>s[metric]).filter(x=>x!==null).length?Math.min(...selected.map(s=>s[metric]).filter(x=>x!==null)):null,metricSuffix))}
+      {stat("Improved",selected.filter(s=>s.delta!==null&&s.delta>0).length,"Among selected students")}
+    </div>
+    <div style={{...cardStyle,marginBottom:12}}><div style={{fontWeight:900,marginBottom:12}}>📊 {metricLabel[metric]} — {scope==="classes"?"Class Comparison":"Student Ranking"}</div>
+      {comparison.length===0?<div style={{fontSize:12,color:"#64748b"}}>No approved results for these filters.</div>:comparison.map((r,i)=><div key={i} style={{marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,marginBottom:3}}><span>{r.label}</span><b>{format(r.value,metricSuffix)}</b></div><div style={{height:9,background:"#e2e8f0",borderRadius:10,overflow:"hidden"}}><div style={{height:"100%",width:((r.value||0)/maxBar*100)+"%",background:"#2563eb",borderRadius:10}}/></div></div>)}
+    </div>
+    {current&&<div style={{...cardStyle,marginBottom:12}}><div style={{fontSize:16,fontWeight:900}}>📈 Student Progress — {current.name}</div><div style={{fontSize:11,color:"#64748b",margin:"5px 0 12px"}}>Class {classLabel(current.cls)} · {current.latest.length} tasks · Change {current.delta===null?"Not enough comparable tasks":format(current.delta," percentage points")}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:6,marginBottom:12}}>{["score","accuracy","fluency","wpm"].map(m=><div key={m} style={{padding:9,background:"#eff6ff",borderRadius:9,fontSize:10}}>{metricLabel[m]}<div style={{fontSize:17,fontWeight:900}}>{format(current[m],m==="wpm"?"":"%")}</div></div>)}</div>
+      {current.latest.map((r,i)=><div key={String(r.id||i)} style={{display:"flex",justifyContent:"space-between",gap:8,borderBottom:"1px solid #e2e8f0",padding:"8px 0",fontSize:11}}><span>{i+1}. {taskTitle(r)}<div style={{color:"#64748b"}}>{date(r)?new Date(date(r)).toLocaleDateString():"Date unavailable"}</div></span><b>{format(score(r),"%")} · {format(accuracy(r),"%")} · {format(fluency(r),"%")} · {format(wpm(r))} WPM</b></div>)}
+    </div>}
+    <div style={{...cardStyle,marginBottom:12,overflowX:"auto"}}><div style={{fontWeight:900,marginBottom:10}}>Student results & progress</div><table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:650}}><thead><tr style={{background:"#eff6ff"}}>{["Student","Class","Tasks","Overall","Accuracy","Fluency","WPM","Progress"].map(h=><th key={h} style={{textAlign:"left",padding:8}}>{h}</th>)}</tr></thead><tbody>{selected.map(s=><tr key={s.id} style={{borderBottom:"1px solid #e2e8f0",cursor:"pointer"}} onClick={()=>setStudentFilter(s.id)}><td style={{padding:8}}>{s.name}<div style={{fontSize:10,color:"#64748b"}}>{s.id}</div></td><td>{classLabel(s.cls)}</td><td>{s.latest.length}</td><td>{format(s.score,"%")}</td><td>{format(s.accuracy,"%")}</td><td>{format(s.fluency,"%")}</td><td>{format(s.wpm)}</td><td style={{color:s.delta===null?"#64748b":s.delta>0?"#15803d":s.delta<0?"#b91c1c":"#475569",fontWeight:800}}>{s.delta===null?"Baseline only":format(s.delta," pp")}</td></tr>)}</tbody></table></div>
+    <div style={{fontSize:11,color:"#64748b",padding:8}}>Method: latest accepted attempt per student/task; cross-task change compares earliest and latest task scores in chronological order. Task difficulty can differ. Missing scores are not treated as zero. WPM and WCPM retain their original source fields. No Firestore writes.</div>
+  </div>;
+}
+
 function ReadingPerformanceSafeFallback({data,myStudents}){
   function readLocal(){let out=[];try{['rp_attempt_records_v11','rp_attempt_records_v10','rp_attempt_records_v9','rp_attempt_records_v8','rp_attempt_records_v7','rp_student_attempts'].forEach(k=>{try{const a=JSON.parse(localStorage.getItem(k)||'[]'); if(Array.isArray(a)) out=out.concat(a);}catch(e){}});}catch(e){} return out;}
   function isDeletedSafe(r){return !!(r&&(r.deleted===true||String(r.status||'').toLowerCase()==='deleted'));}
@@ -15173,7 +15269,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v520" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v521" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15264,7 +15360,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents} onReferralAlertCount={setReferralAlertCount}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
-        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceReport user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
+        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceV2 user={user} data={data} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="cleanup" && <YearEndCleanupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
