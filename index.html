@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v521</title>
+<title>EduQuiz — Smart Assessment v522</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -11976,14 +11976,15 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
   const [rtAttemptsViewer,setRtAttemptsViewer] = useState(null);
   const [rtAttemptDetail,setRtAttemptDetail] = useState(null);
   // v315: snapshot unread attempts when Reading Theory is opened, then mark them seen.
-  const [rtNewAttempts] = useState(()=>{
-    let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){}
-    return myResps.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).slice().sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
-  });
-  React.useEffect(()=>{
-    const newest=myResps.reduce((m,r)=>Math.max(m,new Date(r.submittedAt||r.createdAt||0).getTime()||0),0);
-    if(newest){try{localStorage.setItem("eq_rt_teacher_seen_"+user.id,String(newest));}catch(e){} window.dispatchEvent(new Event("eq-rt-seen"));}
-  },[]);
+  // v522: derive notifications after lazy history arrives; never mark as read just by opening.
+  const [rtSeenAt,setRtSeenAt]=useState(()=>{try{return Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){return 0;}});
+  const rtNewAttempts=myResps.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>rtSeenAt).slice().sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0));
+  function rtMarkRead(){
+    const newest=myResps.reduce((m,r)=>Math.max(m,new Date(r.submittedAt||r.createdAt||0).getTime()||0),rtSeenAt);
+    try{localStorage.setItem("eq_rt_teacher_seen_"+user.id,String(newest));}catch(e){}
+    setRtSeenAt(newest);
+    window.dispatchEvent(new Event("eq-rt-seen"));
+  }
 
   // مزامنة إعدادات Reading Theory من Firebase بدون إلغاء اختيار المعلم غير المحفوظ.
   React.useEffect(()=>{
@@ -12174,7 +12175,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
 
     {/* v315 — New attempt / achievement notifications */}
     {rtNewAttempts.length>0&&<Card style={{marginBottom:"11px",border:"2px solid #f59e0b",background:"#fffbeb"}}>
-      <div style={{fontSize:"12px",fontWeight:"900",color:"#92400e",marginBottom:"8px"}}>🔔 New Reading Theory activity <span style={{background:"#dc2626",color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtNewAttempts.length}</span></div>
+      <div style={{fontSize:"12px",fontWeight:"900",color:"#92400e",marginBottom:"8px"}}>🔔 New Reading Theory activity <span style={{background:"#dc2626",color:"#fff",borderRadius:"999px",padding:"1px 7px",fontSize:"10px"}}>{rtNewAttempts.length}</span><button onClick={rtMarkRead} style={{float:"right",border:"1px solid #d97706",borderRadius:"7px",padding:"3px 9px",background:"#fff",color:"#92400e",cursor:"pointer",fontSize:"11px"}}>✓ Mark as read</button></div>
       {rtNewAttempts.slice(0,8).map((r,i)=>{
         const st=myStudents.find(x=>responseBelongsToStudent(r,x));
         const all=(myResps.filter(x=>st?responseBelongsToStudent(x,st):String(x.studentId)===String(r.studentId))).slice().sort((a,b)=>new Date(a.submittedAt||0)-new Date(b.submittedAt||0));
@@ -13644,7 +13645,7 @@ class EduSafeSectionBoundary extends React.Component{
   }
 }
 
-// v521: Independent, read-only Reading Performance V2. Mounts only when the teacher opens this tab.
+// v522: Independent, read-only Reading Performance V2. Mounts only when the teacher opens this tab.
 function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const [records,setRecords]=React.useState([]);
   const [busy,setBusy]=React.useState(true);
@@ -13721,7 +13722,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const cardStyle={background:"#fff",border:"1px solid #dbe4ef",borderRadius:14,padding:14,boxShadow:"0 2px 8px rgba(15,23,42,.04)"};
   const inputStyle={padding:"9px",border:"1px solid #cbd5e1",borderRadius:9,width:"100%",background:"white",fontSize:12};
   const stat=(label,value,sub)=> <div style={cardStyle}><div style={{fontSize:11,color:"#64748b"}}>{label}</div><div style={{fontSize:23,fontWeight:900,color:"#0f172a",marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#64748b"}}>{sub}</div>}</div>;
-  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v521.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v522.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
   return <div style={{fontFamily:"inherit",color:"#0f172a"}}>
     <div style={{padding:18,borderRadius:16,background:"linear-gradient(115deg,#0f172a,#1d4ed8)",color:"white",marginBottom:12}}>
       <div style={{fontSize:21,fontWeight:900}}>Reading Performance V2</div>
@@ -14062,11 +14063,43 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
-  // v315: red badge for unseen Reading Theory attempts.
+  // v522: lightweight, bounded teacher RT notifications. Do not preload all RT history.
+  // A class-scoped query is used so another teacher's records never enter this counter.
+  const [rtNotificationRows,setRtNotificationRows]=useState([]);
+  const rtClassKey=myClasses.map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean).sort().join("|");
   useEffect(()=>{
-    function calc(){let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){} const mine=(data.readingTheoryResponses||[]).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));setRtUnreadCount(mine.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).length);}
+    let alive=true;
+    if(!FIREBASE_OK || !db || !db.collection || !rtClassKey){setRtNotificationRows([]);return;}
+    const cacheKey=String(user.id)+"::"+rtClassKey;
+    const cache=window.__EQ_RT_NOTIFICATION_CACHE||(window.__EQ_RT_NOTIFICATION_CACHE=new Map());
+    const prior=cache.get(cacheKey);
+    if(prior && Date.now()-prior.at<120000){setRtNotificationRows(prior.rows);return;}
+    (async()=>{
+      const out=new Map();
+      const tokens=Array.from(new Set(myClasses.flatMap(c=>[String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")]).filter(Boolean)));
+      for(const cid of tokens){
+        try{
+          // Capped to protect reads. Full history is loaded only inside Reading Theory.
+          const snap=await db.collection("readingTheoryResponses").where("classId","==",cid).limit(100).get();
+          snap.forEach(doc=>{out.set(String(doc.id),{id:doc.id,...doc.data()});});
+        }catch(e){console.warn("RT notification query failed",cid,e);}
+      }
+      if(!alive)return;
+      const rows=Array.from(out.values()).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));
+      cache.set(cacheKey,{at:Date.now(),rows});setRtNotificationRows(rows);
+    })();
+    return()=>{alive=false;};
+  },[user.id,rtClassKey]);
+  useEffect(()=>{
+    function calc(){
+      let seen=0;try{seen=Number(localStorage.getItem("eq_rt_teacher_seen_"+user.id)||0)||0;}catch(e){}
+      const all=new Map();
+      [...rtNotificationRows,...(data.readingTheoryResponses||[])].forEach(r=>{if(r&&r.id)all.set(String(r.id),r);});
+      const mine=Array.from(all.values()).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));
+      setRtUnreadCount(mine.filter(r=>new Date(r.submittedAt||r.createdAt||0).getTime()>seen).length);
+    }
     calc();window.addEventListener("eq-rt-seen",calc);return()=>window.removeEventListener("eq-rt-seen",calc);
-  },[data.readingTheoryResponses,myStudents.length,user.id]);
+  },[rtNotificationRows,data.readingTheoryResponses,myStudents.length,user.id]);
 
   // v504: referral badge is calculated inside DailyFollowupTeacher from its already-scoped rows.
   // This removes the second full dailyFollowup GET that previously doubled Follow-up reads.
@@ -15269,7 +15302,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v521" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v522" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
