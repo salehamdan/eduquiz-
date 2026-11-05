@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v523</title>
+<title>EduQuiz — Smart Assessment v524</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -3598,7 +3598,7 @@ async function rpResolveAudioDataUrl(sub){
   if(sub && sub.audioChunked && sub.audioChunkCount){ return await rpLoadAudioChunks(sub.id, sub.audioChunkCount); }
   return "";
 }
-function rpHasAnyAudio(sub){ return !!(sub && (sub.audioUrl || sub.audioDataUrl || (sub.audioChunked && sub.audioChunkCount))); }
+function rpHasAnyAudio(sub){ return !!(sub && (sub.audioUrl || sub.audioDataUrl || sub.audioStoredInDocument || (sub.audioChunked && sub.audioChunkCount))); }
 
 
 // ---- AI Voice v270 helpers ----
@@ -9246,6 +9246,7 @@ const EQ_RP_INDEX_TTL_523=60*60*1000;
 function eqRpIndexKey523(tid){return "eq_rp_index_v523_"+String(tid||"");}
 function eqRpStripAudio523(r){
   const o={...r};
+  if(o.audioDataUrl||o.audioBase64||o.fullAudioDataUrl)o.audioStoredInDocument=true;
   ["audioDataUrl","audioBlob","audioBase64","audioBytes","audioChunks","fullAudioDataUrl","recordingDataUrl"].forEach(k=>{delete o[k];});
   return o;
 }
@@ -9258,7 +9259,15 @@ function eqRpStoredIndex523(tid){
   }catch(_e){return null;}
 }
 function eqRpSaveIndex523(tid,rows){
-  try{localStorage.setItem(eqRpIndexKey523(tid),JSON.stringify({at:Date.now(),rows:(rows||[]).map(eqRpStripAudio523)}));}catch(e){console.warn("RP index storage unavailable",e&&e.message);}
+  try{
+    const map=new Map();
+    const previous=eqRpStoredIndex523(tid);
+    (previous&&previous.rows||[]).forEach(r=>{if(r&&r.id)map.set(String(r.id),r);});
+    (rows||[]).forEach(r=>{if(r&&r.id)map.set(String(r.id),eqRpStripAudio523(r));});
+    const saved=Array.from(map.values());
+    localStorage.setItem(eqRpIndexKey523(tid),JSON.stringify({at:Date.now(),rows:saved}));
+    window.dispatchEvent(new CustomEvent("eq-rp-index-updated",{detail:{teacherId:String(tid),rows:saved}}));
+  }catch(e){console.warn("RP index storage unavailable",e&&e.message);}
 }
 window.__eqRpInvalidate523=function(tid){
   try{const store=window.__EQ_RP_HISTORY_v504||{};if(tid)delete store[String(tid)];else Object.keys(store).forEach(k=>delete store[k]);}catch(_e){}
@@ -9294,8 +9303,13 @@ window.__eqRpTeacherHistory=function(teacherId,force){
       return [];
     }
     const rows=Array.from(out.values());
-    eqRpSaveIndex523(tid,rows);
-    return rows;
+    const saved=eqRpStoredIndex523(tid);
+    const combined=new Map();
+    (saved&&saved.rows||[]).forEach(r=>{if(r&&r.id)combined.set(String(r.id),r);});
+    rows.forEach(r=>{if(r&&r.id)combined.set(String(r.id),eqRpStripAudio523(r));});
+    const result=Array.from(combined.values());
+    eqRpSaveIndex523(tid,result);
+    return result;
   })();
   store[tid]={promise:p,at:Date.now()};
   p.then(function(rows){try{store[tid]&&(store[tid].count=(rows||[]).length);}catch(_e){}});
@@ -9352,9 +9366,10 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     if(mem&&Array.isArray(mem.rows)&&mem.rows.length){
       publish(mem.rows,mem.tasks||[],"cache:teacher-rp-v504-memory");
     }else{
-      const localRows=loadLegacyLocal();
+      const saved=eqRpStoredIndex523(teacherKey);
+      const localRows=cleanDirectRows([...(saved&&saved.rows||[]),...loadLegacyLocal()]);
       if(localRows.length){
-        publish(localRows,[],"cache:teacher-rp-v504-local");
+        publish(localRows,[],"cache:teacher-rp-v524-shared");
         memoryCache.set(memKey,{rows:localRows,tasks:[]});
       }
     }
@@ -9386,7 +9401,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       if(!alive) return;
       const merged=cleanDirectRows([...(existing||[]),...(fresh||[])]);
       memoryCache.set(memKey,{rows:merged,tasks});
-      try{localStorage.setItem(persistedKey,JSON.stringify({rows:merged.slice(-400).map(function(r){const c={...r};delete c.audioDataUrl;return c;})}));}catch(_e){}
+      try{localStorage.setItem(persistedKey,JSON.stringify({rows:merged.slice(-400).map(eqRpStripAudio523)}));}catch(_e){}
       publish(merged,tasks,"get:teacher-rp-v504-merged");
     })();
 
@@ -13688,6 +13703,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const [metric,setMetric]=React.useState("score");
   const teacherId=String(user&&user.id||"").trim();
   const read=React.useCallback(async(force)=>{
+    if(force)window.__eqRpInvalidate523(teacherId);
     if(!teacherId){setBusy(false);setError("Teacher ID unavailable");return;}
     setBusy(true);setError("");
     try{
@@ -13698,7 +13714,20 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
     }catch(e){setError(String(e&&e.message||e));}
     finally{setBusy(false);}
   },[teacherId]);
-  React.useEffect(()=>{read(false);},[read]);
+  React.useEffect(()=>{
+    const cached=eqRpStoredIndex523(teacherId);
+    if(cached&&cached.rows.length){setRecords(cached.rows);setLoadedAt(cached.at);setBusy(false);}
+    read(false);
+  },[read,teacherId]);
+  React.useEffect(()=>{
+    const onIndex=(event)=>{
+      const detail=event&&event.detail||{};
+      if(String(detail.teacherId)!==teacherId||!Array.isArray(detail.rows))return;
+      setRecords(detail.rows);setLoadedAt(Date.now());setBusy(false);
+    };
+    window.addEventListener("eq-rp-index-updated",onIndex);
+    return ()=>window.removeEventListener("eq-rp-index-updated",onIndex);
+  },[teacherId]);
   React.useEffect(()=>{
     const onMutation=(event)=>{
       const d=event&&event.detail||{};
@@ -13764,7 +13793,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const cardStyle={background:"#fff",border:"1px solid #dbe4ef",borderRadius:14,padding:14,boxShadow:"0 2px 8px rgba(15,23,42,.04)"};
   const inputStyle={padding:"9px",border:"1px solid #cbd5e1",borderRadius:9,width:"100%",background:"white",fontSize:12};
   const stat=(label,value,sub)=> <div style={cardStyle}><div style={{fontSize:11,color:"#64748b"}}>{label}</div><div style={{fontSize:23,fontWeight:900,color:"#0f172a",marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#64748b"}}>{sub}</div>}</div>;
-  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v523.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v524.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
   return <div style={{fontFamily:"inherit",color:"#0f172a"}}>
     <div style={{padding:18,borderRadius:16,background:"linear-gradient(115deg,#0f172a,#1d4ed8)",color:"white",marginBottom:12}}>
       <div style={{fontSize:21,fontWeight:900}}>Reading Performance V2</div>
@@ -15344,7 +15373,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v523" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v524" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17130,7 +17159,8 @@ document.addEventListener("click", function(e){
         if(r.decisionMarker===true || id.indexOf("rp_decision_")===0) return;
         map.set(id,{...r,id:id});
       }
-      [...live,...cached,...recordsLive()].forEach(add);
+      const savedIndex=eqRpStoredIndex523(user().id);
+      [...live,...cached,...(savedIndex&&savedIndex.rows||[]),...recordsLive()].forEach(add);
       if(!force && __rpv504CloudLoaded) return Array.from(map.values());
       if(__rpv504CloudPromise) return await __rpv504CloudPromise;
       if(!(typeof db!=="undefined" && db && db.collection)) return Array.from(map.values());
@@ -17423,6 +17453,7 @@ document.addEventListener("click", function(e){
       return !rpIsLocallyDeletedAttempt(r);
     });
     saveRecords(merged);
+    try{const tid=user().id;if(tid&&tid!=="unknown")eqRpSaveIndex523(tid,merged);}catch(_e){}
     try{ RP_LIVE_CACHE=merged; }catch(_e){}
     __rpLastCloudSyncAt=Date.now();
     return merged;
@@ -18585,7 +18616,7 @@ document.addEventListener("click", function(e){
     const taskOpts=Array.from(taskLabelMap.values()).sort((a,b)=>String(a.label).localeCompare(String(b.label),'ar'));
     rpSetOptions(taskSel,taskOpts,"اختر المهمة / جميع المهام");
   }
-  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioUrl||(r.audioChunked&&r.audioChunkCount))); }
+  function hasAudioRecord(r){ return !!(r && (r.audioId||r.audioDataUrl||r.audioStoredInDocument||r.audioUrl||(r.audioChunked&&r.audioChunkCount))); }
   function rpAnalysisState(r){ return String((r&&r.analysisStatus)||"").trim().toLowerCase(); }
   function isPendingAnalysisRecord(r){ const st=rpAnalysisState(r); return !st || st==="pending" || st.includes("analyzing") || st.includes("failed"); }
   function isAnalyzedRecord(r){
