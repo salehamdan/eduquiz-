@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v525</title>
+<title>EduQuiz — Smart Assessment v526</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -9258,14 +9258,14 @@ function eqRpStoredIndex523(tid){
     return x;
   }catch(_e){return null;}
 }
-function eqRpSaveIndex523(tid,rows){
+function eqRpSaveIndex523(tid,rows,complete){
   try{
     const map=new Map();
     const previous=eqRpStoredIndex523(tid);
     (previous&&previous.rows||[]).forEach(r=>{if(r&&r.id)map.set(String(r.id),r);});
     (rows||[]).forEach(r=>{if(r&&r.id)map.set(String(r.id),eqRpStripAudio523(r));});
     const saved=Array.from(map.values());
-    localStorage.setItem(eqRpIndexKey523(tid),JSON.stringify({at:Date.now(),rows:saved}));
+    localStorage.setItem(eqRpIndexKey523(tid),JSON.stringify({at:Date.now(),rows:saved,complete:complete===true||(complete!==false&&!!(previous&&previous.complete))}));
     window.dispatchEvent(new CustomEvent("eq-rp-index-updated",{detail:{teacherId:String(tid),rows:saved}}));
   }catch(e){console.warn("RP index storage unavailable",e&&e.message);}
 }
@@ -9283,7 +9283,7 @@ window.__eqRpTeacherHistory=function(teacherId,force){
   // On a new page load, restore the lightweight one-hour index without re-reading every document.
   if(!force){
     const saved=eqRpStoredIndex523(tid);
-    if(saved){const rows=saved.rows;store[tid]={promise:Promise.resolve(rows),at:saved.at,count:rows.length};return store[tid].promise;}
+    if(saved&&saved.complete){const rows=saved.rows;store[tid]={promise:Promise.resolve(rows),at:saved.at,count:rows.length};return store[tid].promise;}
   }
   const p=(async function(){
     const out=new Map();
@@ -9308,7 +9308,7 @@ window.__eqRpTeacherHistory=function(teacherId,force){
     (saved&&saved.rows||[]).forEach(r=>{if(r&&r.id)combined.set(String(r.id),r);});
     rows.forEach(r=>{if(r&&r.id)combined.set(String(r.id),eqRpStripAudio523(r));});
     const result=Array.from(combined.values());
-    eqRpSaveIndex523(tid,result);
+    eqRpSaveIndex523(tid,result,true);
     return result;
   })();
   store[tid]={promise:p,at:Date.now()};
@@ -9364,10 +9364,11 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     // 1) Instant path: memory cache, then V370 legacy local cache.
     const mem=memoryCache.get(memKey);
     if(mem&&Array.isArray(mem.rows)&&mem.rows.length){
-      publish(mem.rows,mem.tasks||[],"cache:teacher-rp-v504-memory");
+      const completed=eqRpStoredIndex523(teacherKey);
+      publish(completed&&completed.complete?completed.rows:mem.rows,mem.tasks||[],"cache:teacher-rp-v504-memory");
     }else{
       const saved=eqRpStoredIndex523(teacherKey);
-      const localRows=cleanDirectRows([...(saved&&saved.rows||[]),...loadLegacyLocal()]);
+      const localRows=cleanDirectRows(saved&&saved.complete?saved.rows:[...(saved&&saved.rows||[]),...loadLegacyLocal()]);
       if(localRows.length){
         publish(localRows,[],"cache:teacher-rp-v524-shared");
         memoryCache.set(memKey,{rows:localRows,tasks:[]});
@@ -9391,7 +9392,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       let existing=[];
       try{
         const m=memoryCache.get(memKey);
-        existing=(m&&Array.isArray(m.rows))?m.rows:loadLegacyLocal();
+        existing=(m&&Array.isArray(m.rows))?m.rows:((eqRpStoredIndex523(teacherKey)||{}).rows||loadLegacyLocal());
       }catch(_e){}
       // v504: show cached rows instantly, then load the teacher's full history ONCE (shared with the RP drawer).
       const tasks=Array.from(taskMap.values());
@@ -13795,7 +13796,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const cardStyle={background:"#fff",border:"1px solid #dbe4ef",borderRadius:14,padding:14,boxShadow:"0 2px 8px rgba(15,23,42,.04)"};
   const inputStyle={padding:"9px",border:"1px solid #cbd5e1",borderRadius:9,width:"100%",background:"white",fontSize:12};
   const stat=(label,value,sub)=> <div style={cardStyle}><div style={{fontSize:11,color:"#64748b"}}>{label}</div><div style={{fontSize:23,fontWeight:900,color:"#0f172a",marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#64748b"}}>{sub}</div>}</div>;
-  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v525.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v526.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
   return <div style={{fontFamily:"inherit",color:"#0f172a"}}>
     <div style={{padding:18,borderRadius:16,background:"linear-gradient(115deg,#0f172a,#1d4ed8)",color:"white",marginBottom:12}}>
       <div style={{fontSize:21,fontWeight:900}}>Reading Performance V2</div>
@@ -15375,7 +15376,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v525" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v526" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17038,7 +17039,7 @@ document.addEventListener("click", function(e){
     try{
       const base=records();
       const live=Array.isArray(RP_LIVE_CACHE)?RP_LIVE_CACHE:[];
-      // v525: the same metadata index is the source for RB and Reading Performance.
+      // v526: the same metadata index is the source for RB and Reading Performance.
       const u=user();
       const saved=u&&u.role==="teacher"?eqRpStoredIndex523(u.id):null;
       return mergeRecords(mergeRecords(base,live),saved&&saved.rows||[]);
@@ -17166,6 +17167,7 @@ document.addEventListener("click", function(e){
       }
       const savedIndex=eqRpStoredIndex523(user().id);
       [...live,...cached,...(savedIndex&&savedIndex.rows||[]),...recordsLive()].forEach(add);
+      if(!force && savedIndex&&savedIndex.complete) { __rpv504CloudLoaded=true; return Array.from(map.values()); }
       if(!force && __rpv504CloudLoaded) return Array.from(map.values());
       if(__rpv504CloudPromise) return await __rpv504CloudPromise;
       if(!(typeof db!=="undefined" && db && db.collection)) return Array.from(map.values());
@@ -18200,13 +18202,13 @@ document.addEventListener("click", function(e){
     // v288: Sections > RP opens this real recordings/Pending drawer.
     window.eqOpenRPDrawer=async function(){
       panel.style.display="block";
-      // v525: render saved metadata immediately. Do not await a full Firestore history query.
+      // v526: render saved metadata immediately. Do not await a full Firestore history query.
       await renderCards();
       const tid=String(user().id||"");
       const saved=eqRpStoredIndex523(tid);
       const known=recordsLive();
       // First-ever use: fetch once in background. Existing cached sessions never re-read on open.
-      if(!saved && !__rpv504CloudLoaded && !__rpv504CloudPromise){
+      if(!(saved&&saved.complete) && !__rpv504CloudLoaded && !__rpv504CloudPromise){
         syncCloudIntoLocal(false).then(()=>renderCards()).catch(e=>console.warn("RP initial sync",e));
       }
     };
