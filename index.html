@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v532</title>
+<title>EduQuiz — Smart Assessment v534</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1789,18 +1789,28 @@ async function eqQueryResponsesForQuizIds(quizIds){
   }
   const out=new Map();
   let failed=0;
-  // Use conservative batches of 10 for broad Firestore compatibility.
-  for(let i=0;i<ids.length;i+=10){
-    const chunk=ids.slice(i,i+10);
-    try{
-      const snap=await db.collection("responses").where("quizId","in",chunk).get();
-      try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
-      snap.forEach(doc=>{const x=doc.data()||{};out.set(String(doc.id),{...x,id:x.id||doc.id,_id:doc.id});});
-    }catch(e){
-      failed++;
-      console.error("v513 RESPONSE QUERY FAILED — results are NOT confirmed empty", {quizIds:chunk,error:e&&e.message,code:e&&e.code}); window.__EQ_RESPONSE_QUERY_ERROR={quizIds:chunk,error:String(e&&e.message||e),code:String(e&&e.code||"")};
-      // Never fall back to a full collection scan in normal teacher dashboard flow.
-    }
+  // v533: independent quizId batches are fetched concurrently (bounded to four).
+  // The old sequential loop added one network round-trip per batch and delayed results.
+  // Keep all responses and the same query boundaries; never sacrifice grades for speed.
+  const chunks=[];
+  for(let i=0;i<ids.length;i+=10) chunks.push(ids.slice(i,i+10));
+  for(let i=0;i<chunks.length;i+=4){
+    const settled=await Promise.all(chunks.slice(i,i+4).map(async chunk=>{
+      try{
+        const snap=await db.collection("responses").where("quizId","in",chunk).get();
+        try{window.__eqReadDiag&&window.__eqReadDiag("query:responses:quizId-in",Math.max(1,Number(snap.size||0)));}catch(_e){}
+        const rows=[];
+        snap.forEach(doc=>{const x=doc.data()||{};rows.push([String(doc.id),{...x,id:x.id||doc.id,_id:doc.id}]);});
+        return {rows};
+      }catch(e){return {error:e,chunk};}
+    }));
+    settled.forEach(result=>{
+      if(result.error){
+        failed++;
+        console.error("v533 RESPONSE QUERY FAILED — results are NOT confirmed empty", {quizIds:result.chunk,error:result.error&&result.error.message,code:result.error&&result.error.code});
+        window.__EQ_RESPONSE_QUERY_ERROR={quizIds:result.chunk,error:String(result.error&&result.error.message||result.error),code:String(result.error&&result.error.code||"")};
+      }else result.rows.forEach(([id,row])=>out.set(id,row));
+    });
   }
   if(failed) throw new Error("Quiz response queries failed: "+failed+" batch(es). Existing results must not be replaced with an incomplete list.");
   return Array.from(out.values());
@@ -11989,8 +11999,8 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     // v532: paint last verified class-scoped RT results immediately after a page reload.
     // Always continue with a Firebase refresh; this is a display cache, not a stale-results lock.
     try{
-      const stored=JSON.parse(sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
-      if(stored && Date.now()-Number(stored.at||0)<3600000 && Array.isArray(stored.rows)){
+      const stored=JSON.parse(localStorage.getItem("eq_rt_paint_v534_"+rtCacheKey)||sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
+      if(stored && Date.now()-Number(stored.at||0)<86400000 && Array.isArray(stored.rows)){
         setRtTeacherRows(stored.rows);
       }
     }catch(_e){}
@@ -12016,7 +12026,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         }
         const rows=Array.from(out.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
         rtCache.set(rtCacheKey,{at:Date.now(),rows});
-        try{sessionStorage.setItem("eq_rt_paint_v532_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(_e){}
+        try{localStorage.setItem("eq_rt_paint_v534_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(_e){try{sessionStorage.setItem("eq_rt_paint_v532_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(__e){}}
         try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rt-history-class-scoped",rows.length);}catch(_e){}
         return rows;
       })();
@@ -12446,7 +12456,7 @@ function ReadingTheoryStudent({user,data,reload}){
         studentId:user.id,studentNumber:user.studentId,studentName:user.name,
         classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()
       });
-      try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();try{Object.keys(sessionStorage).filter(k=>k.startsWith("eq_rt_paint_v532_")).forEach(k=>sessionStorage.removeItem(k));}catch(_e){}window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
+      try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();try{Object.keys(sessionStorage).filter(k=>k.startsWith("eq_rt_paint_v532_")).forEach(k=>sessionStorage.removeItem(k));Object.keys(localStorage).filter(k=>k.startsWith("eq_rt_paint_v534_")).forEach(k=>localStorage.removeItem(k));}catch(_e){}window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
     }catch(e){console.warn("Save failed",e);}
   }
 
@@ -15413,7 +15423,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v532" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v534" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
