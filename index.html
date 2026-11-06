@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v527</title>
+<title>EduQuiz — Smart Assessment v528</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -13784,6 +13784,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   // Deduplicate only by stable document/attempt identity; never collapse distinct tasks.
   const dedup={};records.forEach(r=>{if(!r||removed(r))return;const k=String(r.id||r._id||[sid(r),taskId(r),r.submittedAt||r.createdAt||""].join("|"));if(!dedup[k]||date(r)>date(dedup[k]))dedup[k]=r;});
   const all=Object.values(dedup);
+  const deletedRecords=records.filter(r=>r&&removed(r)&&r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&!r.decisionMarker);
   const valid=all.filter(accepted);
   const classes=[...new Set(valid.map(classOf))].sort();
   const tasks=[...new Map(valid.map(r=>[taskId(r),{id:taskId(r),title:taskTitle(r)}])).values()].sort((a,b)=>a.title.localeCompare(b.title));
@@ -13811,7 +13812,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const cardStyle={background:"#fff",border:"1px solid #dbe4ef",borderRadius:14,padding:14,boxShadow:"0 2px 8px rgba(15,23,42,.04)"};
   const inputStyle={padding:"9px",border:"1px solid #cbd5e1",borderRadius:9,width:"100%",background:"white",fontSize:12};
   const stat=(label,value,sub)=> <div style={cardStyle}><div style={{fontSize:11,color:"#64748b"}}>{label}</div><div style={{fontSize:23,fontWeight:900,color:"#0f172a",marginTop:4}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#64748b"}}>{sub}</div>}</div>;
-  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v527.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+  const downloadCSV=()=>{const cols=["Student","Student ID","Class","Tasks","Overall","Accuracy","Fluency","WPM","Change (pp)"];const lines=[cols,...selected.map(s=>[s.name,s.id,classLabel(s.cls),s.latest.length,s.score,s.accuracy,s.fluency,s.wpm,s.delta])];const csv="\ufeff"+lines.map(a=>a.map(v=>'"'+String(v===null?"":v).replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="Reading-Performance-v528.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
   return <div style={{fontFamily:"inherit",color:"#0f172a"}}>
     <div style={{padding:18,borderRadius:16,background:"linear-gradient(115deg,#0f172a,#1d4ed8)",color:"white",marginBottom:12}}>
       <div style={{fontSize:21,fontWeight:900}}>Reading Performance V2</div>
@@ -13822,7 +13823,7 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
     {error&&<div style={{...cardStyle,borderColor:"#fca5a5",color:"#991b1b",marginBottom:12}}>⚠ {error}</div>}
     {busy&&<div style={{...cardStyle,marginBottom:12}}>Loading teacher's Reading Progress history…</div>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:12}}>
-      {stat("Records fetched",records.length,"Teacher history")}{stat("Accepted records",valid.length,"Distinct records")}{stat("Students",students.length,"With approved results")}{stat("Tasks",tasks.length,"Approved tasks")}
+      {stat("Active recordings",all.length,"Deleted attempts excluded")}{stat("Deleted recordings",deletedRecords.length,"Excluded from all analytics")}{stat("Accepted records",valid.length,"Distinct records")}{stat("Students",students.length,"With approved results")}{stat("Tasks",tasks.length,"Approved tasks")}
     </div>
     <div style={{...cardStyle,marginBottom:12}}>
       <div style={{fontWeight:900,marginBottom:10}}>Filters & comparison</div>
@@ -15391,7 +15392,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v527" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v528" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17608,6 +17609,21 @@ document.addEventListener("click", function(e){
       console.warn("RP v325 tombstone save failed",e&&e.message);
       throw e;
     }
+    // v528: publish the authoritative tombstone to the shared metadata index only AFTER
+    // the cloud write succeeds. This keeps RB and Reading Performance in sync immediately.
+    try{
+      const tid=String(tomb.teacherId||base.teacherId||(window.__eqCurrentUser&&window.__eqCurrentUser.id)||"").trim();
+      if(tid && tid!=="teacher" && tid!=="unknown"){
+        const previous=eqRpStoredIndex523(tid);
+        const next=new Map();
+        (previous&&previous.rows||[]).forEach(r=>{if(r&&r.id)next.set(String(r.id),r);});
+        next.set(base.id,eqRpStripAudio523(tomb));
+        eqRpSaveIndex523(tid,Array.from(next.values()),previous&&previous.complete===true);
+        const memo=window.__EQ_RP_HISTORY_v504;
+        if(memo)memo[tid]={promise:Promise.resolve(Array.from(next.values())),at:Date.now(),count:next.size};
+      }
+      window.dispatchEvent(new CustomEvent("eq-rp-mutation",{detail:{type:"set",id:base.id,record:tomb}}));
+    }catch(e){console.warn("RP v528 shared index sync failed",e&&e.message);}
     try{ window.dispatchEvent(new CustomEvent("rp-live-refresh",{detail:{collection:"readingSubmissions",id:base.id,status:"deleted_exact"}})); }catch(_e){}
     return tomb;
   }
