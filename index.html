@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v538</title>
+<title>EduQuiz — Smart Assessment v541</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -12204,13 +12204,18 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     const rtCacheKey=String(user&&user.id||"")+"::"+rtClassKey;
     const rtCache=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
     const cached=rtCache.get(rtCacheKey);
-    if(cached && Date.now()-Number(cached.at||0)<120000){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
+    if(cached && Date.now()-Number(cached.at||0)<300000){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
     // v532: paint last verified class-scoped RT results immediately after a page reload.
     // Always continue with a Firebase refresh; this is a display cache, not a stale-results lock.
     try{
       const stored=JSON.parse(localStorage.getItem("eq_rt_paint_v534_"+rtCacheKey)||sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
       if(stored && Date.now()-Number(stored.at||0)<86400000 && Array.isArray(stored.rows)){
         setRtTeacherRows(stored.rows);
+        // v541: a recently verified persisted snapshot is valid for both the badge and the results view.
+        if(Date.now()-Number(stored.at||0)<300000){
+          rtCache.set(rtCacheKey,stored);
+          return ()=>{alive=false;};
+        }
       }
     }catch(_e){}
     // v531: share the first class-scoped RT history fetch across quick unmount/remounts.
@@ -14412,8 +14417,17 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const cached=mem.get(cacheKey);
     const baseline=cached&&Array.isArray(cached.rows)?cached:stored&&Array.isArray(stored.rows)?stored:null;
     if(baseline){setRtNotificationRows(baseline.rows);mem.set(cacheKey,baseline);}
+    // v541: one 5-minute verified history snapshot shared by badge and RT results.
+    // No additional 200+ document fetch on tab opening or quick teacher dashboard remount.
+    if(baseline && Date.now()-Number(baseline.at||0)<300000){
+      try{window.__eqReadDiag&&window.__eqReadDiag("cache:rt-shared-v541",0);}catch(_e){}
+      return()=>{alive=false;};
+    }
     const flights=window.__EQ_RT_NOTIFICATION_FLIGHTS||(window.__EQ_RT_NOTIFICATION_FLIGHTS=new Map());
     let flight=flights.get(cacheKey);
+    // v541: the results view may have started the same history fetch first.
+    // Share that in-flight request instead of issuing a second set of class queries.
+    if(!flight){const teacherFlights=window.__EQ_RT_TEACHER_FLIGHTS;const existing=teacherFlights&&teacherFlights.get(cacheKey);if(existing)flight=existing;}
     if(!flight){
       flight=(async()=>{
         const tokens=Array.from(new Set(myClasses.flatMap(c=>[String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")]).filter(Boolean)));
@@ -15657,7 +15671,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v540" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v541" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
