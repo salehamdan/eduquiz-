@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v536</title>
+<title>EduQuiz — Smart Assessment v537</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1431,7 +1431,15 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
     console.warn("v504 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
-      // v535: dateFilter is not a parameter of this function. Use the narrow class scope.
+      // v537: first retry a two-field scope before falling back to the broad class scan.
+      // An index-mergeable equality query can avoid reading unrelated teachers' records.
+      if(classId && String(classId)!=="all" && teacherId){
+        try{
+          const narrow=await q.where("classId","==",String(classId)).where("teacherId","==",String(teacherId)).get();
+          try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback-narrow:"+col,Math.max(1,Number(narrow.size||0)));}catch(_e){}
+          return filterRows(mapSnap(narrow));
+        }catch(narrowError){ console.warn("v537 narrow fallback unavailable",col,narrowError&&narrowError.message); }
+      }
       if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
       else if(teacherId) q=q.where("teacherId","==",String(teacherId));
       else return [];
@@ -1549,9 +1557,9 @@ async function fsDel(col, id) {
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
 const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_login";
-// v536: IndexedDB persists the complete teacher dashboard without localStorage's
+// v537: IndexedDB persists the complete teacher dashboard without localStorage's
 // small quota. The cache is display-only outside the short verified reuse window.
-const EQ_DASHBOARD_IDB_NAME="eq_dashboard_v536";
+const EQ_DASHBOARD_IDB_NAME="eq_dashboard_v537";
 function eqDashboardIDB(mode, payload){
   return new Promise(resolve=>{
     try{
@@ -1604,7 +1612,7 @@ function eqSaveFastDataCache(d){
   // Persist asynchronously; never delay UI or a student's submission on disk I/O.
   eqDashboardIDB("write",snapshot).catch(()=>{});
   try{localStorage.setItem(EQ_FAST_DATA_CACHE_KEY,JSON.stringify(snapshot));}
-  catch(e){console.warn("v536: localStorage quota; IndexedDB snapshot retained",e&&e.message);} 
+  catch(e){console.warn("v537: localStorage quota; IndexedDB snapshot retained",e&&e.message);} 
 }
 // v504: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
@@ -1893,7 +1901,7 @@ async function loadDashboardDataWithRoster(base) {
     try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:reused",0);}catch(_e){}
     return __EQ_DASHBOARD_HYDRATE_RESULT;
   }
-  // v536: localStorage may have rejected the large snapshot. Reuse the same
+  // v537: localStorage may have rejected the large snapshot. Reuse the same
   // 90-second freshness contract from IndexedDB, rather than downloading again.
   try{
     const disk=await eqDashboardIDB("read");
@@ -1903,7 +1911,7 @@ async function loadDashboardDataWithRoster(base) {
     if(!window.__EQ_FORCE_HEAVY && ds && sid && String(ds.__cacheTeacherId||"")===sid && age>=0 && age<90000 && !(window.__EQ_LOCAL_MUTATION_AT&&Date.now()-window.__EQ_LOCAL_MUTATION_AT<90000) && Array.isArray(ds.quizzes)&&Array.isArray(ds.responses)){
       const reuse={...base,...ds,users:base.users,classes:base.classes,firebaseUsers:base.firebaseUsers||base.users,readingSubmissions:[]};
       __EQ_DASHBOARD_HYDRATE_RESULT=reuse;__EQ_DASHBOARD_HYDRATE_AT=Date.now();
-      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:indexeddb-v536",0);}catch(e){}
+      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:indexeddb-v537",0);}catch(e){}
       return reuse;
     }
   }catch(e){}
@@ -10570,7 +10578,10 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
   function draftKey(day=date){return ["eq_followup_daily_draft",user&&user.id?user.id:"teacher",term,period,classId,day].map(x=>String(x||"").replace(/[^a-zA-Z0-9_\-\u0600-\u06FF]/g,"_")).join("_");}
   function clearDailyDraft(){try{localStorage.removeItem(draftKey());}catch(e){}}
 
+  const followupLoadSeqRef=useRef(0);
   async function loadFollowupDay(){
+    const loadSeq=++followupLoadSeqRef.current;
+    const isCurrent=()=>loadSeq===followupLoadSeqRef.current;
     setLoading(true); setMsg("");
     try{
       // v535: start independent scoped reads together; keep their existing cache and save paths.
@@ -10583,10 +10594,12 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
       const safeTasks=tasksPromise.catch(()=>[]);
       const safeScores=scoresPromise.catch(()=>[]);
       const mine=await minePromise;
+      if(!isCurrent()) return;
       setPeriodRows(mine);
       let scopedRefs=[];
       try{
         scopedRefs=await safeRefs;
+        if(!isCurrent()) return;
         setReferralRows(scopedRefs);
       }catch(refErr){ scopedRefs=[]; setReferralRows([]); }
       // Reuse the already-loaded Follow-up rows for the referral badge; no second dailyFollowup GET.
@@ -10607,10 +10620,12 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
       }catch(_e){}
       try{
         const tasksAll=await safeTasks;
+        if(!isCurrent()) return;
         const tasks=(tasksAll||[]).filter(t=>t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
         setHomeworkTasks(tasks);
         const taskIds=new Set(tasks.map(t=>String(t.id)));
         const scoresAll=await safeScores;
+        if(!isCurrent()) return;
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
@@ -10630,8 +10645,8 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
       setRecords(nextRecords);
       setAutosaveMsg("✅ محفوظ");
       setTimeout(function(){ autosaveSuppressRef.current=false; },350);
-    }catch(e){setMsg("⚠️ لم أستطع تحميل سجلات المتابعة.");}
-    setLoading(false);
+    }catch(e){if(isCurrent())setMsg("⚠️ لم أستطع تحميل سجلات المتابعة.");}
+    if(isCurrent())setLoading(false);
   }
   async function saveSettings(){
     const obj={id:settingsId(),teacherId:user.id,term,period,settings:{requiredParticipation:safeNum(settings.requiredParticipation,8),fullScore:safeNum(settings.fullScore,10),latePenalty:safeNum(settings.latePenalty,0.25),absencePenalty:safeNum(settings.absencePenalty,0.5),maxAttendancePenalty:safeNum(settings.maxAttendancePenalty,3),itemPenalty:safeNum(settings.itemPenalty,0.25),homeworkFullScore:safeNum(settings.homeworkFullScore,10),projectFullScore:safeNum(settings.projectFullScore,10),quizFullScore:safeNum(settings.quizFullScore,10),oralFullScore:safeNum(settings.oralFullScore,10),writtenFullScore:safeNum(settings.writtenFullScore,10),oralListeningWeight:safeNum(settings.oralListeningWeight,8),oralRpWeight:safeNum(settings.oralRpWeight,2),oralListeningMode:settings.oralListeningMode||"best",oralListeningSelectedId:settings.oralListeningSelectedId||"",oralRpMode:settings.oralRpMode||"best",oralRpTaskId:settings.oralRpTaskId||"",writtenCalcMode:settings.writtenCalcMode||"best",writtenSelectedId:settings.writtenSelectedId||"",oralListeningSlots:oralListeningSlots(),writtenTestSlots:writtenTestSlots(),quizSlots:quizSlots()},updatedAt:new Date().toISOString()};
@@ -15499,7 +15514,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v536" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v537" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
