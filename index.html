@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v528</title>
+<title>EduQuiz — Smart Assessment v529</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -14023,6 +14023,9 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [adminBusy,setAdminBusy]=useState("");
   const [shareModal,setShareModal]=useState(null);
   const [pendingExpanded,setPendingExpanded]=useState(false);
+  const [helpOpen,setHelpOpen]=useState(false);
+  const [helpClass,setHelpClass]=useState("all");
+  const [helpQuiz,setHelpQuiz]=useState("all");
   const [qDash,setQDash]=useState(false);
   const [qDashTab,setQDashTab]=useState("overview");
   const [qrdQuiz,setQrdQuiz]=useState("all");
@@ -15392,7 +15395,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v528" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v529" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15467,9 +15470,24 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
               {extra>0&&!pendingExpanded&&<button onClick={function(){setPendingExpanded(true);}} style={{marginTop:"6px",fontSize:"11px",color:C.p,background:"none",border:"none",cursor:"pointer",fontWeight:"700",fontFamily:F}}>+ {extra} more...</button>}
             </Card>;
           })()}
-          {flags.length>0 && <Card style={{marginBottom:"11px",border:"2px solid "+C.d,background:"#fef2f2"}}>
-            <strong style={{color:"#991b1b",fontSize:"12px",display:"block",marginBottom:"7px",fontFamily:F}}>🚨 Students Needing Intervention</strong>
-            {flags.map(s=><div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid #fca5a5",fontSize:"12px",fontFamily:F}}><span style={{fontWeight:"700",color:C.tx}}>{s.name}</span><span style={{color:"#991b1b"}}>Below 50% in 2+ skills</span></div>)}
+          {flags.length>0 && <Card style={{marginBottom:"11px",border:"1px solid "+C.br,background:C.wh}}>
+            <button type="button" onClick={()=>setHelpOpen(v=>!v)} aria-expanded={helpOpen} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",background:"transparent",border:"none",padding:"3px",cursor:"pointer",fontFamily:F,color:C.tx}}>
+              <span style={{display:"flex",alignItems:"center",gap:"9px",fontSize:"13px",fontWeight:800}}><span style={{fontSize:"19px"}}>🆘</span> Need Help <span style={{fontSize:"11px",fontWeight:500,color:C.mu}}>Students Needing Intervention</span></span>
+              <span style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{background:"#fee2e2",color:"#991b1b",borderRadius:"999px",padding:"3px 9px",fontSize:"12px",fontWeight:900}}>{flags.length}</span><span aria-hidden="true">{helpOpen?"▲":"▼"}</span></span>
+            </button>
+            {helpOpen&&(()=>{
+              const classChoices=[...new Set(flags.map(s=>String(s.classId||s.className||"")))].filter(Boolean);
+              const quizChoices=myQuizzes.filter(q=>flags.some(st=>responsesForStudent(data.responses,st).some(r=>String(r.quizId||"")===String(q.id||""))));
+              const filtered=flags.filter(st=>(helpClass==="all"||sameClassId(st.classId||st.className,helpClass))&&(helpQuiz==="all"||responsesForStudent(data.responses,st).some(r=>String(r.quizId||"")===helpQuiz)));
+              return <div style={{borderTop:"1px solid "+C.br,marginTop:"10px",paddingTop:"10px"}}>
+                <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"10px"}}>
+                  <label style={{fontSize:"11px",fontWeight:700,color:C.mu}}>Class <select value={helpClass} onChange={e=>setHelpClass(e.target.value)} style={{marginInlineStart:"4px",padding:"6px",border:"1px solid "+C.br,borderRadius:"7px",background:C.wh,color:C.tx}}><option value="all">All Classes</option>{classChoices.map(id=><option key={id} value={id}>{(myClasses.find(c=>sameClassId(c.id||c.classId,id))||{}).name||id}</option>)}</select></label>
+                  <label style={{fontSize:"11px",fontWeight:700,color:C.mu}}>Quiz <select value={helpQuiz} onChange={e=>setHelpQuiz(e.target.value)} style={{marginInlineStart:"4px",padding:"6px",border:"1px solid "+C.br,borderRadius:"7px",background:C.wh,color:C.tx,maxWidth:"210px"}}><option value="all">All Quizzes</option>{quizChoices.map(q=><option key={q.id} value={String(q.id)}>{q.title||q.name||q.id}</option>)}</select></label>
+                </div>
+                <div style={{fontSize:"11px",color:C.mu,marginBottom:"7px"}}>Showing {filtered.length} of {flags.length} students · Below 50% in 2+ skills</div>
+                {filtered.length===0?<div style={{fontSize:"12px",color:C.mu}}>No students match these filters.</div>:filtered.map(st=><div key={st.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",padding:"7px 2px",borderBottom:"1px solid "+C.br,fontSize:"12px"}}><span style={{fontWeight:700,color:C.tx}}>{st.name}</span><span style={{color:C.mu,fontSize:"11px"}}>{(myClasses.find(c=>sameClassId(c.id||c.classId,st.classId||st.className))||{}).name||st.className||st.classId||"—"}</span></div>)}
+              </div>;
+            })()}
           </Card>}
           {myResps.length>0 && <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"11px"}}>
             <Card><strong style={{fontSize:"12px",color:C.tx,display:"block",marginBottom:"9px",fontFamily:F}}>📊 Score Distribution</strong>
