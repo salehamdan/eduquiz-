@@ -12204,7 +12204,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     const rtCacheKey=String(user&&user.id||"")+"::"+rtClassKey;
     const rtCache=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
     const cached=rtCache.get(rtCacheKey);
-    if(cached){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
+    if(cached && Date.now()-Number(cached.at||0)<120000){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
     // v532: paint last verified class-scoped RT results immediately after a page reload.
     // Always continue with a Firebase refresh; this is a display cache, not a stale-results lock.
     try{
@@ -12217,6 +12217,9 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     // Keep the existing session cache and live mutation handling unchanged.
     const rtFlights=window.__EQ_RT_TEACHER_FLIGHTS||(window.__EQ_RT_TEACHER_FLIGHTS=new Map());
     let flight=rtFlights.get(rtCacheKey);
+    // v540: if the startup badge is already fetching this teacher's RT history,
+    // reuse that exact promise rather than issuing a second 200-document GET.
+    if(!flight){const pending=window.__EQ_RT_NOTIFICATION_FLIGHTS;const shared=pending&&pending.get(rtCacheKey);if(shared)flight=shared;}
     if(!flight){
       flight=(async()=>{
         const out=new Map();
@@ -14393,31 +14396,53 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
-  // v522: lightweight, bounded teacher RT notifications. Do not preload all RT history.
-  // A class-scoped query is used so another teacher's records never enter this counter.
+  // v540: share one verified class-scoped history between the notification badge
+  // and Reading Theory. A persisted snapshot paints immediately; only newer
+  // submissions are requested on repeat visits. Never discard older attempts.
   const [rtNotificationRows,setRtNotificationRows]=useState([]);
   const rtClassKey=myClasses.map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean).sort().join("|");
   useEffect(()=>{
     let alive=true;
     if(!FIREBASE_OK || !db || !db.collection || !rtClassKey){setRtNotificationRows([]);return;}
     const cacheKey=String(user.id)+"::"+rtClassKey;
-    const cache=window.__EQ_RT_NOTIFICATION_CACHE||(window.__EQ_RT_NOTIFICATION_CACHE=new Map());
-    const prior=cache.get(cacheKey);
-    if(prior && Date.now()-prior.at<120000){setRtNotificationRows(prior.rows);return;}
-    (async()=>{
-      const out=new Map();
-      const tokens=Array.from(new Set(myClasses.flatMap(c=>[String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")]).filter(Boolean)));
-      for(const cid of tokens){
-        try{
-          // Capped to protect reads. Full history is loaded only inside Reading Theory.
-          const snap=await db.collection("readingTheoryResponses").where("classId","==",cid).limit(100).get();
-          snap.forEach(doc=>{out.set(String(doc.id),{id:doc.id,...doc.data()});});
-        }catch(e){console.warn("RT notification query failed",cid,e);}
-      }
-      if(!alive)return;
-      const rows=Array.from(out.values()).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));
-      cache.set(cacheKey,{at:Date.now(),rows});setRtNotificationRows(rows);
-    })();
+    const mem=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
+    const persistedKey="eq_rt_paint_v534_"+cacheKey;
+    let stored=null;
+    try{stored=JSON.parse(localStorage.getItem(persistedKey)||"null");}catch(_e){}
+    const cached=mem.get(cacheKey);
+    const baseline=cached&&Array.isArray(cached.rows)?cached:stored&&Array.isArray(stored.rows)?stored:null;
+    if(baseline){setRtNotificationRows(baseline.rows);mem.set(cacheKey,baseline);}
+    const flights=window.__EQ_RT_NOTIFICATION_FLIGHTS||(window.__EQ_RT_NOTIFICATION_FLIGHTS=new Map());
+    let flight=flights.get(cacheKey);
+    if(!flight){
+      flight=(async()=>{
+        const tokens=Array.from(new Set(myClasses.flatMap(c=>[String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")]).filter(Boolean)));
+        const recent=baseline&&Date.now()-Number(baseline.at||0)<86400000;
+        const previous=recent?baseline.rows:[];
+        const watermark=previous.reduce((m,r)=>{const t=Date.parse(r.submittedAt||r.createdAt||"");return Number.isFinite(t)&&t>m?t:m;},0);
+        const merged=new Map(previous.filter(r=>r&&r.id).map(r=>[String(r.id),r]));
+        // If a delta query needs a missing composite index, safely fall back
+        // to the original class-scoped query; never silently lose records.
+        for(const cid of tokens){
+          let snap=null;
+          if(recent&&watermark){
+            try{snap=await db.collection("readingTheoryResponses").where("classId","==",cid).where("submittedAt",">",new Date(Math.max(0,watermark-60000)).toISOString()).get();}
+            catch(e){console.warn("v540 RT delta unavailable; full class fallback",cid,e&&e.message);}
+          }
+          if(!snap){try{snap=await db.collection("readingTheoryResponses").where("classId","==",cid).get();}
+            catch(e){console.warn("v540 RT class query failed",cid,e&&e.message);continue;}}
+          snap.forEach(doc=>{merged.set(String(doc.id),{id:doc.id,...doc.data()});});
+        }
+        const rows=Array.from(merged.values()).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));
+        const item={at:Date.now(),rows};
+        mem.set(cacheKey,item);
+        try{localStorage.setItem(persistedKey,JSON.stringify(item));}catch(_e){}
+        return rows;
+      })();
+      flights.set(cacheKey,flight);
+      flight.finally(()=>{if(flights.get(cacheKey)===flight)flights.delete(cacheKey);});
+    }
+    flight.then(rows=>{if(alive)setRtNotificationRows(rows);}).catch(e=>console.warn("v540 RT notifications",e));
     return()=>{alive=false;};
   },[user.id,rtClassKey]);
   useEffect(()=>{
@@ -15632,7 +15657,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v539" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v540" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
