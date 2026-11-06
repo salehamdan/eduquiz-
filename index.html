@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v531</title>
+<title>EduQuiz — Smart Assessment v532</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1836,7 +1836,7 @@ async function loadDashboardDataWithRoster(base) {
     const raw=JSON.parse(localStorage.getItem(EQ_FAST_DATA_CACHE_KEY)||"null");
     const cd=raw&&raw.data, age=Date.now()-Number(raw&&raw.savedAt||0);
     const tid0=String(JSON.parse(localStorage.getItem("eq_session")||"null")?.id || (base.users||[]).find(u=>u&&String(u.role||"")==="teacher")?.id || "");
-    if(false && !window.__EQ_FORCE_HEAVY && cd && age<86400000 && Array.isArray(cd.quizzes) && Array.isArray(cd.responses) && (cd.responses.length>0 || cd.quizzes.length===0) && tid0 && String(cd.__cacheTeacherId||"")===tid0){
+    if(!window.__EQ_FORCE_HEAVY && cd && age>=0 && age<90000 && !(window.__EQ_LOCAL_MUTATION_AT && Date.now()-window.__EQ_LOCAL_MUTATION_AT<90000) && Array.isArray(cd.quizzes) && Array.isArray(cd.responses) && (cd.responses.length>0 || cd.quizzes.length===0) && tid0 && String(cd.__cacheTeacherId||"")===tid0){
       const reuse={...base,
         quizzes:cd.quizzes,responses:cd.responses||[],announcements:cd.announcements||[],notes:cd.notes||[],
         readingTasks:cd.readingTasks||[],projects:cd.projects||[],projectSubmissions:cd.projectSubmissions||[],
@@ -11986,6 +11986,14 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     const rtCache=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
     const cached=rtCache.get(rtCacheKey);
     if(cached){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
+    // v532: paint last verified class-scoped RT results immediately after a page reload.
+    // Always continue with a Firebase refresh; this is a display cache, not a stale-results lock.
+    try{
+      const stored=JSON.parse(sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
+      if(stored && Date.now()-Number(stored.at||0)<3600000 && Array.isArray(stored.rows)){
+        setRtTeacherRows(stored.rows);
+      }
+    }catch(_e){}
     // v531: share the first class-scoped RT history fetch across quick unmount/remounts.
     // Keep the existing session cache and live mutation handling unchanged.
     const rtFlights=window.__EQ_RT_TEACHER_FLIGHTS||(window.__EQ_RT_TEACHER_FLIGHTS=new Map());
@@ -12008,6 +12016,7 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
         }
         const rows=Array.from(out.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
         rtCache.set(rtCacheKey,{at:Date.now(),rows});
+        try{sessionStorage.setItem("eq_rt_paint_v532_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(_e){}
         try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rt-history-class-scoped",rows.length);}catch(_e){}
         return rows;
       })();
@@ -12437,7 +12446,7 @@ function ReadingTheoryStudent({user,data,reload}){
         studentId:user.id,studentNumber:user.studentId,studentName:user.name,
         classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()
       });
-      try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
+      try{if(window.__EQ_RT_TEACHER_CACHE)window.__EQ_RT_TEACHER_CACHE.clear();try{Object.keys(sessionStorage).filter(k=>k.startsWith("eq_rt_paint_v532_")).forEach(k=>sessionStorage.removeItem(k));}catch(_e){}window.dispatchEvent(new CustomEvent("eq-rt-response-mutation",{detail:{record:{id,score,correct,total,kpEarned,level:session.level,levelId:session.levelId||adaptLevel.id,studentId:user.id,studentNumber:user.studentId,studentName:user.name,classId:user.classId,startedAt,durationSeconds,submittedAt:new Date(submittedMs).toISOString(),createdAt:today()}}}));}catch(_e){}
     }catch(e){console.warn("Save failed",e);}
   }
 
@@ -15404,7 +15413,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v531" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v532" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
