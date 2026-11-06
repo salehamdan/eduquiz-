@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v534</title>
+<title>EduQuiz — Smart Assessment v536</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -1431,8 +1431,8 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
     console.warn("v504 scoped follow-up query fallback",col,e&&e.message);
     try{
       let q=db.collection(col);
-      if(dateFilter) q=q.where("date","==",String(dateFilter));
-      else if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
+      // v535: dateFilter is not a parameter of this function. Use the narrow class scope.
+      if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
       else if(teacherId) q=q.where("teacherId","==",String(teacherId));
       else return [];
       const snap=await q.get();
@@ -1549,9 +1549,62 @@ async function fsDel(col, id) {
 // QUIZ_SPEED_OPTIMIZATION_20260630
 // Fast startup cache: show the last known dashboard quickly, then refresh Firebase in the background.
 const EQ_FAST_DATA_CACHE_KEY = "eq_fast_data_cache_real_v18_reimport_revives_login";
+// v536: IndexedDB persists the complete teacher dashboard without localStorage's
+// small quota. The cache is display-only outside the short verified reuse window.
+const EQ_DASHBOARD_IDB_NAME="eq_dashboard_v536";
+function eqDashboardIDB(mode, payload){
+  return new Promise(resolve=>{
+    try{
+      if(!window.indexedDB){resolve(null);return;}
+      const req=indexedDB.open(EQ_DASHBOARD_IDB_NAME,1);
+      req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains("snapshots"))req.result.createObjectStore("snapshots");};
+      req.onerror=()=>resolve(null);
+      req.onsuccess=()=>{
+        const dbi=req.result;
+        try{
+          const tx=dbi.transaction("snapshots",mode==="write"?"readwrite":"readonly");
+          const store=tx.objectStore("snapshots");
+          const r=mode==="write"?store.put(payload,"teacher"):store.get("teacher");
+          r.onsuccess=()=>resolve(mode==="write"?true:r.result||null);
+          r.onerror=()=>resolve(null);
+          tx.oncomplete=()=>dbi.close();
+          tx.onerror=()=>{resolve(null);dbi.close();};
+        }catch(e){dbi.close();resolve(null);}
+      };
+    }catch(e){resolve(null);}
+  });
+}
+function eqCompactDashboardSnapshot(d){
+  if(!d || d.loginLight===true || !Array.isArray(d.quizzes) || !Array.isArray(d.responses)) return null;
+  const sess=(()=>{try{return JSON.parse(localStorage.getItem("eq_session")||"null");}catch(e){return null;}})();
+  const tid=String(d.__cacheTeacherId||"");
+  if(!sess || String(sess.role)!=="teacher" || String(sess.id||"")!==tid) return null;
+  const keys=["users","firebaseUsers","classes","quizzes","responses","announcements","notes","readingTasks","projects","projectSubmissions","appSettings","readingTheoryItems","readingTheoryResponses","readingAttemptResets"];
+  const safe={__cacheTeacherId:tid};
+  keys.forEach(k=>{if(Array.isArray(d[k]))safe[k]=d[k];});
+  safe.readingSubmissions=[];
+  return {savedAt:Date.now(),data:safe};
+}
+async function eqLoadFastDataCacheAsync(){
+  const local=eqLoadFastDataCache();
+  if(local)return local;
+  const raw=await eqDashboardIDB("read");
+  try{
+    const sess=JSON.parse(localStorage.getItem("eq_session")||"null");
+    const d=raw&&raw.data;
+    if(!sess || String(sess.role)!=="teacher" || !d || String(d.__cacheTeacherId||"")!==String(sess.id||""))return null;
+    if(!Array.isArray(d.quizzes)||!Array.isArray(d.responses)||!Array.isArray(d.users)||!Array.isArray(d.classes))return null;
+    return d;
+  }catch(e){return null;}
+}
 function eqSaveFastDataCache(d){
   if(!d || d.loginLight===true || !Array.isArray(d.quizzes) || !Array.isArray(d.responses) || (d.quizzes.length && !d.responses.length)) return;
-  try{ const safe=d?{...d,readingSubmissions:[]}:d; localStorage.setItem(EQ_FAST_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), data:safe})); }catch(e){console.warn("EduQuiz fast cache save failed",e&&e.message);} 
+  const snapshot=eqCompactDashboardSnapshot(d);
+  if(!snapshot)return;
+  // Persist asynchronously; never delay UI or a student's submission on disk I/O.
+  eqDashboardIDB("write",snapshot).catch(()=>{});
+  try{localStorage.setItem(EQ_FAST_DATA_CACHE_KEY,JSON.stringify(snapshot));}
+  catch(e){console.warn("v536: localStorage quota; IndexedDB snapshot retained",e&&e.message);} 
 }
 // v504: local edits (delete project, edit quiz, announcement, note...) used to change only the in-memory data, so the
 // persisted fast cache stayed old and the deleted item came back after closing/reopening. Persist the live data shortly after any local mutation.
@@ -1840,6 +1893,20 @@ async function loadDashboardDataWithRoster(base) {
     try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:reused",0);}catch(_e){}
     return __EQ_DASHBOARD_HYDRATE_RESULT;
   }
+  // v536: localStorage may have rejected the large snapshot. Reuse the same
+  // 90-second freshness contract from IndexedDB, rather than downloading again.
+  try{
+    const disk=await eqDashboardIDB("read");
+    const ds=disk&&disk.data;
+    const age=Date.now()-Number(disk&&disk.savedAt||0);
+    const sid=String(JSON.parse(localStorage.getItem("eq_session")||"null")?.id||"");
+    if(!window.__EQ_FORCE_HEAVY && ds && sid && String(ds.__cacheTeacherId||"")===sid && age>=0 && age<90000 && !(window.__EQ_LOCAL_MUTATION_AT&&Date.now()-window.__EQ_LOCAL_MUTATION_AT<90000) && Array.isArray(ds.quizzes)&&Array.isArray(ds.responses)){
+      const reuse={...base,...ds,users:base.users,classes:base.classes,firebaseUsers:base.firebaseUsers||base.users,readingSubmissions:[]};
+      __EQ_DASHBOARD_HYDRATE_RESULT=reuse;__EQ_DASHBOARD_HYDRATE_AT=Date.now();
+      try{window.__eqReadDiag&&window.__eqReadDiag("dashboard-hydrate:indexeddb-v536",0);}catch(e){}
+      return reuse;
+    }
+  }catch(e){}
   // v504: a fresh re-login within 15 minutes reuses the saved dashboard collections (same teacher) instead of re-reading
   // quizzes + every response + notes + projects (~1,600 reads). Teacher can force a full reload with window.__EQ_FORCE_HEAVY=true.
   try{
@@ -10506,11 +10573,20 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
   async function loadFollowupDay(){
     setLoading(true); setMsg("");
     try{
-      const mine=await eqFollowupScopedRows("dailyFollowup",user&&user.id,term,period,classId);
+      // v535: start independent scoped reads together; keep their existing cache and save paths.
+      const minePromise=eqFollowupScopedRows("dailyFollowup",user&&user.id,term,period,classId);
+      const refsPromise=eqFollowupScopedRows("followupReferrals",user&&user.id,term,period,classId);
+      const tasksPromise=eqFollowupScopedRows("followupHomeworkTasks",user&&user.id,term,period,classId);
+      const scoresPromise=eqFollowupScopedRows("followupHomeworkScores",user&&user.id,term,period,classId);
+      // Catch optional reads immediately so an early rejection cannot become unhandled.
+      const safeRefs=refsPromise.catch(()=>[]);
+      const safeTasks=tasksPromise.catch(()=>[]);
+      const safeScores=scoresPromise.catch(()=>[]);
+      const mine=await minePromise;
       setPeriodRows(mine);
       let scopedRefs=[];
       try{
-        scopedRefs=await eqFollowupScopedRows("followupReferrals",user&&user.id,term,period,classId);
+        scopedRefs=await safeRefs;
         setReferralRows(scopedRefs);
       }catch(refErr){ scopedRefs=[]; setReferralRows([]); }
       // Reuse the already-loaded Follow-up rows for the referral badge; no second dailyFollowup GET.
@@ -10530,11 +10606,11 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
         if(typeof onReferralAlertCount==="function") onReferralAlertCount(c);
       }catch(_e){}
       try{
-        const tasksAll=await eqFollowupScopedRows("followupHomeworkTasks",user&&user.id,term,period,classId);
+        const tasksAll=await safeTasks;
         const tasks=(tasksAll||[]).filter(t=>t.deleted!==true).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.title||"").localeCompare(String(b.title||"")));
         setHomeworkTasks(tasks);
         const taskIds=new Set(tasks.map(t=>String(t.id)));
-        const scoresAll=await eqFollowupScopedRows("followupHomeworkScores",user&&user.id,term,period,classId);
+        const scoresAll=await safeScores;
         const sm={}; (scoresAll||[]).forEach(x=>{ if(taskIds.has(String(x.taskId||""))){ sm[String(x.taskId)+"__"+String(x.studentId)]=x; } });
         setHomeworkScores(sm);
       }catch(hwErr){ setHomeworkTasks([]); setHomeworkScores({}); }
@@ -15423,7 +15499,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v534" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v536" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16530,7 +16606,7 @@ function App() {
       const code=params.get("quiz");
       const sess=loadSession();
       // Show cached dashboard immediately when available, then refresh Firebase in the background.
-      const cached=eqLoadFastDataCache();
+      const cached=await eqLoadFastDataCacheAsync();
       // v504: teacher dashboard cache belongs only to a teacher session.
       // Never paint it for a real student; that caused 11/161/120 and RP cards to flash, then disappear.
       const useCachedStartup = cached && !data && (!sess || String(sess.role||"")!=="student");
