@@ -1449,12 +1449,72 @@ async function eqFollowupScopedRows(col,teacherId,term,period,classId){
     throw e;
   }
 }
+// v539: one compact, per-class period index, while retaining all original daily documents.
+// First uncached access backfills once; subsequent cold starts read one index document.
+// Updates use Firestore transactions so concurrent saves merge instead of overwriting history.
+const EQ_FQ_INDEX_COLLECTION="dailyFollowupPeriodIndexes";
+function eqFqIndexId(teacherId,term,period,classId){
+  return [teacherId,term,period,classId].map(v=>encodeURIComponent(String(v||""))).join("~");
+}
+function eqFqIndexSafe(rows){
+  try{return JSON.stringify(rows).length<700000;}catch(_e){return false;}
+}
+async function eqFqReadPeriodIndex(teacherId,term,period,classId){
+  if(!FIREBASE_OK || !teacherId || !term || !period || !classId || classId==="all")return null;
+  try{
+    const doc=await db.collection(EQ_FQ_INDEX_COLLECTION).doc(eqFqIndexId(teacherId,term,period,classId)).get();
+    try{window.__eqReadDiag&&window.__eqReadDiag("followup-period-index",1);}catch(_e){}
+    const data=doc.exists?doc.data():null;
+    return data&&data.complete===true&&Array.isArray(data.rows)?data.rows:null;
+  }catch(e){console.warn("v539 period index unavailable",e&&e.message);return null;}
+}
+async function eqFqCreatePeriodIndex(teacherId,term,period,classId,rows){
+  if(!FIREBASE_OK || !teacherId || !term || !period || !classId || classId==="all" || !eqFqIndexSafe(rows))return;
+  try{
+    const ref=db.collection(EQ_FQ_INDEX_COLLECTION).doc(eqFqIndexId(teacherId,term,period,classId));
+    await db.runTransaction(async tx=>{
+      const old=await tx.get(ref);
+      if(old.exists)return;
+      tx.set(ref,{teacherId,term,period,classId,complete:true,rows,updatedAt:Date.now()});
+    });
+  }catch(e){console.warn("v539 index creation unavailable",e&&e.message);}
+}
+async function eqFqUpdatePeriodIndex(teacherId,term,period,classId,updates){
+  if(!FIREBASE_OK || !Array.isArray(updates) || !updates.length)return;
+  try{
+    const ref=db.collection(EQ_FQ_INDEX_COLLECTION).doc(eqFqIndexId(teacherId,term,period,classId));
+    await db.runTransaction(async tx=>{
+      const snap=await tx.get(ref);
+      const data=snap.exists?snap.data():null;
+      if(!data || data.complete!==true || !Array.isArray(data.rows))return;
+      const byId=new Map(data.rows.map(r=>[String(r.id||r._id),r]));
+      updates.forEach(r=>byId.set(String(r.id||r._id),r));
+      const rows=Array.from(byId.values());
+      if(!eqFqIndexSafe(rows)){tx.delete(ref);return;}
+      tx.update(ref,{rows,updatedAt:Date.now()});
+    });
+  }catch(e){
+    // A failed index update must never be treated as successful or leave stale data.
+    console.warn("v539 period index update failed",e&&e.message);
+    try{await db.collection(EQ_FQ_INDEX_COLLECTION).doc(eqFqIndexId(teacherId,term,period,classId)).delete();}catch(_e){}
+  }
+}
 async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classId){
   const filterRows=(rows)=>(rows||[]).filter(r=>eqFollowupScopeMatch(r,teacherId,term,period,classId));
   if(!FIREBASE_OK || typeof db==="undefined" || !db || !db.collection){
     try{return filterRows(await fsAll(col));}catch(_e){return [];}
   }
   const mapSnap=(snap)=>snap.docs.map(d=>({...d.data(),id:(d.data()&&d.data().id)||d.id,_id:d.id}));
+  // Check the compact index before issuing any potentially 500-row daily query.
+  if(col==="dailyFollowup"){
+    const indexed=await eqFqReadPeriodIndex(teacherId,term,period,classId);
+    if(indexed!==null)return filterRows(indexed);
+  }
+  const finish=async rows=>{
+    const scoped=filterRows(rows);
+    if(col==="dailyFollowup")await eqFqCreatePeriodIndex(teacherId,term,period,classId,scoped);
+    return scoped;
+  };
   try{
     let q=db.collection(col);
     if(teacherId) q=q.where("teacherId","==",String(teacherId));
@@ -1463,7 +1523,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
     if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
     const snap=await q.get();
     try{window.__eqReadDiag&&window.__eqReadDiag("followup-scope:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
-    return filterRows(mapSnap(snap));
+    return finish(mapSnap(snap));
   }catch(e){
     // Equality-only compound queries normally use index merging. If a deployment lacks a usable index,
     // retry with ONE narrow indexed field, then filter in memory. Do not download the whole collection.
@@ -1476,7 +1536,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
         try{
           const narrow=await q.where("classId","==",String(classId)).where("teacherId","==",String(teacherId)).get();
           try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback-narrow:"+col,Math.max(1,Number(narrow.size||0)));}catch(_e){}
-          return filterRows(mapSnap(narrow));
+          return finish(mapSnap(narrow));
         }catch(narrowError){ console.warn("v537 narrow fallback unavailable",col,narrowError&&narrowError.message); }
       }
       if(classId && String(classId)!=="all") q=q.where("classId","==",String(classId));
@@ -1484,7 +1544,7 @@ async function eqFollowupScopedRowsUncached(col, teacherId, term, period, classI
       else return [];
       const snap=await q.get();
       try{window.__eqReadDiag&&window.__eqReadDiag("followup-fallback:"+col,Math.max(1,Number(snap.size||0)));}catch(_e){}
-      return filterRows(mapSnap(snap));
+      return finish(mapSnap(snap));
     }catch(e2){
       console.warn("v504 follow-up fallback failed",col,e2&&e2.message);
       return [];
@@ -10579,6 +10639,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
       }
       const updates=matches.map(r=>{const x=clearFollowupItemFromRow(r,item); x.id=String(r.id||r._id||rowId(st.id,item.date)); return x;});
       await Promise.all(updates.map(x=>fsSet("dailyFollowup",x.id,x)));
+      await eqFqUpdatePeriodIndex(user.id,term,period,classId,updates);
       try{localStorage.removeItem(draftKey(item.date));}catch(_e){}
       setPeriodRows(prev=>(prev||[]).map(r=>{const u=updates.find(x=>String(x.id)===String(r.id||r._id||"")); return u||r;}));
       if(String(item.date||"")===String(date||"")){
@@ -10735,6 +10796,7 @@ function DailyFollowupTeacher({user,data,reload,myClasses,myStudents,onReferralA
         const r=getRec(st.id); return {id:rowId(st.id),teacherId:user.id,term,period,classId,date,studentId:st.id,studentNumber:st.studentId||"",studentName:st.name||"",attendance:r.attendance||"",participation:safeNum(r.participation,0),book:!!r.book,behavior:!!r.behavior,exit:!!r.exit,dailyHomework:r.dailyHomework||"",noteTags:Array.isArray(r.noteTags)?r.noteTags:[],note:r.note||"",noteTone:r.noteTone||"negative",manualScore:r.manualScore===""?"":safeNum(r.manualScore,0),updatedAt:new Date().toISOString()};
       });
       await Promise.all(savedRows.map(row=>fsSet("dailyFollowup",row.id,row)));
+      await eqFqUpdatePeriodIndex(user.id,term,period,classId,savedRows);
       setPeriodRows(prev=>{const map={}; (prev||[]).forEach(r=>{map[String(r.id||rowId(r.studentId,r.date))]=r;}); savedRows.forEach(r=>{map[String(r.id)]=r;}); return Object.values(map);});
       lastDailySavedRef.current=JSON.stringify(records||{});
       clearDailyDraft();
@@ -15570,7 +15632,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v538" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v539" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
