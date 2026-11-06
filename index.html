@@ -15636,7 +15636,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v542" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v543" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17003,7 +17003,38 @@ function App() {
       log("patched "+col+" ×"+ids.length);
     }
     async function bulk(col){
-      if(String(col).indexOf("followup")===0||col==="dailyFollowup"){ eqFqDropCol(col); log("dropped followup cache "+col); return; }
+      if(String(col).indexOf("followup")===0||col==="dailyFollowup"){
+        // v543: A remote bulk marker must not invalidate *every* class cache.
+        // Refresh only scopes already loaded. For dailyFollowup use the compact
+        // authoritative period index (one document per scope); if unavailable,
+        // invalidate that scope so the next view can safely fetch the originals.
+        const keys=Array.from(eqFollowupQueryCache.keys()).filter(k=>k.startsWith(String(col)+"|"));
+        if(col==="dailyFollowup"){
+          for(const key of keys){
+            const parts=key.split("|");
+            if(parts.length!==5){continue;}
+            const current=eqFollowupQueryCache.get(key);
+            if(current&&current.pending){try{await current.pending;}catch(_e){}}
+            const fresh=await eqFqReadPeriodIndex(parts[1],parts[2],parts[3],parts[4]);
+            if(fresh!==null){
+              const rows=fresh.filter(r=>eqFollowupScopeMatch(r,parts[1],parts[2],parts[3],parts[4]));
+              eqFollowupQueryEpoch.set(key,(eqFollowupQueryEpoch.get(key)||0)+1);
+              eqFollowupQueryCache.set(key,{at:Date.now(),rows});
+              eqFqSave(key,rows,true);
+              log("refreshed dailyFollowup index "+parts[4]);
+            }else{
+              eqFollowupQueryEpoch.set(key,(eqFollowupQueryEpoch.get(key)||0)+1);
+              eqFollowupQueryCache.delete(key);
+              try{localStorage.removeItem(EQ_FQ_PREFIX+key);}catch(_e){}
+              try{await eqFqIDB("delete",key);}catch(_e){}
+              log("index unavailable; invalidated scope "+parts[4]);
+            }
+          }
+          return;
+        }
+        // Other Follow-up collections are small; invalidate only their scopes.
+        eqFqDropCol(col); log("dropped followup cache "+col); return;
+      }
       if(ROSTER.has(col)) return; // handled once by refreshRoster
       try{
         eqInvalidateDashboardHydrate();
