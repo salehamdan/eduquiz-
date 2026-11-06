@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v541</title>
+<title>EduQuiz — Smart Assessment v538</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -12204,20 +12204,18 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     const rtCacheKey=String(user&&user.id||"")+"::"+rtClassKey;
     const rtCache=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
     const cached=rtCache.get(rtCacheKey);
-    if(cached && Date.now()-Number(cached.at||0)<300000){setRtTeacherRows(cached.rows||[]);try{window.__eqReadDiag&&window.__eqReadDiag("cache:teacher-rt-session",0);}catch(_e){}return ()=>{alive=false;};}
-    // v532: paint last verified class-scoped RT results immediately after a page reload.
-    // Always continue with a Firebase refresh; this is a display cache, not a stale-results lock.
-    try{
-      const stored=JSON.parse(localStorage.getItem("eq_rt_paint_v534_"+rtCacheKey)||sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
-      if(stored && Date.now()-Number(stored.at||0)<86400000 && Array.isArray(stored.rows)){
-        setRtTeacherRows(stored.rows);
-        // v541: a recently verified persisted snapshot is valid for both the badge and the results view.
-        if(Date.now()-Number(stored.at||0)<300000){
-          rtCache.set(rtCacheKey,stored);
-          return ()=>{alive=false;};
-        }
-      }
-    }catch(_e){}
+    // Paint immediately from memory or the verified persisted snapshot. Refresh
+    // incrementally on entry; no duplicate startup history scan.
+    let baseline=cached&&Array.isArray(cached.rows)?cached:null;
+    if(!baseline){
+      try{const stored=JSON.parse(localStorage.getItem("eq_rt_paint_v534_"+rtCacheKey)||sessionStorage.getItem("eq_rt_paint_v532_"+rtCacheKey)||"null");
+        if(stored&&Array.isArray(stored.rows))baseline=stored;
+      }catch(_e){}
+    }
+    if(baseline){setRtTeacherRows(baseline.rows);rtCache.set(rtCacheKey,baseline);}
+    // A very recent verified snapshot is sufficient; student submissions are
+    // independently signaled by the inbox and local mutation events.
+    if(baseline&&Date.now()-Number(baseline.at||0)<120000)return ()=>{alive=false;};
     // v531: share the first class-scoped RT history fetch across quick unmount/remounts.
     // Keep the existing session cache and live mutation handling unchanged.
     const rtFlights=window.__EQ_RT_TEACHER_FLIGHTS||(window.__EQ_RT_TEACHER_FLIGHTS=new Map());
@@ -12227,24 +12225,30 @@ function ReadingTheoryTeacher({user,data,reload,myClasses,myStudents}){
     if(!flight){const pending=window.__EQ_RT_NOTIFICATION_FLIGHTS;const shared=pending&&pending.get(rtCacheKey);if(shared)flight=shared;}
     if(!flight){
       flight=(async()=>{
-        const out=new Map();
+        const out=new Map((baseline&&Array.isArray(baseline.rows)?baseline.rows:[]).filter(r=>r&&r.id).map(r=>[String(r.id),r]));
         const tokens=Array.from(new Set((myClasses||[]).flatMap(c=>[
-          String(c.id||"").trim(),
-          canonicalClassId(c.id||c.classId||c.name||"")
+          String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")
         ]).filter(Boolean)));
-        // Class queries are independent: bounded concurrency shortens first paint,
-        // without broadening their scope or increasing the number of documents read.
+        const watermark=(baseline&&Array.isArray(baseline.rows)?baseline.rows:[]).reduce((m,r)=>{
+          const t=Date.parse(r.submittedAt||r.createdAt||"");return Number.isFinite(t)?Math.max(m,t):m;
+        },0);
+        // Delta reads when the Firestore composite index exists. If not, use
+        // one full class query as a safe fallback, never a startup+view double scan.
         for(let i=0;i<tokens.length;i+=3){
           const batches=await Promise.all(tokens.slice(i,i+3).map(async cid=>{
+            if(baseline&&watermark){
+              try{return await db.collection("readingTheoryResponses").where("classId","==",cid).where("submittedAt",">",new Date(Math.max(0,watermark-60000)).toISOString()).get();}
+              catch(e){console.warn("v541 RT delta unavailable; class fallback",cid,e&&e.message);}
+            }
             try{return await db.collection("readingTheoryResponses").where("classId","==",cid).get();}
-            catch(e){console.warn("v531 RT class history load failed",cid,e&&e.message);return null;}
+            catch(e){console.warn("v541 RT class history failed",cid,e&&e.message);return null;}
           }));
-          batches.forEach(snap=>{if(snap)snap.forEach(doc=>{const x={id:doc.id,...(doc.data?doc.data():{})};out.set(String(doc.id),x);});});
+          batches.forEach(snap=>{if(snap)snap.forEach(doc=>{out.set(String(doc.id),{id:doc.id,...(doc.data?doc.data():{})});});});
         }
         const rows=Array.from(out.values()).filter(r=>(myStudents||[]).some(st=>responseBelongsToStudent(r,st)));
-        rtCache.set(rtCacheKey,{at:Date.now(),rows});
-        try{localStorage.setItem("eq_rt_paint_v534_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(_e){try{sessionStorage.setItem("eq_rt_paint_v532_"+rtCacheKey,JSON.stringify({at:Date.now(),rows}));}catch(__e){}}
-        try{window.__eqReadDiag&&window.__eqReadDiag("get:teacher-rt-history-class-scoped",rows.length);}catch(_e){}
+        const item={at:Date.now(),rows};rtCache.set(rtCacheKey,item);
+        try{localStorage.setItem("eq_rt_paint_v534_"+rtCacheKey,JSON.stringify(item));}catch(_e){}
+        try{window.dispatchEvent(new CustomEvent("eq-rt-teacher-history-v541",{detail:{cacheKey:rtCacheKey,rows}}));}catch(_e){}
         return rows;
       })();
       rtFlights.set(rtCacheKey,flight);
@@ -14401,63 +14405,24 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   // v359: Projects badge = real submissions currently awaiting teacher approval. File chunks never count.
   const teacherProjectIds=new Set((data.projects||[]).filter(p=>p&&p.teacherId===user.id&&p.status!=="deleted").map(p=>String(p.id)));
   const projectPendingCount=(data.projectSubmissions||[]).filter(s=>s&&s.source!=="project_file_chunk"&&teacherProjectIds.has(String(s.projectId))&&(s.status==="submitted"||s.status==="ai_corrected")).length;
-  // v540: share one verified class-scoped history between the notification badge
-  // and Reading Theory. A persisted snapshot paints immediately; only newer
-  // submissions are requested on repeat visits. Never discard older attempts.
+  // v541: notification badges must not fetch the entire RT history at startup.
+  // Reuse the already verified teacher-scoped snapshot and update from the RT view.
   const [rtNotificationRows,setRtNotificationRows]=useState([]);
   const rtClassKey=myClasses.map(c=>canonicalClassId(c.id||c.classId||c.name||"")).filter(Boolean).sort().join("|");
   useEffect(()=>{
-    let alive=true;
-    if(!FIREBASE_OK || !db || !db.collection || !rtClassKey){setRtNotificationRows([]);return;}
     const cacheKey=String(user.id)+"::"+rtClassKey;
     const mem=window.__EQ_RT_TEACHER_CACHE||(window.__EQ_RT_TEACHER_CACHE=new Map());
-    const persistedKey="eq_rt_paint_v534_"+cacheKey;
-    let stored=null;
-    try{stored=JSON.parse(localStorage.getItem(persistedKey)||"null");}catch(_e){}
-    const cached=mem.get(cacheKey);
-    const baseline=cached&&Array.isArray(cached.rows)?cached:stored&&Array.isArray(stored.rows)?stored:null;
-    if(baseline){setRtNotificationRows(baseline.rows);mem.set(cacheKey,baseline);}
-    // v541: one 5-minute verified history snapshot shared by badge and RT results.
-    // No additional 200+ document fetch on tab opening or quick teacher dashboard remount.
-    if(baseline && Date.now()-Number(baseline.at||0)<300000){
-      try{window.__eqReadDiag&&window.__eqReadDiag("cache:rt-shared-v541",0);}catch(_e){}
-      return()=>{alive=false;};
-    }
-    const flights=window.__EQ_RT_NOTIFICATION_FLIGHTS||(window.__EQ_RT_NOTIFICATION_FLIGHTS=new Map());
-    let flight=flights.get(cacheKey);
-    // v541: the results view may have started the same history fetch first.
-    // Share that in-flight request instead of issuing a second set of class queries.
-    if(!flight){const teacherFlights=window.__EQ_RT_TEACHER_FLIGHTS;const existing=teacherFlights&&teacherFlights.get(cacheKey);if(existing)flight=existing;}
-    if(!flight){
-      flight=(async()=>{
-        const tokens=Array.from(new Set(myClasses.flatMap(c=>[String(c.id||"").trim(),canonicalClassId(c.id||c.classId||c.name||"")]).filter(Boolean)));
-        const recent=baseline&&Date.now()-Number(baseline.at||0)<86400000;
-        const previous=recent?baseline.rows:[];
-        const watermark=previous.reduce((m,r)=>{const t=Date.parse(r.submittedAt||r.createdAt||"");return Number.isFinite(t)&&t>m?t:m;},0);
-        const merged=new Map(previous.filter(r=>r&&r.id).map(r=>[String(r.id),r]));
-        // If a delta query needs a missing composite index, safely fall back
-        // to the original class-scoped query; never silently lose records.
-        for(const cid of tokens){
-          let snap=null;
-          if(recent&&watermark){
-            try{snap=await db.collection("readingTheoryResponses").where("classId","==",cid).where("submittedAt",">",new Date(Math.max(0,watermark-60000)).toISOString()).get();}
-            catch(e){console.warn("v540 RT delta unavailable; full class fallback",cid,e&&e.message);}
-          }
-          if(!snap){try{snap=await db.collection("readingTheoryResponses").where("classId","==",cid).get();}
-            catch(e){console.warn("v540 RT class query failed",cid,e&&e.message);continue;}}
-          snap.forEach(doc=>{merged.set(String(doc.id),{id:doc.id,...doc.data()});});
-        }
-        const rows=Array.from(merged.values()).filter(r=>myStudents.some(st=>responseBelongsToStudent(r,st)));
-        const item={at:Date.now(),rows};
-        mem.set(cacheKey,item);
-        try{localStorage.setItem(persistedKey,JSON.stringify(item));}catch(_e){}
-        return rows;
-      })();
-      flights.set(cacheKey,flight);
-      flight.finally(()=>{if(flights.get(cacheKey)===flight)flights.delete(cacheKey);});
-    }
-    flight.then(rows=>{if(alive)setRtNotificationRows(rows);}).catch(e=>console.warn("v540 RT notifications",e));
-    return()=>{alive=false;};
+    let baseline=mem.get(cacheKey);
+    if(!baseline){try{baseline=JSON.parse(localStorage.getItem("eq_rt_paint_v534_"+cacheKey)||"null");}catch(_e){}}
+    if(baseline&&Array.isArray(baseline.rows))setRtNotificationRows(baseline.rows);
+    else setRtNotificationRows([]);
+    const onHistory=(ev)=>{
+      const detail=ev&&ev.detail||{};
+      if(detail.cacheKey!==cacheKey||!Array.isArray(detail.rows))return;
+      setRtNotificationRows(detail.rows);
+    };
+    window.addEventListener("eq-rt-teacher-history-v541",onHistory);
+    return()=>window.removeEventListener("eq-rt-teacher-history-v541",onHistory);
   },[user.id,rtClassKey]);
   useEffect(()=>{
     function calc(){
@@ -15671,7 +15636,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v541" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v542" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17067,7 +17032,12 @@ function App() {
           const changed=[];
           Object.keys(cols).forEach(c=>{
             const x=cols[c]||{}, n=Number(x.n||0), was=Number(seen[c]||0), diff=n-was;
-            if(diff>0 && !(diff===1 && String(x.dev||"")===myDev)) changed.push({col:c,diff:diff,bulk:!!x.bulk,ids:Array.isArray(x.ids)?x.ids:[]});
+            // v542: a teacher saving an entire class generates >20 document writes,
+          // recorded as a bulk marker. The old diff===1 guard treated the
+          // teacher's OWN bulk save as a remote edit, deleted all durable
+          // Follow-up caches, then fetched ~500 historical rows per class.
+          // A marker from this device is already applied by fsSet/patch cache.
+          if(diff>0 && String(x.dev||"")!==myDev) changed.push({col:c,diff:diff,bulk:!!x.bulk,ids:Array.isArray(x.ids)?x.ids:[]});
           });
           saveSeen({...seen,...nowSeen});
           if(!changed.length) return;
