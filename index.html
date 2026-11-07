@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v548-class-ownership-guard</title>
+<title>EduQuiz — Smart Assessment v549-student-access-control</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -5050,6 +5050,20 @@ function findPreloadedStudent(allUsers, studentId, name, classId) {
 }
 function partialIdHint(enteredId, officialId) { return null; }
 
+// V549 STUDENT ACCESS POLICY: UI gate; enforce independently in Firebase rules/backend.
+const EQ_STUDENT_ACCESS_DOC="student_access_control_v1";
+function eqStudentAccessAllowed(policy,student){
+  if(!student || student.role!=="student") return true;
+  if(!policy || policy.mode==="all") return true;
+  const ids=(Array.isArray(policy.allowedStudentIds)?policy.allowedStudentIds:[]).map(String);
+  const keys=[student.id,student._id,student.studentId,eqDigits(student.studentId||"")].filter(Boolean).map(String);
+  return policy.mode==="selected" && keys.some(k=>ids.includes(k));
+}
+async function eqGetStudentAccessPolicy(){
+  if(!FIREBASE_OK || !db) throw new Error("Firebase unavailable: student access cannot be verified");
+  const snap=await db.collection("appSettings").doc(EQ_STUDENT_ACCESS_DOC).get();
+  return snap.exists ? (snap.data()||{mode:"all"}) : {mode:"all"};
+}
 function Landing({onLogin, prefillQuiz, loginData}) {
   const [lang,setLang] = useState(()=>{ try{ const saved=localStorage.getItem("eq_lang"); if(saved)return saved; }catch(e){} return (navigator.language||"").toLowerCase().startsWith("ar")?"ar":"en"; });
   const T = LANG_TEXT[lang];
@@ -5209,6 +5223,10 @@ function Landing({onLogin, prefillQuiz, loginData}) {
       }else{setErr("Password is incorrect. Ask your teacher to reset it.");setLoading(false);return;}
     }
     saveLoginMemory({mode:"login",name:f.name.trim(),classId:f.classId,studentId:u.studentId||id,email:u.studentId||id,password:f.password,role:"student"});
+    try{
+      const policy=await eqGetStudentAccessPolicy();
+      if(!eqStudentAccessAllowed(policy,u)){setErr("تم إيقاف دخول هذا الطالب من إدارة الدخول. تواصل مع المعلم.");setLoading(false);return;}
+    }catch(e){setErr("تعذر التحقق من صلاحية الدخول. حاول مرة أخرى.");setLoading(false);return;}
     saveSession(u); onLogin(u); setLoading(false);
   }
   async function doStudentReg() {
@@ -14303,6 +14321,22 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [profileOpen,setProfileOpen]=useState(false);
   const [navOpen,setNavOpen]=useState(false);
   const [readDiagOpen,setReadDiagOpen]=useState(false);
+  const [accessPolicy,setAccessPolicy]=useState({mode:"all",allowedStudentIds:[]});
+  const [accessBusy,setAccessBusy]=useState(false);
+  const [accessMsg,setAccessMsg]=useState("");
+  const [accessSearch,setAccessSearch]=useState("");
+  useEffect(()=>{if(tab!=="studentAccess")return;let live=true;eqGetStudentAccessPolicy().then(p=>{if(live)setAccessPolicy({mode:["all","blocked","selected"].includes(p.mode)?p.mode:"all",allowedStudentIds:Array.isArray(p.allowedStudentIds)?p.allowedStudentIds:[]});}).catch(e=>{if(live)setAccessMsg("تعذر تحميل سياسة الدخول: "+e.message);});return()=>{live=false};},[tab]);
+  async function saveStudentAccess(){
+    if(!FIREBASE_OK || !db){setAccessMsg("لا يمكن حفظ السياسة دون Firebase");return;}
+    setAccessBusy(true);setAccessMsg("");
+    try{
+      const payload={mode:accessPolicy.mode,allowedStudentIds:accessPolicy.allowedStudentIds,updatedBy:String(user.id||""),updatedAt:new Date().toISOString()};
+      await db.collection("appSettings").doc(EQ_STUDENT_ACCESS_DOC).set(payload,{merge:true});
+      setAccessMsg("✅ تم حفظ سياسة الدخول في Firebase");
+    }catch(e){setAccessMsg("❌ لم يتم الحفظ: "+e.message);}
+    finally{setAccessBusy(false);}
+  }
+
   const [quizFastPatch,setQuizFastPatch]=useState({});
   const [quizBusy,setQuizBusy]=useState({});
   const [quizPerfMsg,setQuizPerfMsg]=useState("");
@@ -15644,19 +15678,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"},{id:"studentAccess",icon:"🔐",label:"إدارة دخول الطلاب"}];
   const currentTab=tabs.find(t=>t.id===tab)||tabs[0];
   const tabGroups=[
     {label:"Main & Follow-up",ids:["overview","followup"]},
     {label:"Assessment & Quizzes",ids:["quizzes","gradebook","projects"]},
     {label:"Reading",ids:["reading","readingReport","readingTheory"]},
     {label:"Students & Classes",ids:["classes","students","needHelp","heatmap","announce"]},
-    {label:"Administration",ids:["cleanup"]}
+    {label:"Administration",ids:["studentAccess","cleanup"]}
   ];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v548-class-ownership-guard" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v549-student-access-control" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15681,6 +15715,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
+        {tab==="studentAccess" && <Card style={{padding:"16px",marginBottom:"14px"}}>
+          <h3 style={{margin:"0 0 10px"}}>🔐 إدارة دخول الطلاب</h3>
+          <p style={{fontSize:"12px",color:C.mu}}>التحكم في الدخول دون حذف حسابات الطلاب أو نتائجهم. يتم حفظ الإعداد في Firebase.</p>
+          {[{id:"all",name:"السماح لجميع الطلاب"},{id:"blocked",name:"إيقاف دخول جميع الطلاب"},{id:"selected",name:"السماح للطلاب المحددين فقط"}].map(o=><label key={o.id} style={{display:"block",padding:"9px",border:"1px solid "+C.br,borderRadius:"9px",marginBottom:"6px",cursor:"pointer"}}><input type="radio" name="eq-access-mode" checked={accessPolicy.mode===o.id} onChange={()=>setAccessPolicy(p=>({...p,mode:o.id}))}/> {o.name}</label>)}
+          {accessPolicy.mode==="selected"&&<div style={{margin:"12px 0"}}>
+            <input value={accessSearch} onChange={e=>setAccessSearch(e.target.value)} placeholder="ابحث باسم الطالب أو رقمه" style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"9px"}}/>
+            <div style={{maxHeight:"280px",overflowY:"auto",marginTop:"8px"}}>{(data.users||[]).filter(st=>st.role==="student"&&!isStudentTombstone(st)&&(!accessSearch||String(st.name||"").includes(accessSearch)||String(st.studentId||"").includes(accessSearch))).map(st=>{const sid=String(st.id||st.studentId);const checked=accessPolicy.allowedStudentIds.includes(sid);return <label key={sid} style={{display:"flex",gap:"9px",alignItems:"center",padding:"8px",borderBottom:"1px solid "+C.br}}><input type="checkbox" checked={checked} onChange={e=>setAccessPolicy(p=>({...p,allowedStudentIds:e.target.checked?[...new Set([...p.allowedStudentIds,sid])]:p.allowedStudentIds.filter(x=>x!==sid)}))}/><span style={{fontSize:"12px"}}>{st.name} — {st.studentId||""}</span></label>})}</div>
+            <p style={{fontSize:"12px"}}>المسموح لهم: {accessPolicy.allowedStudentIds.length}</p>
+          </div>}
+          <Btn color={C.p} onClick={saveStudentAccess} disabled={accessBusy}>{accessBusy?"جاري الحفظ...":"💾 حفظ إعدادات الدخول"}</Btn>
+          {accessMsg&&<p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{accessMsg}</p>}
+          <p style={{fontSize:"11px",color:C.d}}>تنبيه أمني: هذا التحكم في واجهة الدخول فقط؛ الحماية من الوصول المباشر إلى Firestore تتطلب قواعد Firebase وهوية موثوقة للطلاب.</p>
+        </Card>}
         {tab==="overview" && <div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"9px",marginBottom:"13px"}}>
             <Stat icon="📋" label="Quizzes" value={myQuizzes.length} color={C.p}/><Stat icon="👥" label="Students" value={myStudents.length} color={C.pu}/><Stat icon="📝" label="Submissions" value={myResps.length} color={C.s}/>
@@ -16611,6 +16658,15 @@ function App() {
   const [loading,setLoading]=useState(true);
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
+  const [studentAccessVerified,setStudentAccessVerified]=useState(null);
+  useEffect(()=>{
+    if(!user || user.role!=="student"){setStudentAccessVerified(null);return;}
+    let active=true;
+    setStudentAccessVerified(null);
+    eqGetStudentAccessPolicy().then(policy=>{if(active)setStudentAccessVerified(eqStudentAccessAllowed(policy,user));}).catch(()=>{if(active)setStudentAccessVerified(false);});
+    return()=>{active=false};
+  },[user&&user.id,user&&user.role]);
+
 
   // V389: one in-memory source of truth for RP/Main/Sections. No refresh is required after a local RP mutation.
   useEffect(()=>{ window.__EQ_CURRENT_DATA=data; },[data]);
@@ -17179,7 +17235,13 @@ function App() {
     return ()=>{try{unsub&&unsub();}catch(_e){}};
   },[(parkedTeacher||user)&&((parkedTeacher||user).id),(parkedTeacher||user)&&((parkedTeacher||user).role)]);
 
-    function handleLogin(u){
+    async function handleLogin(u){
+      if(u && u.role==="student"){
+        try{
+          const policy=await eqGetStudentAccessPolicy();
+          if(!eqStudentAccessAllowed(policy,u)){clearSession();alert("دخول هذا الطالب موقوف من إدارة الدخول.");return;}
+        }catch(e){clearSession();alert("تعذر التحقق من صلاحية دخول الطالب.");return;}
+      }
       window.__EQ_LOGIN_CLICK_TS=performance.now();
       try{window.__eqMark&&window.__eqMark("login");}catch(_e){}
       setUser(fixAhmedStudent(u));
@@ -17206,6 +17268,9 @@ function App() {
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
+  if(user && user.role==="student" && studentAccessVerified!==true){
+    return <div style={{minHeight:"100vh",background:"#0f172a",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"14px",padding:"20px",textAlign:"center"}}><h3>{studentAccessVerified===false?"🚫 دخول الطالب موقوف أو تعذر التحقق من الصلاحية":"جاري التحقق من صلاحية الدخول..."}</h3>{studentAccessVerified===false&&<button onClick={()=>{clearSession();setUser(null);}} style={{padding:"12px",borderRadius:"9px"}}>العودة لتسجيل الدخول</button>}</div>;
+  }
   if(user && user.role==="student" && data && !activeStudentInData(user,data)) {
     clearSession();
     try{ localStorage.removeItem(EQ_LOGIN_MEMORY_KEY); }catch(e){}
