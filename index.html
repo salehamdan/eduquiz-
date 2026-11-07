@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v551-activity-copy-candidate</title>
+<title>EduQuiz — Smart Assessment v552-teacher-admin-foundation</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -14278,6 +14278,10 @@ function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
+  const [teacherAdminQuery,setTeacherAdminQuery]=useState("");
+  const [teacherAdminNotice,setTeacherAdminNotice]=useState("");
+  // Provisioning requires a trusted backend. The client must never grant teacher/admin roles.
+  const eqTeacherAdminRows=(data.users||[]).filter(x=>x&&x.role==="teacher"&&x.deleted!==true);
   const [copyKind,setCopyKind]=useState("quizzes"),[copySource,setCopySource]=useState(""),[copyTarget,setCopyTarget]=useState(""),[copyBusy,setCopyBusy]=useState(false),[copyFeedback,setCopyFeedback]=useState("");
 
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
@@ -14382,7 +14386,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function patchQuizFast(id, patch){ setQuizFastPatch(prev=>({...prev, [id]: {...(prev[id]||{}), ...patch}})); }
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
-  // v551: Copy only teacher-owned task definitions. Never copy student submissions or scores.
+  // v552: Copy only teacher-owned task definitions. Never copy student submissions or scores.
   const eqCopyTeachers=(data.users||[]).filter(t=>t&&t.role==="teacher"&&t.deleted!==true&&t.status!=="deleted");
   const eqCopySources=(copyKind==="quizzes"?(data.quizzes||[]):(data.readingTasks||[])).filter(t=>t&&String(t.teacherId||"")===String(user.id||"")&&t.deleted!==true);
   async function eqCopyActivity(){
@@ -15711,19 +15715,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"},{id:"studentAccess",icon:"🔐",label:"إدارة دخول الطلاب"},{id:"activityCopy",icon:"📦",label:"نسخ الأنشطة"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"},{id:"studentAccess",icon:"🔐",label:"إدارة دخول الطلاب"},{id:"activityCopy",icon:"📦",label:"نسخ الأنشطة"},{id:"teacherAccounts",icon:"👨‍🏫",label:"إدارة المعلمين والصلاحيات"}];
   const currentTab=tabs.find(t=>t.id===tab)||tabs[0];
   const tabGroups=[
     {label:"Main & Follow-up",ids:["overview","followup"]},
     {label:"Assessment & Quizzes",ids:["quizzes","gradebook","projects"]},
     {label:"Reading",ids:["reading","readingReport","readingTheory"]},
     {label:"Students & Classes",ids:["classes","students","needHelp","heatmap","announce"]},
-    {label:"Administration",ids:["studentAccess","activityCopy","cleanup"]}
+    {label:"Administration",ids:["teacherAccounts","studentAccess","activityCopy","cleanup"]}
   ];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v551-activity-copy-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v552-teacher-admin-foundation" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15748,6 +15752,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
+        {tab==="teacherAccounts" && <Card style={{padding:"16px",marginBottom:"14px"}}>
+          <h3 style={{margin:"0 0 10px"}}>👨‍🏫 إدارة المعلمين والصلاحيات — v552</h3>
+          <p style={{fontSize:"12px",color:C.mu}}>عرض الحسابات الموجودة تمهيدًا لإدارة معلمين متعددين. لا يمكن تفعيل أو تعطيل حساب أو منحه صلاحية من المتصفح دون اعتماد مدير موثق على الخادم وقواعد Firebase آمنة.</p>
+          <div style={{padding:"10px",background:"#fff7ed",border:"1px solid #fdba74",borderRadius:"9px",fontSize:"12px",marginBottom:"10px",color:"#9a3412"}}>⚠️ التفعيل الآمن غير متاح بعد: تسجيل دخول المدير الحالي يعتمد على بيانات داخل Firestore وليس هوية Firebase موثوقة. لن أضيف زرًا يمنح صلاحيات يمكن لأي مستخدم تزويرها.</div>
+          <input value={teacherAdminQuery} onChange={e=>setTeacherAdminQuery(e.target.value)} placeholder="بحث باسم المعلم أو البريد" style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"9px",marginBottom:"9px"}}/>
+          {eqTeacherAdminRows.filter(t=>!teacherAdminQuery||String(t.name||"").toLowerCase().includes(teacherAdminQuery.toLowerCase())||String(t.email||"").toLowerCase().includes(teacherAdminQuery.toLowerCase())).map(t=><div key={t.id} style={{border:"1px solid "+C.br,padding:"10px",borderRadius:"9px",marginBottom:"6px",fontSize:"12px"}}><strong>{t.name||"معلم"}</strong><div style={{color:C.mu}}>{t.email||"بلا بريد"}</div><div style={{color:C.mu}}>Teacher ID: {t.id} · {t.status||"existing"}</div></div>)}
+          {!eqTeacherAdminRows.length&&<p style={{fontSize:"12px"}}>لم تُحمّل حسابات المعلمين في هذه الجلسة.</p>}
+          <button disabled style={{padding:"10px 14px",border:0,borderRadius:"8px",background:"#94a3b8",color:"white",cursor:"not-allowed"}}>＋ إضافة معلم (بانتظار تفعيل صلاحيات الخادم)</button>
+          {teacherAdminNotice&&<p>{teacherAdminNotice}</p>}
+        </Card>}
         {tab==="activityCopy" && <Card style={{padding:"16px",marginBottom:"14px"}}>
           <h3 style={{margin:"0 0 10px"}}>📦 نسخ الأنشطة بين حسابات المعلمين</h3>
           <p style={{fontSize:"12px",color:C.mu}}>نسخ محتوى الاختبارات والقراءة إلى مسودة جديدة. لا تُنسخ درجات الطلاب أو تسليماتهم، ولا يتغير النشاط الأصلي.</p>
