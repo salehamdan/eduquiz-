@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v552-teacher-admin-foundation</title>
+<title>EduQuiz — Smart Assessment v553-teacher-provisioning-candidate</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -14280,6 +14280,38 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
   const [teacherAdminQuery,setTeacherAdminQuery]=useState("");
   const [teacherAdminNotice,setTeacherAdminNotice]=useState("");
+  const [teacherNewName,setTeacherNewName]=useState("");
+  const [teacherNewEmail,setTeacherNewEmail]=useState("");
+  const [teacherProvisionBusy,setTeacherProvisionBusy]=useState(false);
+  const [teacherVerifiedAdmin,setTeacherVerifiedAdmin]=useState(false);
+  useEffect(()=>{
+    let alive=true;
+    const unsub=auth&&auth.onAuthStateChanged?auth.onAuthStateChanged(async u=>{
+      let allowed=false;
+      if(u){try{const token=await u.getIdTokenResult(true);allowed=token.claims&&token.claims.eduquizAdmin===true;}catch(_){}}
+      if(alive)setTeacherVerifiedAdmin(!!allowed);
+    }):null;
+    return ()=>{alive=false;try{unsub&&unsub();}catch(_){}};
+  },[]);
+  async function provisionTeacherVerified(){
+    if(!teacherVerifiedAdmin){setTeacherAdminNotice("يتطلب حساب Firebase موثقًا بصلاحية مدير؛ لا يمكن إنشاء حساب من جلسة المعلم القديمة.");return;}
+    if(!teacherNewName.trim()||!/^\S+@\S+\.\S+$/.test(teacherNewEmail.trim())){setTeacherAdminNotice("أدخل اسم المعلم وبريدًا صحيحًا.");return;}
+    if(!confirm("إرسال دعوة للمعلم؟ لن يتم منحه صلاحيات مدير أو الوصول إلى نتائجك."))return;
+    setTeacherProvisionBusy(true);setTeacherAdminNotice("");
+    try{
+      const u=auth.currentUser;if(!u)throw Error("Firebase login required");
+      const token=await u.getIdToken(true);
+      const response=await fetch("https://us-central1-eduquiz-1aa40.cloudfunctions.net/eduquizProvisionTeacher",{
+        method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+        body:JSON.stringify({name:teacherNewName.trim(),email:teacherNewEmail.trim().toLowerCase()})
+      });
+      const result=await response.json();
+      if(!response.ok||!result.ok)throw Error(result.error||"تعذر إنشاء الدعوة");
+      setTeacherAdminNotice("تم إنشاء دعوة المعلم. يجب أن يدخل بحساب Google المطابق للبريد المدعو.");
+      setTeacherNewName("");setTeacherNewEmail("");
+    }catch(e){setTeacherAdminNotice("لم يتم إنشاء المعلم: "+String(e.message||e));}
+    finally{setTeacherProvisionBusy(false);}
+  }
   // Provisioning requires a trusted backend. The client must never grant teacher/admin roles.
   const eqTeacherAdminRows=(data.users||[]).filter(x=>x&&x.role==="teacher"&&x.deleted!==true);
   const [copyKind,setCopyKind]=useState("quizzes"),[copySource,setCopySource]=useState(""),[copyTarget,setCopyTarget]=useState(""),[copyBusy,setCopyBusy]=useState(false),[copyFeedback,setCopyFeedback]=useState("");
@@ -15727,7 +15759,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v552-teacher-admin-foundation" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v553-teacher-provisioning-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15753,13 +15785,16 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
         {tab==="teacherAccounts" && <Card style={{padding:"16px",marginBottom:"14px"}}>
-          <h3 style={{margin:"0 0 10px"}}>👨‍🏫 إدارة المعلمين والصلاحيات — v552</h3>
-          <p style={{fontSize:"12px",color:C.mu}}>عرض الحسابات الموجودة تمهيدًا لإدارة معلمين متعددين. لا يمكن تفعيل أو تعطيل حساب أو منحه صلاحية من المتصفح دون اعتماد مدير موثق على الخادم وقواعد Firebase آمنة.</p>
-          <div style={{padding:"10px",background:"#fff7ed",border:"1px solid #fdba74",borderRadius:"9px",fontSize:"12px",marginBottom:"10px",color:"#9a3412"}}>⚠️ التفعيل الآمن غير متاح بعد: تسجيل دخول المدير الحالي يعتمد على بيانات داخل Firestore وليس هوية Firebase موثوقة. لن أضيف زرًا يمنح صلاحيات يمكن لأي مستخدم تزويرها.</div>
+          <h3 style={{margin:"0 0 10px"}}>👨‍🏫 إدارة المعلمين والصلاحيات — v553</h3>
+          <p style={{fontSize:"12px",color:C.mu}}>إضافة المعلمين عبر وظيفة خادم تتحقق من Firebase ID token وصلاحية المدير؛ لا تُكتب الصلاحيات من المتصفح.</p>
+          <div style={{padding:"10px",background:"#fff7ed",border:"1px solid #fdba74",borderRadius:"9px",fontSize:"12px",marginBottom:"10px",color:"#9a3412"}}>⚠️ يتطلب تفعيل هذه الوظيفة نشر خادم v553 وتعيين صلاحية المدير في Firebase أولًا. لا تُفعّل الدعوات اعتمادًا على بيانات جلسة المتصفح.</div>
           <input value={teacherAdminQuery} onChange={e=>setTeacherAdminQuery(e.target.value)} placeholder="بحث باسم المعلم أو البريد" style={{width:"100%",padding:"10px",border:"1px solid "+C.br,borderRadius:"9px",marginBottom:"9px"}}/>
           {eqTeacherAdminRows.filter(t=>!teacherAdminQuery||String(t.name||"").toLowerCase().includes(teacherAdminQuery.toLowerCase())||String(t.email||"").toLowerCase().includes(teacherAdminQuery.toLowerCase())).map(t=><div key={t.id} style={{border:"1px solid "+C.br,padding:"10px",borderRadius:"9px",marginBottom:"6px",fontSize:"12px"}}><strong>{t.name||"معلم"}</strong><div style={{color:C.mu}}>{t.email||"بلا بريد"}</div><div style={{color:C.mu}}>Teacher ID: {t.id} · {t.status||"existing"}</div></div>)}
           {!eqTeacherAdminRows.length&&<p style={{fontSize:"12px"}}>لم تُحمّل حسابات المعلمين في هذه الجلسة.</p>}
-          <button disabled style={{padding:"10px 14px",border:0,borderRadius:"8px",background:"#94a3b8",color:"white",cursor:"not-allowed"}}>＋ إضافة معلم (بانتظار تفعيل صلاحيات الخادم)</button>
+          <div style={{padding:"10px",background:teacherVerifiedAdmin?"#f0fdf4":"#fff7ed",borderRadius:"8px",fontSize:"12px",marginBottom:"9px"}}>{teacherVerifiedAdmin?"✓ هوية المدير موثقة عبر Firebase":"🔒 يتطلب تفعيل صلاحية المدير على خادم Firebase قبل إضافة المعلمين. لا تعتمد هذه الشاشة على كلمة مرور المدير المحلية."}</div>
+          <input value={teacherNewName} onChange={e=>setTeacherNewName(e.target.value)} placeholder="اسم المعلم الجديد" style={{display:"block",width:"100%",padding:"10px",marginBottom:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+          <input type="email" value={teacherNewEmail} onChange={e=>setTeacherNewEmail(e.target.value)} placeholder="بريد Google للمعلم (يمكن تغييره لاحقًا بواسطة المدير)" style={{display:"block",width:"100%",padding:"10px",marginBottom:"8px",border:"1px solid "+C.br,borderRadius:"8px"}}/>
+          <button disabled={!teacherVerifiedAdmin||teacherProvisionBusy} onClick={provisionTeacherVerified} style={{padding:"10px 14px",border:0,borderRadius:"8px",background:teacherVerifiedAdmin?"#2563eb":"#94a3b8",color:"white",cursor:teacherVerifiedAdmin?"pointer":"not-allowed"}}>＋ {teacherProvisionBusy?"جاري إنشاء الدعوة...":"إضافة معلم بهوية موثقة"}</button>
           {teacherAdminNotice&&<p>{teacherAdminNotice}</p>}
         </Card>}
         {tab==="activityCopy" && <Card style={{padding:"16px",marginBottom:"14px"}}>
