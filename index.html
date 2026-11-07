@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v545-security-hardening-candidate</title>
+<title>EduQuiz — Smart Assessment v547-security-session-audit</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -251,7 +251,7 @@ const firebaseConfig = {
 };
 // ════════════════════════════════════════════════════════════
 
-const TEACHER_CODE = "TEACHER2026";
+const TEACHER_CODE = null; // v547: retired public enrollment secret
 
 // ===== LEGACY PRELOADED ROSTER REMOVED 2026-09-19 =====
 // Live Firebase roster is the only source of truth. Keep empty declarations for backward-compatible code paths.
@@ -1669,10 +1669,10 @@ function eqDashboardIDB(mode, payload){
       req.onsuccess=()=>{
         const dbi=req.result;
         try{
-          const tx=dbi.transaction("snapshots",mode==="write"?"readwrite":"readonly");
+          const tx=dbi.transaction("snapshots",(mode==="write"||mode==="delete")?"readwrite":"readonly");
           const store=tx.objectStore("snapshots");
-          const r=mode==="write"?store.put(payload,"teacher"):store.get("teacher");
-          r.onsuccess=()=>resolve(mode==="write"?true:r.result||null);
+          const r=mode==="write"?store.put(payload,"teacher"):(mode==="delete"?store.delete("teacher"):store.get("teacher"));
+          r.onsuccess=()=>resolve((mode==="write"||mode==="delete")?true:r.result||null);
           r.onerror=()=>resolve(null);
           tx.oncomplete=()=>dbi.close();
           tx.onerror=()=>{resolve(null);dbi.close();};
@@ -1688,7 +1688,22 @@ function eqCompactDashboardSnapshot(d){
   if(!sess || String(sess.role)!=="teacher" || String(sess.id||"")!==tid) return null;
   const keys=["users","firebaseUsers","classes","quizzes","responses","announcements","notes","readingTasks","projects","projectSubmissions","appSettings","readingTheoryItems","readingTheoryResponses","readingAttemptResets"];
   const safe={__cacheTeacherId:tid};
-  keys.forEach(k=>{if(Array.isArray(d[k]))safe[k]=d[k];});
+  // v546 audit fix: the prior snapshot copied plaintext student/teacher passwords,
+  // recovery answers and AI secrets into localStorage AND IndexedDB.
+  // Keep the dashboard cache functional while excluding credential material.
+  const secretFields=new Set(["password","fatherName","code","teacherCode","recoveryAnswer","accessToken","refreshToken","idToken","apiKey","secretKey"]);
+  const stripCredentials=(row)=>{
+    if(!row || typeof row!=="object")return row;
+    const out={...row};
+    secretFields.forEach(k=>delete out[k]);
+    return out;
+  };
+  keys.forEach(k=>{
+    if(!Array.isArray(d[k]))return;
+    if(k==="users"||k==="firebaseUsers")safe[k]=d[k].map(stripCredentials);
+    else if(k==="appSettings")safe[k]=d[k].filter(x=>!(/key|secret|token|credential|password/i.test(String(x&&[x.id,x.name,x.key,x.type].filter(Boolean).join(" "))))).map(stripCredentials);
+    else safe[k]=d[k];
+  });
   safe.readingSubmissions=[];
   return {savedAt:Date.now(),data:safe};
 }
@@ -2317,7 +2332,7 @@ async function loadAllData() {
 }
 
 // Session (this device only) — v274: teacher stays signed in while active; expires after 55 minutes of inactivity.
-const EQ_TEACHER_IDLE_MS = 12 * 60 * 60 * 1000;
+const EQ_TEACHER_IDLE_MS = 55 * 60 * 1000;
 function saveSession(u) {
   try {
     const now=Date.now();
@@ -2338,21 +2353,34 @@ function loadSession() {
     if(String(u.role||"")!=="student"){
       const last=Number(u.__eqTeacherLastActivity||0);
       // Migrate an older valid teacher session instead of forcing an immediate login after the update.
-      if(!last){ u.__eqTeacherLastActivity=Date.now(); u.__eqTeacherSessionV=274; localStorage.setItem("eq_session",JSON.stringify(u)); return u; }
+      if(!last){ localStorage.removeItem("eq_session"); return null; }
       if(Date.now()-last > EQ_TEACHER_IDLE_MS){ localStorage.removeItem("eq_session"); return null; }
     }
-    return u;
+    return safe;
   } catch(e){ return null; }
 }
 function touchTeacherSession(){
   try{
     const u=JSON.parse(localStorage.getItem("eq_session")||"null");
     if(!u || String(u.role||"")==="student") return;
-    u.__eqTeacherLastActivity=Date.now(); u.__eqTeacherSessionV=274;
-    localStorage.setItem("eq_session",JSON.stringify(u));
+    const safe={...u};
+    ["password","code","teacherCode","fatherName","recoveryAnswer","accessToken","refreshToken","idToken"].forEach(k=>delete safe[k]);
+    safe.__eqTeacherLastActivity=Date.now(); safe.__eqTeacherSessionV=274;
+    localStorage.setItem("eq_session",JSON.stringify(safe));
   }catch(e){}
 }
-function clearSession() { try { localStorage.removeItem("eq_session"); } catch(e){} }
+function clearSession() {
+  try {
+    localStorage.removeItem("eq_session");
+    // A logout must invalidate the complete teacher dashboard cache, not just
+    // the session. The previous build left class rosters/results on the device.
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k=localStorage.key(i)||"";
+      if(/^eq_fast_data_cache/i.test(k) || /^eq_fq_/i.test(k) || /^eq_roster_cache/i.test(k))localStorage.removeItem(k);
+    }
+    try{eqDashboardIDB("delete").catch(()=>{});}catch(_e){}
+  } catch(e){}
+}
 function eqHardCleanLoggedOutUI(){
   try{
     ["eduquiz_active_login_classes_real_v12_final","eduquiz_active_login_classes_real_v11_strict","eduquiz_active_login_classes_real_v10","eduquiz_active_login_classes_real_v9","eduquiz_active_login_classes_real_v8","eduquiz_active_login_classes_real_v7","eduquiz_active_login_classes_real_v6","eduquiz_active_login_classes_real_v5","eduquiz_active_login_classes_real_v4","eduquiz_active_login_classes_v3","eduquiz_active_login_classes_v2","eduquiz_active_login_classes_v1","eq_fast_data_cache_real_v2","eq_fast_data_cache_v1"].forEach(function(k){try{localStorage.removeItem(k);}catch(_){}});
@@ -5221,17 +5249,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     saveSession(nu); onLogin(nu); setLoading(false);
   }
   async function doTeacherReg() {
-    setErr("Teacher self-registration is disabled for security. An administrator must provision teacher access through a verified server-side process.");
-    return;
-    if(!f.name||!f.email||!f.password){setErr("Fill all fields.");return;}
-    if(f.code!==TEACHER_CODE){setErr("Wrong teacher code.");return;}
-    setLoading(true); setErr("");
-    const users = await fsAll("users");
-    if(users.find(u=>(u.email||"").toLowerCase()===f.email.trim().toLowerCase())){setErr("Email already registered.");setLoading(false);return;}
-    const nu={id:uid(),role:"teacher",name:f.name.trim(),email:f.email.trim().toLowerCase(),password:f.password,createdAt:today()};
-    await fsSetStrict("users",nu.id,nu);
-    saveLoginMemory({mode:"login",email:nu.email,password:nu.password,name:nu.name,role:"teacher",code:f.code||""});
-    saveSession(nu); onLogin(nu); setLoading(false);
+    setErr("Teacher self-registration is disabled. Administrator provisioning with verified Firebase identity is required.");
   }
   async function doQuickStart() {
     if(!f.name||!f.studentId){setErr("Enter your name and ID.");return;}
@@ -5324,27 +5342,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
   }
 
   async function linkPendingTeacher(){
-    setErr("Teacher account linking by a public code is disabled. Contact the platform administrator for verified provisioning.");
-    return;
-    if(!pendingAuth){setErr("No Google/Microsoft account is waiting to be linked.");return;}
-    if(f.code!==TEACHER_CODE){setErr("Wrong teacher code.");return;}
-    setLoading(true); setErr("");
-    try{
-      const users=await fsAll("users");
-      let teacher=users.find(u=>u.role==="teacher" && !u.deleted && ((u.email||"").toLowerCase()===pendingAuth.email || String(u.authUid||u.linkedAuthUid||"")===pendingAuth.uid));
-      if(teacher){
-        const updated={...teacher,authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,email:teacher.email||pendingAuth.email,authProvider:pendingAuth.provider,updatedAt:today()};
-        await fsSet("users",teacher.id,updated);
-        saveLoginMemory({mode:"login",email:updated.email||"",password:updated.password||"",name:updated.name||"",role:"teacher",code:f.code||""});
-        saveSession(updated); setPendingAuth(null); onLogin(updated);
-      }else{
-        const nu={id:uid(),role:"teacher",name:pendingAuth.displayName||f.name||"Teacher",email:pendingAuth.email,password:"",authUid:pendingAuth.uid,linkedAuthUid:pendingAuth.uid,linkedEmail:pendingAuth.email,authProvider:pendingAuth.provider,createdAt:today()};
-        await fsSetStrict("users",nu.id,nu);
-        saveLoginMemory({mode:"login",email:nu.email||"",password:"",name:nu.name||"",role:"teacher",code:f.code||""});
-        saveSession(nu); setPendingAuth(null); onLogin(nu);
-      }
-    }catch(e){setErr("Could not link teacher account: "+e.message);}
-    setLoading(false);
+    setErr("Teacher linking by a public code is disabled. Contact the platform administrator.");
   }
 
   const bg = "linear-gradient(135deg,"+C.dk+" 0%,"+C.md+" 60%,#0f2d4a 100%)";
@@ -15658,7 +15656,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v545-security-hardening-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v547-security-session-audit" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
