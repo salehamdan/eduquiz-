@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v544-security-candidate</title>
+<title>EduQuiz — Smart Assessment v545-security-hardening-candidate</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -2322,6 +2322,8 @@ function saveSession(u) {
   try {
     const now=Date.now();
     const row={...(u||{})};
+    // v545: never persist credential material in the browser session.
+    ["password","code","teacherCode","fatherName","recoveryAnswer","accessToken","refreshToken","idToken"].forEach(k=>delete row[k]);
     if(String(row.role||"")!=="student"){ row.__eqTeacherLastActivity=now; row.__eqTeacherSessionV=274; }
     localStorage.setItem("eq_session", JSON.stringify(row));
   } catch(e){}
@@ -2330,6 +2332,9 @@ function loadSession() {
   try {
     const u=JSON.parse(localStorage.getItem("eq_session")||"null");
     if(!u) return null;
+    const safe={...u};
+    ["password","code","teacherCode","fatherName","recoveryAnswer","accessToken","refreshToken","idToken"].forEach(k=>delete safe[k]);
+    if(JSON.stringify(safe)!==JSON.stringify(u)){localStorage.setItem("eq_session",JSON.stringify(safe));}
     if(String(u.role||"")!=="student"){
       const last=Number(u.__eqTeacherLastActivity||0);
       // Migrate an older valid teacher session instead of forcing an immediate login after the update.
@@ -5216,6 +5221,8 @@ function Landing({onLogin, prefillQuiz, loginData}) {
     saveSession(nu); onLogin(nu); setLoading(false);
   }
   async function doTeacherReg() {
+    setErr("Teacher self-registration is disabled for security. An administrator must provision teacher access through a verified server-side process.");
+    return;
     if(!f.name||!f.email||!f.password){setErr("Fill all fields.");return;}
     if(f.code!==TEACHER_CODE){setErr("Wrong teacher code.");return;}
     setLoading(true); setErr("");
@@ -5317,6 +5324,8 @@ function Landing({onLogin, prefillQuiz, loginData}) {
   }
 
   async function linkPendingTeacher(){
+    setErr("Teacher account linking by a public code is disabled. Contact the platform administrator for verified provisioning.");
+    return;
     if(!pendingAuth){setErr("No Google/Microsoft account is waiting to be linked.");return;}
     if(f.code!==TEACHER_CODE){setErr("Wrong teacher code.");return;}
     setLoading(true); setErr("");
@@ -5399,7 +5408,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
             <input type="password" value={f.password} onChange={e=>upd("password",e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder={T.password} style={iS}/>
             <button onClick={doLogin} disabled={loading} style={{width:"100%",padding:"12px",background:C.p,color:"#fff",border:"none",borderRadius:"9px",fontWeight:"700",fontSize:"14px",cursor:"pointer",fontFamily:F}}>{loading?T.loggingIn:T.loginBtn}</button>
             <button onClick={()=>{setForgotOpen(true);setFgMsg("");}} style={{width:"100%",background:"none",border:"none",color:C.p,fontSize:"12px",fontWeight:"600",cursor:"pointer",marginTop:"9px",fontFamily:F,textDecoration:"underline"}}>{T.forgot}</button>
-            <div style={{fontSize:"11px",color:C.mu,textAlign:"center",marginTop:"8px",fontWeight:"700",fontFamily:F}}>✅ سيتم تذكر الاسم والصف والرقم وكلمة المرور على هذا الجهاز حتى بعد Logout</div>
+            <div style={{fontSize:"11px",color:C.mu,textAlign:"center",marginTop:"8px",fontWeight:"700",fontFamily:F}}>✅ سيتم تذكر الاسم والصف والرقم فقط؛ لا يتم حفظ كلمة المرور</div>
             <button onClick={()=>{clearLoginMemory();sf({name:"",email:"",password:"",studentId:"",classId:"",code:"",fatherName:""});setErr("Saved login data cleared from this device.");}} style={{width:"100%",background:"none",border:"none",color:C.mu,fontSize:"11px",fontWeight:"700",cursor:"pointer",marginTop:"6px",fontFamily:F,textDecoration:"underline"}}>Clear saved login</button>
             {FIREBASE_OK && oauthBtns}
           </>}
@@ -15649,7 +15658,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v544-security-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v545-security-hardening-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
