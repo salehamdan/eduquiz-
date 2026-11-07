@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v549-student-access-control</title>
+<title>EduQuiz — Smart Assessment v551-activity-copy-candidate</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -14278,6 +14278,8 @@ function MultipleModelsBuilder({open,onClose,teacher,classes,students,onCreated}
 
 function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [tab,setTab]=useState("overview"),[view,setView]=useState(null),[selQuiz,setSelQuiz]=useState(null);
+  const [copyKind,setCopyKind]=useState("quizzes"),[copySource,setCopySource]=useState(""),[copyTarget,setCopyTarget]=useState(""),[copyBusy,setCopyBusy]=useState(false),[copyFeedback,setCopyFeedback]=useState("");
+
   const [noteModal,setNoteModal]=useState(null),[noteText,setNoteText]=useState(""),[annModal,setAnnModal]=useState(false),[ann,setAnn]=useState({title:"",text:"",classIds:[]});
   const [attemptsModal,setAttemptsModal]=useState(null);
   const [quizAttemptsAdmin,setQuizAttemptsAdmin]=useState(null);
@@ -14328,6 +14330,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   useEffect(()=>{if(tab!=="studentAccess")return;let live=true;eqGetStudentAccessPolicy().then(p=>{if(live)setAccessPolicy({mode:["all","blocked","selected"].includes(p.mode)?p.mode:"all",allowedStudentIds:Array.isArray(p.allowedStudentIds)?p.allowedStudentIds:[]});}).catch(e=>{if(live)setAccessMsg("تعذر تحميل سياسة الدخول: "+e.message);});return()=>{live=false};},[tab]);
   async function saveStudentAccess(){
     if(!FIREBASE_OK || !db){setAccessMsg("لا يمكن حفظ السياسة دون Firebase");return;}
+    if(accessPolicy.mode==="blocked" && !window.confirm("سيتم إيقاف دخول جميع الطلاب، بمن فيهم الطلاب الموجودون داخل المنصة. هل تريد المتابعة؟"))return;
+    if(accessPolicy.mode==="selected" && !accessPolicy.allowedStudentIds.length && !window.confirm("لم تحدد أي طالب؛ لن يُسمح لأي طالب بالدخول. هل تريد المتابعة؟"))return;
     setAccessBusy(true);setAccessMsg("");
     try{
       const payload={mode:accessPolicy.mode,allowedStudentIds:accessPolicy.allowedStudentIds,updatedBy:String(user.id||""),updatedAt:new Date().toISOString()};
@@ -14378,6 +14382,35 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function patchQuizFast(id, patch){ setQuizFastPatch(prev=>({...prev, [id]: {...(prev[id]||{}), ...patch}})); }
 
   const myQuizzes=data.quizzes.filter(q=>q.teacherId===user.id).map(fastPatchedQuiz);
+  // v551: Copy only teacher-owned task definitions. Never copy student submissions or scores.
+  const eqCopyTeachers=(data.users||[]).filter(t=>t&&t.role==="teacher"&&t.deleted!==true&&t.status!=="deleted");
+  const eqCopySources=(copyKind==="quizzes"?(data.quizzes||[]):(data.readingTasks||[])).filter(t=>t&&String(t.teacherId||"")===String(user.id||"")&&t.deleted!==true);
+  async function eqCopyActivity(){
+    if(copyBusy)return;
+    const src=eqCopySources.find(t=>String(t.id)===String(copySource));
+    const target=copyTarget||String(user.id);
+    if(!src){setCopyFeedback("اختر نشاطًا من حسابك أولًا.");return;}
+    if(target!==String(user.id)&&!eqCopyTeachers.some(t=>String(t.id)===target)){setCopyFeedback("الحساب المستلم غير موجود أو غير نشط.");return;}
+    if(!window.confirm("إنشاء نسخة مسودة جديدة دون درجات أو تسليمات؟ لن يتم تغيير الأصل."))return;
+    setCopyBusy(true);setCopyFeedback("");
+    try{
+      const id=uid(),now=new Date().toISOString();
+      const clone={...src,id,teacherId:target,title:String(src.title||"Activity")+" — Copy",status:"draft",classIds:[],studentIds:[],assignedStudents:[],createdAt:today(),updatedAt:today(),copiedFromId:src.id,copiedFromTeacherId:user.id,copiedAt:now};
+      // Remove per-student access, scores, attempts, and embedded credentials.
+      ["responses","submissions","results","scores","attempts","studentResults","studentScores","studentAttempts","studentRetakeExtra","studentOverrides","grades","assignedStudentIds","allowedStudentIds","openaiKey","apiKey","password","secret","token","modelAudioDataUrl","modelAudioUrl","audioDataUrl","audioUrl"].forEach(k=>delete clone[k]);
+      if(copyKind==="quizzes"){
+        clone.code=shortCode();
+        ["modelGroupId","modelGroupTitle","modelLabel","modelCount"].forEach(k=>delete clone[k]);
+      }else{
+        clone.autoAnalysis=false;clone.status="draft";
+      }
+      await fsSet(copyKind==="quizzes"?"quizzes":"readingTasks",id,clone);
+      setCopyFeedback("✅ تم إنشاء نسخة مسودة دون نتائج أو تسليمات. راجع النشاط قبل فتحه.");
+      setCopySource("");await reload();
+    }catch(e){setCopyFeedback("❌ تعذر النسخ: "+String(e&&e.message||e));}
+    finally{setCopyBusy(false);}
+  }
+
   const quizTypeOptions=Array.from(new Set(myQuizzes.map(q=>String(q.type||"Other")).filter(Boolean))).sort();
   function quizEndValue(q){
     const keys=["closeDate","endDate","dueDate","deadline","untilDate","endAt","closeAt","endsAt"];
@@ -15678,19 +15711,19 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   if(view==="create")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} onSave={saveQuiz} onBack={()=>setView(null)}/>;
   if(view==="edit")return <CreateQuiz teacher={user} classes={myClasses} students={myStudents} editQuiz={editingQuiz} onSave={saveEditedQuiz} onBack={cancelEdit}/>;
-  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"},{id:"studentAccess",icon:"🔐",label:"إدارة دخول الطلاب"}];
+  const tabs=[{id:"overview",icon:"📊",label:"Overview"},{id:"needHelp",icon:"🆘",label:"Need Help"},{id:"followup",icon:"📘",label:"Follow-up"},{id:"projects",icon:"🧩",label:"Projects"},{id:"cleanup",icon:"🧹",label:"Cleanup"},{id:"reading",icon:"📖",label:"Reading Progress"},{id:"readingReport",icon:"📈",label:"Reading Performance"},{id:"readingTheory",icon:"📚",label:"Reading Theory"},{id:"quizzes",icon:"📋",label:"Quizzes"},{id:"gradebook",icon:"📒",label:"Gradebook"},{id:"classes",icon:"🏫",label:"Classes"},{id:"students",icon:"👥",label:"Students"},{id:"heatmap",icon:"🌡️",label:"Heatmap"},{id:"announce",icon:"📣",label:"Announce"},{id:"studentAccess",icon:"🔐",label:"إدارة دخول الطلاب"},{id:"activityCopy",icon:"📦",label:"نسخ الأنشطة"}];
   const currentTab=tabs.find(t=>t.id===tab)||tabs[0];
   const tabGroups=[
     {label:"Main & Follow-up",ids:["overview","followup"]},
     {label:"Assessment & Quizzes",ids:["quizzes","gradebook","projects"]},
     {label:"Reading",ids:["reading","readingReport","readingTheory"]},
     {label:"Students & Classes",ids:["classes","students","needHelp","heatmap","announce"]},
-    {label:"Administration",ids:["studentAccess","cleanup"]}
+    {label:"Administration",ids:["studentAccess","activityCopy","cleanup"]}
   ];
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v549-student-access-control" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v551-activity-copy-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15715,6 +15748,28 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
       <div style={{flex:1,overflowY:"auto"}}>
       <div style={{maxWidth:"880px",margin:"0 auto",padding:"14px"}}>
         {adminBusy&&<Card style={{marginBottom:"10px",border:"2px solid "+(adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:C.w),background:adminBusy.startsWith("❌")?"#fef2f2":adminBusy.startsWith("✅")?"#f0fdf4":"#fffbeb",fontSize:"12px",fontWeight:900,color:adminBusy.startsWith("❌")?C.d:adminBusy.startsWith("✅")?C.s:"#92400e",fontFamily:F,whiteSpace:"pre-wrap"}}>{adminBusy}</Card>}
+        {tab==="activityCopy" && <Card style={{padding:"16px",marginBottom:"14px"}}>
+          <h3 style={{margin:"0 0 10px"}}>📦 نسخ الأنشطة بين حسابات المعلمين</h3>
+          <p style={{fontSize:"12px",color:C.mu}}>نسخ محتوى الاختبارات والقراءة إلى مسودة جديدة. لا تُنسخ درجات الطلاب أو تسليماتهم، ولا يتغير النشاط الأصلي.</p>
+          <label style={{display:"block",marginBottom:"9px"}}>القسم
+            <select value={copyKind} onChange={e=>{setCopyKind(e.target.value);setCopySource("");setCopyFeedback("");}} style={{display:"block",width:"100%",padding:"10px"}}>
+              <option value="quizzes">Quizzes — الاختبارات</option><option value="readingTasks">Reading Progress — مهام القراءة</option>
+            </select>
+          </label>
+          <label style={{display:"block",marginBottom:"9px"}}>النشاط المصدر
+            <select value={copySource} onChange={e=>setCopySource(e.target.value)} style={{display:"block",width:"100%",padding:"10px"}}>
+              <option value="">اختر نشاطًا</option>{eqCopySources.map(t=><option key={t.id} value={t.id}>{t.title||t.name||t.id}</option>)}
+            </select>
+          </label>
+          <label style={{display:"block",marginBottom:"9px"}}>الحساب المستلم
+            <select value={copyTarget} onChange={e=>setCopyTarget(e.target.value)} style={{display:"block",width:"100%",padding:"10px"}}>
+              <option value="">حسابي الحالي — نسخة إضافية</option>{eqCopyTeachers.filter(t=>String(t.id)!==String(user.id)).map(t=><option key={t.id} value={t.id}>{t.name||t.email||t.id}</option>)}
+            </select>
+          </label>
+          <Btn color={C.p} disabled={copyBusy||!copySource} onClick={eqCopyActivity}>{copyBusy?"جاري النسخ...":"📋 إنشاء نسخة مسودة"}</Btn>
+          {copyFeedback&&<p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{copyFeedback}</p>}
+          <p style={{fontSize:"11px",color:C.d}}>هذه ميزة نسخ تجريبية، وليست نقل ملكية. مشاريع الطلاب والكتابة وReading Theory تتطلب فصل بياناتها عن التسليمات قبل إتاحة النسخ. لا تستخدمها بين المعلمين قبل تأمين قواعد Firebase.</p>
+        </Card>}
         {tab==="studentAccess" && <Card style={{padding:"16px",marginBottom:"14px"}}>
           <h3 style={{margin:"0 0 10px"}}>🔐 إدارة دخول الطلاب</h3>
           <p style={{fontSize:"12px",color:C.mu}}>التحكم في الدخول دون حذف حسابات الطلاب أو نتائجهم. يتم حفظ الإعداد في Firebase.</p>
@@ -15726,7 +15781,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
           </div>}
           <Btn color={C.p} onClick={saveStudentAccess} disabled={accessBusy}>{accessBusy?"جاري الحفظ...":"💾 حفظ إعدادات الدخول"}</Btn>
           {accessMsg&&<p style={{fontSize:"12px",whiteSpace:"pre-wrap"}}>{accessMsg}</p>}
-          <p style={{fontSize:"11px",color:C.d}}>تنبيه أمني: هذا التحكم في واجهة الدخول فقط؛ الحماية من الوصول المباشر إلى Firestore تتطلب قواعد Firebase وهوية موثوقة للطلاب.</p>
+          <p style={{fontSize:"11px",color:C.d}}>تنبيه أمني: يتم فحص الدخول وعند عودة الطالب للمنصة وكل 45 ثانية تقريبًا. هذا ليس بديلاً عن قواعد Firebase وهوية موثوقة للطلاب.</p>
         </Card>}
         {tab==="overview" && <div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"9px",marginBottom:"13px"}}>
@@ -16659,13 +16714,30 @@ function App() {
   const [directQuiz,setDirectQuiz]=useState(null);
   const [parkedTeacher,setParkedTeacher]=useState(null); // holds teacher while viewing as student
   const [studentAccessVerified,setStudentAccessVerified]=useState(null);
+  // V550: Recheck the access policy for an already signed-in student.
+  // V549 checked only at login; a student already inside could remain inside
+  // after the teacher changed the policy until the student reloaded the page.
   useEffect(()=>{
     if(!user || user.role!=="student"){setStudentAccessVerified(null);return;}
     let active=true;
+    let pending=false;
     setStudentAccessVerified(null);
-    eqGetStudentAccessPolicy().then(policy=>{if(active)setStudentAccessVerified(eqStudentAccessAllowed(policy,user));}).catch(()=>{if(active)setStudentAccessVerified(false);});
-    return()=>{active=false};
-  },[user&&user.id,user&&user.role]);
+    const check=async()=>{
+      if(!active || pending)return;
+      pending=true;
+      try{
+        const policy=await eqGetStudentAccessPolicy();
+        if(active)setStudentAccessVerified(eqStudentAccessAllowed(policy,user));
+      }catch(e){if(active)setStudentAccessVerified(false);}
+      finally{pending=false;}
+    };
+    const onFocus=()=>{if(document.visibilityState!=="hidden")check();};
+    check();
+    const interval=setInterval(check,45000);
+    window.addEventListener("focus",onFocus);
+    document.addEventListener("visibilitychange",onFocus);
+    return()=>{active=false;clearInterval(interval);window.removeEventListener("focus",onFocus);document.removeEventListener("visibilitychange",onFocus);};
+  },[user&&user.id,user&&user.role,user&&user.studentId]);
 
 
   // V389: one in-memory source of truth for RP/Main/Sections. No refresh is required after a local RP mutation.
