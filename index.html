@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v554-class-archive-candidate</title>
+<title>EduQuiz — Smart Assessment v555-class-archive-visibility</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -5055,6 +5055,19 @@ const EQ_STUDENT_ACCESS_DOC="student_access_control_v1";
 const EQ_CLASS_ARCHIVE_DOC="archived_classes_v554";
 function eqArchiveKey(v){return canonicalClassId(v||"");}
 function eqArchiveClassSet(ids){return new Set((Array.isArray(ids)?ids:[]).map(eqArchiveKey).filter(Boolean));}
+// v555: one shared read-only archive snapshot for login, RP drawer and reporting.
+window.__eqArchivedClassIds555=[];
+window.__eqArchiveLoaded555=false;
+function eqArchived555(v){return eqArchiveClassSet(window.__eqArchivedClassIds555).has(eqArchiveKey(v));}
+async function eqRefreshArchive555(){
+  if(!FIREBASE_OK||!db)throw Error("Archive policy unavailable");
+  const snap=await db.collection("appSettings").doc(EQ_CLASS_ARCHIVE_DOC).get();
+  const ids=snap.exists&&Array.isArray(snap.data().classIds)?snap.data().classIds:[];
+  window.__eqArchivedClassIds555=ids.slice();window.__eqArchiveLoaded555=true;
+  window.dispatchEvent(new Event("eq-archive-changed"));
+  return ids;
+}
+
 function eqStudentAccessAllowed(policy,student){
   if(!student || student.role!=="student") return true;
   if(!policy) return false;
@@ -5115,7 +5128,7 @@ function Landing({onLogin, prefillQuiz, loginData}) {
       if(!d) return;
       loginDataRef.current=d;
       const active=eqFilterLoginClasses(activeLoginClassesFromData(d));
-      setClasses(active);
+      setClasses(active.filter(c=>!eqArchived555(c.id||c.classId||c.name)));
       const gp=(d.appSettings||[]).find(x=>x&&x.id==="student_google_registration_policy");
       setStudentGooglePolicy(gp&&gp.mode==="required"?"required":"optional");
       if(f.classId && !active.some(function(c){return String(c.id)===String(f.classId) || sameClassId(c.id,f.classId);})){
@@ -5131,6 +5144,11 @@ function Landing({onLogin, prefillQuiz, loginData}) {
       // Safety fallback for unusual direct renders only.
       loadLoginData().then(applyLoginSnapshot).catch(function(e){console.warn("V330 login snapshot fallback failed",e);});
     }
+  },[]);
+  useEffect(()=>{let alive=true;
+    eqRefreshArchive555().then(()=>{if(!alive)return;const d=loginDataRef.current;if(d){setClasses(eqFilterLoginClasses(activeLoginClassesFromData(d)).filter(c=>!eqArchived555(c.id||c.classId||c.name)));}})
+    .catch(e=>{if(alive){setClasses([]);setErr("تعذر التحقق من الفصول المؤرشفة: "+e.message);}});
+    return()=>{alive=false};
   },[]);
 
   async function doResetPassword(){
@@ -13999,7 +14017,7 @@ class EduSafeSectionBoundary extends React.Component{
 }
 
 // v522: Independent, read-only Reading Performance V2. Mounts only when the teacher opens this tab.
-function ReadingPerformanceV2({user,data,myClasses,myStudents}){
+function ReadingPerformanceV2({user,data,myClasses,myStudents,archivedClassIds=[]}){
   const [records,setRecords]=React.useState([]);
   const [busy,setBusy]=React.useState(true);
   const [error,setError]=React.useState("");
@@ -14076,8 +14094,10 @@ function ReadingPerformanceV2({user,data,myClasses,myStudents}){
   const accepted=(r)=>!removed(r)&&!["rejected","pending","submitted","failed"].includes(status(r))&&(status(r)==="accepted"||status(r)==="approved"||r.teacherAccepted===true||r.teacherApproved===true||r.accepted===true);
   // Deduplicate only by stable document/attempt identity; never collapse distinct tasks.
   const dedup={};records.forEach(r=>{if(!r||removed(r))return;const k=String(r.id||r._id||[sid(r),taskId(r),r.submittedAt||r.createdAt||""].join("|"));if(!dedup[k]||date(r)>date(dedup[k]))dedup[k]=r;});
-  const all=Object.values(dedup);
-  const deletedRecords=records.filter(r=>r&&removed(r)&&r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&!r.decisionMarker);
+  const reportArchived=eqArchiveClassSet(archivedClassIds);
+  const reportVisible=r=>!reportArchived.has(eqArchiveKey(classOf(r)));
+  const all=Object.values(dedup).filter(reportVisible);
+  const deletedRecords=records.filter(r=>r&&reportVisible(r)&&removed(r)&&r.source!=="rp_audio_chunk"&&!String(r.id||"").includes("_chunk_")&&!r.decisionMarker);
   const valid=all.filter(accepted);
   const classes=[...new Set(valid.map(classOf))].sort();
   const tasks=[...new Map(valid.map(r=>[taskId(r),{id:taskId(r),title:taskTitle(r)}])).values()].sort((a,b)=>a.title.localeCompare(b.title));
@@ -14374,7 +14394,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   const [archiveBusy,setArchiveBusy]=useState(false);
   const [archiveMsg,setArchiveMsg]=useState("");
   useEffect(()=>{let alive=true;if(!FIREBASE_OK||!db){setArchiveMsg("يتطلب حفظ الأرشيف اتصال Firebase");return;}
-    db.collection("appSettings").doc(EQ_CLASS_ARCHIVE_DOC).get().then(snap=>{if(!alive)return;setArchivedClassIds(snap.exists&&Array.isArray(snap.data().classIds)?snap.data().classIds:[]);setArchiveLoaded(true);}).catch(e=>{if(alive)setArchiveMsg("تعذر تحميل الأرشيف: "+e.message);});
+    db.collection("appSettings").doc(EQ_CLASS_ARCHIVE_DOC).get().then(snap=>{if(!alive)return;const ids=snap.exists&&Array.isArray(snap.data().classIds)?snap.data().classIds:[];setArchivedClassIds(ids);window.__eqArchivedClassIds555=ids.slice();window.__eqArchiveLoaded555=true;window.dispatchEvent(new Event("eq-archive-changed"));setArchiveLoaded(true);}).catch(e=>{if(alive)setArchiveMsg("تعذر تحميل الأرشيف: "+e.message);});
     return()=>{alive=false};
   },[]);
   async function eqToggleClassArchive(cls,restore){
@@ -14395,7 +14415,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
         tx.set(ref,{classIds:ids,updatedAt:new Date().toISOString(),updatedBy:String(user.id||"")},{merge:true});
         return ids;
       });
-      setArchivedClassIds(next);
+      setArchivedClassIds(next);window.__eqArchivedClassIds555=next.slice();window.__eqArchiveLoaded555=true;window.dispatchEvent(new Event("eq-archive-changed"));
       setArchiveMsg(restore?"تمت استعادة الفصل":"تمت أرشفة الفصل دون حذف بياناته");
     }catch(e){setArchiveMsg("فشل حفظ الأرشيف؛ لم تتغير البيانات: "+e.message);}
     finally{setArchiveBusy(false);}
@@ -15799,7 +15819,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v554-class-archive-candidate" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v555-class-archive-visibility" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -15951,7 +15971,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
         {tab==="followup" && <DailyFollowupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents} onReferralAlertCount={setReferralAlertCount}/>}
         {tab==="reading" && <ReadingProgressTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
-        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceV2 user={user} data={data} myClasses={myClasses} myStudents={myStudents}/> </EduSafeSectionBoundary>}
+        {tab==="readingReport" && <EduSafeSectionBoundary fallback={<ReadingPerformanceSafeFallback data={data} myStudents={myStudents}/>}> <ReadingPerformanceV2 user={user} data={data} myClasses={myClasses} myStudents={myStudents} archivedClassIds={archivedClassIds}/> </EduSafeSectionBoundary>}
         {tab==="readingTheory" && <ReadingTheoryTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="projects" && <ProjectsTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
         {tab==="cleanup" && <YearEndCleanupTeacher user={user} data={data} reload={reload} myClasses={myClasses} myStudents={myStudents}/>}
@@ -19085,7 +19105,7 @@ document.addEventListener("click", function(e){
     const sid=String(info.sid||"").trim();
     const name=String(info.name||"").trim();
     const classId=String(info.classId||r.classId||r.className||"").trim();
-    if(classId && rpIsDeletedClass(classId)) return false;
+    if(classId && (rpIsDeletedClass(classId)||eqArchived555(classId))) return false;
     if(info.className && rpIsDeletedClass(info.className)) return false;
     // RP158: do not hide real Firebase submissions just because the Classes cache is stale.
     // Old restored records are already blocked above; valid new audio must stay visible to the teacher.
@@ -19432,6 +19452,7 @@ document.addEventListener("click", function(e){
     });
   }
   async function renderCards(){
+    try{await eqRefreshArchive555();}catch(e){const el=document.getElementById("rp-v11-cards");if(el)el.textContent="تعذر التحقق من الأرشيف؛ لم تُعرض التسجيلات: "+e.message;return;}
     const panel=document.getElementById("rp-v11-panel"); if(!panel)return;
     // V334: preserve teacher typing even if another safe RP refresh occurs.
     rpCaptureTeacherDrafts(panel);
