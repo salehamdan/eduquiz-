@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v558-class-create-safe</title>
+<title>EduQuiz — Smart Assessment v559-class-create-confirmed</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -15591,16 +15591,31 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     }
     const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
     const row={id,classId:id,name:displayName,grade:displayGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
+    // v559: Publish a provisional roster entry immediately, without claiming persistence.
+    // A pending write may be queued offline indefinitely by the Firestore SDK.
+    const previous=window.__EQ_CURRENT_DATA||data||{};
+    const upsertPending=(items)=>[...(Array.isArray(items)?items:[]).filter(c=>String(c&&(c.id||c.classId)||"")!==id),row];
+    const pending={...previous,classes:upsertPending(previous.classes),firebaseClasses:upsertPending(previous.firebaseClasses)};
+    window.__EQ_CURRENT_DATA=pending;
+    setData(pending);
+    setClsModal(false);setNewCls({name:"",grade:""});
+    setAdminBusy("⏳ الفصل "+displayName+" ظاهر مؤقتًا؛ بانتظار تأكيد حفظ Firebase (حتى 15 ثانية)…");
+    let confirmed=false;
     try{
-      // Fail visibly on a stalled write instead of leaving an endless spinner.
       await Promise.race([
-        fsSetStrict("classes",id,row),
-        new Promise((_,reject)=>setTimeout(()=>reject(new Error("انتهت مهلة حفظ الفصل في Firebase. تحقق من الاتصال والصلاحيات ثم أعد تحميل الصفحة قبل المحاولة مجددًا.")),15000))
+        fsSetStrict("classes",id,row).then(()=>{confirmed=true;}),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error("لم يؤكد Firebase حفظ الفصل خلال 15 ثانية. قد تكون الكتابة معلقة بسبب الشبكة أو الصلاحيات.")),15000))
       ]);
     }catch(e){
-      setAdminBusy("❌ تعذر تأكيد حفظ الفصل: "+(e&&e.message||e));
+      // Never report a provisional row as saved; restore the prior roster.
+      const current=window.__EQ_CURRENT_DATA||pending;
+      const without=(items)=>Array.isArray(items)?items.filter(c=>String(c&&(c.id||c.classId)||"")!==id):[];
+      const rollback={...current,classes:without(current.classes),firebaseClasses:without(current.firebaseClasses)};
+      window.__EQ_CURRENT_DATA=rollback;setData(rollback);
+      setAdminBusy("❌ لم يتم تأكيد حفظ الفصل "+displayName+": "+(e&&e.message||e)+" — لا تعِد إضافته قبل التأكد من الاتصال.");
       return;
     }
+    if(!confirmed){setAdminBusy("❌ تعذر تأكيد حفظ الفصل في Firebase.");return;}
     adminForgetDeletedClassIds(aliases);
     // The dashboard reload reuses a cached roster for up to five minutes.
     // Mutating `data` in place does not trigger React, and the cached reload
@@ -15614,7 +15629,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setData(next);
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
-    try{eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(next).filter(c=>!eqArchived555(c.id||c.classId||c.name)));}catch(e){console.warn("v558 class list refresh",e);}
+    try{eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(next).filter(c=>!eqArchived555(c.id||c.classId||c.name)));}catch(e){console.warn("v559 class list refresh",e);}
     setAdminBusy("✅ تم حفظ الفصل: "+displayName+". لم تُحذف أي بيانات.");
     setTimeout(()=>setAdminBusy(""),3500);
     setClsModal(false);setNewCls({name:"",grade:""});
@@ -15850,7 +15865,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v558-class-create-safe" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v559-class-create-confirmed" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
