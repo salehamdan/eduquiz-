@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v557-class-roster-sync</title>
+<title>EduQuiz — Smart Assessment v558-class-create-safe</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -15582,11 +15582,26 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     // OPEN_ADD_ANY_CLASS_ONLY_20260917
     // Creating a class must NOT delete any other class or any old Firebase data automatically.
     setAdminBusy("⏳ Creating empty class: "+displayName+"…");
-    adminForgetDeletedClassIds(aliases);
-    try{ await adminBatchDelete("deletedClasses", aliases.map(function(a){return {id:String(a)};})); }catch(e){ try{ await fsDel("deletedClasses", id); }catch(_e){} }
+    // v558: Never delete archived/deleted-class documents when creating a class.
+    // A previous version waited for a batch delete before saving the class,
+    // which could leave the UI stuck on "Creating empty class" indefinitely.
+    if(eqArchivedClassSet(archivedClassIds).has(eqArchiveKey(id))){
+      setAdminBusy("⚠️ هذا الفصل موجود في الأرشيف. استعده من قسم الأرشيف بدل إنشاء نسخة جديدة.");
+      return;
+    }
     const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
     const row={id,classId:id,name:displayName,grade:displayGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
-    await fsSetStrict("classes",id,row);
+    try{
+      // Fail visibly on a stalled write instead of leaving an endless spinner.
+      await Promise.race([
+        fsSetStrict("classes",id,row),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error("انتهت مهلة حفظ الفصل في Firebase. تحقق من الاتصال والصلاحيات ثم أعد تحميل الصفحة قبل المحاولة مجددًا.")),15000))
+      ]);
+    }catch(e){
+      setAdminBusy("❌ تعذر تأكيد حفظ الفصل: "+(e&&e.message||e));
+      return;
+    }
+    adminForgetDeletedClassIds(aliases);
     // The dashboard reload reuses a cached roster for up to five minutes.
     // Mutating `data` in place does not trigger React, and the cached reload
     // can overwrite the newly created class. Update both sources immutably.
@@ -15599,8 +15614,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setData(next);
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
-    eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(next).filter(c=>!eqArchived555(c.id||c.classId||c.name)));
-    setAdminBusy("✅ Empty class created: "+displayName+". No students were deleted.");
+    try{eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(next).filter(c=>!eqArchived555(c.id||c.classId||c.name)));}catch(e){console.warn("v558 class list refresh",e);}
+    setAdminBusy("✅ تم حفظ الفصل: "+displayName+". لم تُحذف أي بيانات.");
     setTimeout(()=>setAdminBusy(""),3500);
     setClsModal(false);setNewCls({name:"",grade:""});
   }
@@ -15835,7 +15850,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v557-class-roster-sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v558-class-create-safe" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
