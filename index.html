@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v555-class-archive-visibility</title>
+<title>EduQuiz — Smart Assessment v556-new-class-visibility</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -790,8 +790,9 @@ function normalizeClassRows(rows){
       if(c._id) map[c._id]={...c,deleted:true};
       return;
     }
-    // If any alias was already tombstoned, do not bring this class back from PRELOADED_CLASSES.
-    if(aliases.some(a=>deletedOfficial.has(a))) return;
+    // v556: a newly saved active class wins over stale local deletion markers.
+    // Never revive bundled preloaded classes.
+    if(aliases.some(a=>deletedOfficial.has(a)) && !(c.active===true && c.preloaded!==true && c.source==="teacher-created")) return;
     const official=officialClassRow(cid);
     if(official) map[cid]={...official,...(map[cid]||{}),...c,id:cid,deleted:false};
     else if(c && (c.id||c._id)) map[c.id||c._id]={...c,id:c.id||c._id};
@@ -15250,7 +15251,10 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function mergeWrittenClassesIntoLocal(rows){
     try{
       if(!Array.isArray(rows)) return;
-      const cleanRows=rows.map(eqCanonicalClassRow).filter(Boolean);
+      const cleanRows=rows.map(function(c){
+        // v556: custom classes have no officialClassRow; preserve their Firebase identity.
+        return eqCanonicalClassRow(c) || (c && (c.id||c.classId) ? {...c,id:String(c.id||c.classId),classId:String(c.classId||c.id)} : null);
+      }).filter(Boolean);
       if(data && Array.isArray(data.classes)){
         const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
         cleanRows.forEach(function(r){ const id=String(r.id||""); const idx=byId.get(id); if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r}; else {data.classes.push(r); byId.set(id,data.classes.length-1);} });
@@ -15583,6 +15587,8 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
     const row={id,classId:id,name:displayName,grade:displayGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
     await fsSetStrict("classes",id,row);
+    // v556: keep newly created class visible immediately, even before cloud reload.
+    try{ if(data){data.classes=Array.isArray(data.classes)?data.classes:[];data.firebaseClasses=Array.isArray(data.firebaseClasses)?data.firebaseClasses:[];data.classes=[...data.classes.filter(c=>String(c.id||c.classId)!==id),row];data.firebaseClasses=[...data.firebaseClasses.filter(c=>String(c.id||c.classId)!==id),row];} }catch(_e){}
     try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
     mergeWrittenClassesIntoLocal([row]);
     eqStoreVisibleLoginClasses([...(myClasses||[]).filter(c=>!sameClassId(c&& (c.id||c.grade||c.name),id)), row]);
@@ -15819,7 +15825,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v555-class-archive-visibility" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v556-new-class-visibility" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
