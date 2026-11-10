@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v560-class-create-from-v555</title>
+<title>EduQuiz — Smart Assessment v561-class-create-from-v555</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -15250,7 +15250,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function mergeWrittenClassesIntoLocal(rows){
     try{
       if(!Array.isArray(rows)) return;
-      const cleanRows=rows.map(function(c){ if(!c)return null; const official=eqCanonicalClassRow(c); return official || {...c,id:String(c.id||c.classId||""),classId:String(c.id||c.classId||""),name:String(c.name||c.grade||c.id||""),deleted:false,status:"active",active:true}; }).filter(c=>c&&c.id);
+      const cleanRows=rows.map(c=>{if(!c)return null;return eqCanonicalClassRow(c)||{...c,id:String(c.id||c.classId||""),classId:String(c.classId||c.id||""),name:String(c.name||c.grade||c.id||""),deleted:false,status:"active",active:true};}).filter(c=>c&&c.id);
       if(data && Array.isArray(data.classes)){
         const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
         cleanRows.forEach(function(r){ const id=String(r.id||""); const idx=byId.get(id); if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r}; else {data.classes.push(r); byId.set(id,data.classes.length-1);} });
@@ -15564,50 +15564,42 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setEsMsg("✅ تم النقل والترتيب الأبجدي وإعادة الترقيم"+(finalRow?(" — الرقم الجديد: "+finalRow.newSid):""));
     setTimeout(()=>setEditStu(null),1200);
   }
-  // v560: add any custom class; never delete archived records during creation.
-  // Firestore writes are acknowledged before reporting success.
+  // V561: preserve archived records; no pre-write deletes; confirmed write and local roster refresh.
   async function createCls(){
     const rawName=(newCls.name||"").trim(), rawGrade=(newCls.grade||"").trim();
-    if(!rawName && !rawGrade){alert("اكتب اسم الفصل أو رقمه.");return;}
+    if(!rawName&&!rawGrade){alert("اكتب اسم الفصل أو رقمه.");return;}
     const id=eqClassIdForNewClass(rawName,rawGrade);
     const displayName=rawName||rawGrade||id;
-    if((myClasses||[]).some(c=>String(c.id||"")===id || String(c.name||"").trim()===displayName)){
-      alert("الفصل موجود مسبقًا في المنصة.");return;
+    if((myClasses||[]).some(c=>String(c.id||c.classId||"")===id||String(c.name||"").trim()===displayName)){
+      alert("الفصل موجود مسبقًا.");return;
     }
-    const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
-    const row={id,classId:id,name:displayName,grade:rawGrade,teacherIds:[user.id],
-      createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",
-      preloaded:false,deleted:false,status:"active",hidePreloaded:false,
-      permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,
-      emptyNewClass:true,rosterToken,classResetAt:new Date().toISOString()};
-    setAdminBusy("⏳ جارٍ حفظ الفصل "+displayName+" في Firebase...");
+    const row={id,classId:id,name:displayName,grade:rawGrade||"",teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:"rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8),classResetAt:new Date().toISOString()};
+    setAdminBusy("⏳ جارٍ حفظ الفصل: "+displayName);
     try{
-      if(!FIREBASE_OK || !db)throw new Error("Firebase غير متصل. لم يتم تأكيد حفظ الفصل.");
-      // Avoid any pre-write deletion and do not mistake an offline queued write for success.
+      if(!FIREBASE_OK||!db)throw new Error("Firebase غير متصل");
       await Promise.race([
         db.collection("classes").doc(id).set(row,{merge:true}),
-        new Promise((_,reject)=>setTimeout(()=>reject(new Error("لم يؤكد Firebase الحفظ خلال 15 ثانية. تحقق من الاتصال والصلاحيات.")),15000))
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error("لم يؤكد Firebase الحفظ خلال 15 ثانية. تحقق من الاتصال وصلاحيات الكتابة.")),15000))
       ]);
-      // Update both roster arrays immediately; avoid stale dashboard reload overwriting the new row.
+      // Update React state without awaiting an unrelated full-database reload.
       const base=window.__EQ_CURRENT_DATA||data||{};
       const next={...base};
-      for(const key of ["classes","firebaseClasses"]){
+      ["classes","firebaseClasses"].forEach(key=>{
         const arr=Array.isArray(base[key])?base[key].slice():[];
-        const idx=arr.findIndex(c=>c&&String(c.id||c.classId||"")===id);
-        if(idx>=0)arr[idx]={...arr[idx],...row};else arr.push(row);
+        const pos=arr.findIndex(c=>c&&String(c.id||c.classId||"")===id);
+        if(pos>=0)arr[pos]={...arr[pos],...row};else arr.push(row);
         next[key]=arr;
-      }
+      });
       window.__EQ_CURRENT_DATA=next;
       setData(next);
-      mergeWrittenClassesIntoLocal([row]);
       try{adminForgetDeletedClassIds([id,rawName,rawGrade]);}catch(_e){}
       try{eqStoreVisibleLoginClasses([...(myClasses||[]),row]);}catch(_e){}
-      setAdminBusy("✅ تم حفظ الفصل "+displayName+" في Firebase.");
       setClsModal(false);setNewCls({name:"",grade:""});
-      setTimeout(()=>setAdminBusy(""),4500);
+      setAdminBusy("✅ تم تأكيد حفظ الفصل: "+displayName);
+      setTimeout(()=>setAdminBusy(""),3500);
     }catch(e){
-      setAdminBusy("❌ لم يتم تأكيد إنشاء الفصل "+displayName+": "+(e&&e.message||e));
-      console.error("v560 create class",id,e);
+      console.error("v561 class create",id,e);
+      setAdminBusy("❌ فشل تأكيد الحفظ: "+(e&&e.message||String(e)));
     }
   }
 
@@ -15841,7 +15833,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v560-class-create-from-v555" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v561-class-create-from-v555" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
