@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v559-class-create-confirmed</title>
+<title>EduQuiz — Smart Assessment v560-class-create-from-v555</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -790,9 +790,8 @@ function normalizeClassRows(rows){
       if(c._id) map[c._id]={...c,deleted:true};
       return;
     }
-    // v556: a newly saved active class wins over stale local deletion markers.
-    // Never revive bundled preloaded classes.
-    if(aliases.some(a=>deletedOfficial.has(a)) && !(c.active===true && c.preloaded!==true && c.source==="teacher-created")) return;
+    // If any alias was already tombstoned, do not bring this class back from PRELOADED_CLASSES.
+    if(aliases.some(a=>deletedOfficial.has(a))) return;
     const official=officialClassRow(cid);
     if(official) map[cid]={...official,...(map[cid]||{}),...c,id:cid,deleted:false};
     else if(c && (c.id||c._id)) map[c.id||c._id]={...c,id:c.id||c._id};
@@ -15251,10 +15250,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
   function mergeWrittenClassesIntoLocal(rows){
     try{
       if(!Array.isArray(rows)) return;
-      const cleanRows=rows.map(function(c){
-        // v556: custom classes have no officialClassRow; preserve their Firebase identity.
-        return eqCanonicalClassRow(c) || (c && (c.id||c.classId) ? {...c,id:String(c.id||c.classId),classId:String(c.classId||c.id)} : null);
-      }).filter(Boolean);
+      const cleanRows=rows.map(function(c){ if(!c)return null; const official=eqCanonicalClassRow(c); return official || {...c,id:String(c.id||c.classId||""),classId:String(c.id||c.classId||""),name:String(c.name||c.grade||c.id||""),deleted:false,status:"active",active:true}; }).filter(c=>c&&c.id);
       if(data && Array.isArray(data.classes)){
         const byId=new Map(data.classes.map((c,i)=>[String(c.id||c._id||""),i]));
         cleanRows.forEach(function(r){ const id=String(r.id||""); const idx=byId.get(id); if(idx!==undefined) data.classes[idx]={...(data.classes[idx]||{}),...r}; else {data.classes.push(r); byId.set(id,data.classes.length-1);} });
@@ -15568,71 +15564,51 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
     setEsMsg("✅ تم النقل والترتيب الأبجدي وإعادة الترقيم"+(finalRow?(" — الرقم الجديد: "+finalRow.newSid):""));
     setTimeout(()=>setEditStu(null),1200);
   }
+  // v560: add any custom class; never delete archived records during creation.
+  // Firestore writes are acknowledged before reporting success.
   async function createCls(){
     const rawName=(newCls.name||"").trim(), rawGrade=(newCls.grade||"").trim();
-    if(!rawName && !rawGrade){ alert("اكتب اسم الفصل أو رقمه."); return; }
-    const id=eqClassIdForNewClass(rawName, rawGrade);
-    const displayName=rawName || rawGrade || id;
-    const displayGrade=rawGrade || "";
-    const existingActive=(myClasses||[]).find(function(c){
-      return sameClassId(c&& (c.id||c.classId||c.grade||c.name), id) || String(c&&c.name||"").trim()===displayName;
-    });
-    if(existingActive){ alert("الفصل موجود مسبقًا في المنصة."); return; }
-    const aliases=Array.from(new Set([id, rawName, rawGrade, displayName, displayGrade].filter(Boolean)));
-    // OPEN_ADD_ANY_CLASS_ONLY_20260917
-    // Creating a class must NOT delete any other class or any old Firebase data automatically.
-    setAdminBusy("⏳ Creating empty class: "+displayName+"…");
-    // v558: Never delete archived/deleted-class documents when creating a class.
-    // A previous version waited for a batch delete before saving the class,
-    // which could leave the UI stuck on "Creating empty class" indefinitely.
-    if(eqArchivedClassSet(archivedClassIds).has(eqArchiveKey(id))){
-      setAdminBusy("⚠️ هذا الفصل موجود في الأرشيف. استعده من قسم الأرشيف بدل إنشاء نسخة جديدة.");
-      return;
+    if(!rawName && !rawGrade){alert("اكتب اسم الفصل أو رقمه.");return;}
+    const id=eqClassIdForNewClass(rawName,rawGrade);
+    const displayName=rawName||rawGrade||id;
+    if((myClasses||[]).some(c=>String(c.id||"")===id || String(c.name||"").trim()===displayName)){
+      alert("الفصل موجود مسبقًا في المنصة.");return;
     }
     const rosterToken="rt_"+Date.now()+"_"+Math.random().toString(36).slice(2,8);
-    const row={id,classId:id,name:displayName,grade:displayGrade,teacherIds:[user.id],createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",preloaded:false,deleted:false,status:"active",hidePreloaded:false,permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,emptyNewClass:true,rosterToken:rosterToken,classResetAt:new Date().toISOString()};
-    // v559: Publish a provisional roster entry immediately, without claiming persistence.
-    // A pending write may be queued offline indefinitely by the Firestore SDK.
-    const previous=window.__EQ_CURRENT_DATA||data||{};
-    const upsertPending=(items)=>[...(Array.isArray(items)?items:[]).filter(c=>String(c&&(c.id||c.classId)||"")!==id),row];
-    const pending={...previous,classes:upsertPending(previous.classes),firebaseClasses:upsertPending(previous.firebaseClasses)};
-    window.__EQ_CURRENT_DATA=pending;
-    setData(pending);
-    setClsModal(false);setNewCls({name:"",grade:""});
-    setAdminBusy("⏳ الفصل "+displayName+" ظاهر مؤقتًا؛ بانتظار تأكيد حفظ Firebase (حتى 15 ثانية)…");
-    let confirmed=false;
+    const row={id,classId:id,name:displayName,grade:rawGrade,teacherIds:[user.id],
+      createdAt:today(),updatedAt:today(),active:true,source:"teacher-created",
+      preloaded:false,deleted:false,status:"active",hidePreloaded:false,
+      permanentDeleted:false,cleanupDeletedAt:null,adminDeletedAt:null,
+      emptyNewClass:true,rosterToken,classResetAt:new Date().toISOString()};
+    setAdminBusy("⏳ جارٍ حفظ الفصل "+displayName+" في Firebase...");
     try{
+      if(!FIREBASE_OK || !db)throw new Error("Firebase غير متصل. لم يتم تأكيد حفظ الفصل.");
+      // Avoid any pre-write deletion and do not mistake an offline queued write for success.
       await Promise.race([
-        fsSetStrict("classes",id,row).then(()=>{confirmed=true;}),
-        new Promise((_,reject)=>setTimeout(()=>reject(new Error("لم يؤكد Firebase حفظ الفصل خلال 15 ثانية. قد تكون الكتابة معلقة بسبب الشبكة أو الصلاحيات.")),15000))
+        db.collection("classes").doc(id).set(row,{merge:true}),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error("لم يؤكد Firebase الحفظ خلال 15 ثانية. تحقق من الاتصال والصلاحيات.")),15000))
       ]);
+      // Update both roster arrays immediately; avoid stale dashboard reload overwriting the new row.
+      const base=window.__EQ_CURRENT_DATA||data||{};
+      const next={...base};
+      for(const key of ["classes","firebaseClasses"]){
+        const arr=Array.isArray(base[key])?base[key].slice():[];
+        const idx=arr.findIndex(c=>c&&String(c.id||c.classId||"")===id);
+        if(idx>=0)arr[idx]={...arr[idx],...row};else arr.push(row);
+        next[key]=arr;
+      }
+      window.__EQ_CURRENT_DATA=next;
+      setData(next);
+      mergeWrittenClassesIntoLocal([row]);
+      try{adminForgetDeletedClassIds([id,rawName,rawGrade]);}catch(_e){}
+      try{eqStoreVisibleLoginClasses([...(myClasses||[]),row]);}catch(_e){}
+      setAdminBusy("✅ تم حفظ الفصل "+displayName+" في Firebase.");
+      setClsModal(false);setNewCls({name:"",grade:""});
+      setTimeout(()=>setAdminBusy(""),4500);
     }catch(e){
-      // Never report a provisional row as saved; restore the prior roster.
-      const current=window.__EQ_CURRENT_DATA||pending;
-      const without=(items)=>Array.isArray(items)?items.filter(c=>String(c&&(c.id||c.classId)||"")!==id):[];
-      const rollback={...current,classes:without(current.classes),firebaseClasses:without(current.firebaseClasses)};
-      window.__EQ_CURRENT_DATA=rollback;setData(rollback);
-      setAdminBusy("❌ لم يتم تأكيد حفظ الفصل "+displayName+": "+(e&&e.message||e)+" — لا تعِد إضافته قبل التأكد من الاتصال.");
-      return;
+      setAdminBusy("❌ لم يتم تأكيد إنشاء الفصل "+displayName+": "+(e&&e.message||e));
+      console.error("v560 create class",id,e);
     }
-    if(!confirmed){setAdminBusy("❌ تعذر تأكيد حفظ الفصل في Firebase.");return;}
-    adminForgetDeletedClassIds(aliases);
-    // The dashboard reload reuses a cached roster for up to five minutes.
-    // Mutating `data` in place does not trigger React, and the cached reload
-    // can overwrite the newly created class. Update both sources immutably.
-    const upsertClass=(items)=>[...(Array.isArray(items)?items:[]).filter(c=>String(c&& (c.id||c.classId)||"")!==id),row];
-    const current=window.__EQ_CURRENT_DATA||data||{};
-    const next={...current,classes:upsertClass(current.classes),firebaseClasses:upsertClass(current.firebaseClasses)};
-    window.__EQ_CURRENT_DATA=next;
-    try{ if(typeof __EQ_DASHBOARD_HYDRATE_RESULT!=="undefined") __EQ_DASHBOARD_HYDRATE_RESULT=null; }catch(_e){}
-    try{ if(typeof __EQ_DASHBOARD_HYDRATE_AT!=="undefined") __EQ_DASHBOARD_HYDRATE_AT=0; }catch(_e){}
-    setData(next);
-    try{ eqClearOldClassAndStudentCaches(); }catch(_e){}
-    mergeWrittenClassesIntoLocal([row]);
-    try{eqStoreVisibleLoginClasses(eqRealActiveClassesFromData(next).filter(c=>!eqArchived555(c.id||c.classId||c.name)));}catch(e){console.warn("v559 class list refresh",e);}
-    setAdminBusy("✅ تم حفظ الفصل: "+displayName+". لم تُحذف أي بيانات.");
-    setTimeout(()=>setAdminBusy(""),3500);
-    setClsModal(false);setNewCls({name:"",grade:""});
   }
 
   async function editClass(cls){
@@ -15865,7 +15841,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v559-class-create-confirmed" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v560-class-create-from-v555" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
