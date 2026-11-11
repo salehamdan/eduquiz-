@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v568-rp-attempt-quota-source-of-truth</title>
+<title>EduQuiz — Smart Assessment v569-rp-delete-access-fixes</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -8844,6 +8844,11 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const uid=String(user.id||"").trim();
     if(sn)liveProbes.push(["studentNumber",sn]);
     if(uid)liveProbes.push(["studentUserId",uid]);
+    // v569: teacher may delete a legacy attempt stored under an alternate student identity.
+    // Subscribe to those same aliases used by the initial fetch, so the tombstone reaches the student.
+    [["studentId",uid],["studentId",sn],["userId",uid],["studentEmail",String(user.email||"").trim()]].forEach(([field,value])=>{
+      if(value&&!liveProbes.some(([f,v])=>f===field&&v===value))liveProbes.push([field,value]);
+    });
     liveProbes.forEach(([field,value])=>{
       try{
         const unsub=db.collection("readingSubmissions").where(field,"==",value).onSnapshot(snap=>{
@@ -10128,7 +10133,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       try{
         const upd=rpDeletedPatch(r,user.id||"teacher");
         setLocalTeacherSubs(prev=>rpMergeById(prev,[upd]));
-        await fsSet("readingSubmissions",r.id,upd);
+        await fsSetStrict("readingSubmissions",r.id,upd);
         done++;
       }catch(e){fail++; console.warn("delete reading attempt failed",r&&r.id,e);}
     }
@@ -10151,12 +10156,13 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
     const patches=family.filter(r=>r&&r.id).map(r=>rpDeletedPatch(r,user.id||"teacher"));
     setLocalTeacherSubs(prev=>rpMergeById(prev,patches));
     try{
-      for(const upd of patches){ await fsSet("readingSubmissions",upd.id,upd); }
+      for(const upd of patches){ await fsSetStrict("readingSubmissions",upd.id,upd); }
       // Also mark the exact attempt in the student's local attempt stores when ids/aliases match.
       try{await rpApplyFinalDecisionToStudentTask(s,"deleted","");}catch(_e){}
       setMsg("✅ Attempt deleted from teacher and student views"+(patches.length>1?" ("+patches.length+" linked copies).":"."));
       try{await reload();}catch(e){}
-    } finally{setTimeout(()=>clearRpButton(bid),250);}
+    }catch(e){setMsg("⚠️ Delete was not saved to Firebase: "+(e&&e.message||e));console.warn("RP deletion failed",e);}
+    finally{setTimeout(()=>clearRpButton(bid),250);}
   }
 
   async function delTask(t){
@@ -15908,7 +15914,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v568-rp-attempt-quota-source-of-truth" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v569-rp-delete-access-fixes" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -16935,12 +16941,12 @@ function App() {
       }catch(e){if(active)setStudentAccessVerified(false);}
       finally{pending=false;}
     };
-    const onFocus=()=>{if(document.visibilityState!=="hidden")check();};
+    const onFocus=()=>{if(document.visibilityState!=="hidden" && !pending)check();};
     check();
     const interval=setInterval(check,45000);
-    window.addEventListener("focus",onFocus);
+    // Visibility is enough; focus plus visibility caused duplicate policy reads.
     document.addEventListener("visibilitychange",onFocus);
-    return()=>{active=false;clearInterval(interval);window.removeEventListener("focus",onFocus);document.removeEventListener("visibilitychange",onFocus);};
+    return()=>{active=false;clearInterval(interval);document.removeEventListener("visibilitychange",onFocus);};
   },[user&&user.id,user&&user.role,user&&user.studentId]);
 
 
@@ -17544,7 +17550,7 @@ function App() {
 
   if(loading) return <div style={{minHeight:"100vh",background:C.dk,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column"}}><div style={{fontSize:"42px",marginBottom:"12px"}}>🎓</div><div style={{color:"#fff",fontSize:"16px",fontWeight:"700",fontFamily:F}}>EduQuiz</div><div style={{color:C.mu,fontSize:"12px",marginTop:"5px",fontFamily:F}}>Loading…</div></div>;
 
-  if(user && user.role==="student" && studentAccessVerified!==true){
+  if(user && user.role==="student" && !parkedTeacher && studentAccessVerified!==true){
     return <div style={{minHeight:"100vh",background:"#0f172a",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"14px",padding:"20px",textAlign:"center"}}><h3>{studentAccessVerified===false?"🚫 دخول الطالب موقوف أو تعذر التحقق من الصلاحية":"جاري التحقق من صلاحية الدخول..."}</h3>{studentAccessVerified===false&&<button onClick={()=>{clearSession();setUser(null);}} style={{padding:"12px",borderRadius:"9px"}}>العودة لتسجيل الدخول</button>}</div>;
   }
   if(user && user.role==="student" && data && !activeStudentInData(user,data)) {
