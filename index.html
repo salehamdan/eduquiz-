@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v567-rp-deleted-attempt-sync</title>
+<title>EduQuiz — Smart Assessment v568-rp-attempt-quota-source-of-truth</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -9105,16 +9105,13 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
       else if(newFinal===oldFinal && rpAttemptTimeMs(r)>=rpAttemptTimeMs(old)) physicalMap.set(k,{...old,...r});
     });
     arr=Array.from(physicalMap.values());
-    const cut=resetCutoffForTask(t.id);
-    // Do not create artificial pending counters when Firebase already has any final teacher decision,
-    // including deleted attempts. Otherwise the student page recreates a fake Waiting card.
-    const hasFinal=terminalCloud.length>0;
-    const hasDeletedDecision=globalDeletedRecords.some(d=>rpSameTaskForStudentRecordFinalAware(d,t));
-    const counted = (cut||hasFinal||hasDeletedDecision) ? arr.length : Math.max(arr.length, getAttemptCounter(t.id));
-    if(hasDeletedDecision) setAttemptCounter(t.id,arr.length);
-    while(arr.length<counted){
-      arr.push({id:"local_counter_"+t.id+"_"+arr.length,taskId:t.id,studentId:user.id,status:"submitted",createdAt:today()});
-    }
+    // v568: the visible, deduplicated submission records are the ONLY source of
+    // attempt quota. A localStorage counter is not a submission and cannot be
+    // decremented on the student's device when a teacher deletes an attempt.
+    // Keeping the old counter fabricated "local_counter_*" pending attempts,
+    // permanently blocking the next recording even after the cloud tombstone.
+    // Local in-flight submissions are already included in `arr` above.
+    setAttemptCounter(t.id,arr.length);
     return arr;
   }
   function extraRetakeAllowed(attempts){
@@ -15911,7 +15908,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v567-rp-deleted-attempt-sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v568-rp-attempt-quota-source-of-truth" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
