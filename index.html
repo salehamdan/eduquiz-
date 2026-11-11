@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v569-rp-delete-access-fixes</title>
+<title>EduQuiz — Smart Assessment v570-rp-cloud-delete-eye-stability</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -15914,7 +15914,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v569-rp-delete-access-fixes" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v570-rp-cloud-delete-eye-stability" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
@@ -17590,8 +17590,11 @@ function App() {
     </div>
   ) : null;
 
-  if(user.role==="teacher") return <TeacherApp user={user} data={data} onLogout={handleLogout} reload={reload} viewAsStudent={viewAsStudent}/>;
-  return <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>{parkedBanner}<div style={{flex:1,minHeight:0}}><StudentApp user={user} data={data} onLogout={parkedTeacher?backToTeacher:handleLogout} reload={reload} directQuiz={directQuiz} clearDirect={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}}/></div></div>;
+  // v570: retain the teacher component instance while previewing a student.
+  return <>
+    {(user.role==="teacher" || parkedTeacher) && <div style={{display:parkedTeacher?"none":"contents"}}><TeacherApp user={parkedTeacher||user} data={data} onLogout={handleLogout} reload={reload} viewAsStudent={viewAsStudent}/></div>}
+    {(user.role!=="teacher") && <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>{parkedBanner}<div style={{flex:1,minHeight:0}}><StudentApp user={user} data={data} onLogout={parkedTeacher?backToTeacher:handleLogout} reload={reload} directQuiz={directQuiz} clearDirect={()=>{setDirectQuiz(null);history.replaceState(null,"",location.pathname);}}/></div></div>}
+  </>;
 }
 
 try {
@@ -18239,6 +18242,11 @@ document.addEventListener("click", function(e){
     // v325: never physically remove the only cloud decision for an RP attempt.
     // Save an exact tombstone with the same id so every student device/view receives the deletion
     // and can suppress stale local attempt markers. No sibling attempt or task is touched.
+    const tomb=(typeof rpDeletedPatch==="function")?rpDeletedPatch(base,(window.__eqCurrentUser&&window.__eqCurrentUser.id)||"teacher"):{...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,visibleToStudent:false,scoreVisible:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    // v570: Cloud is authoritative. Never hide a record locally until the deletion is persisted.
+    if(!(typeof db!=="undefined" && db && db.collection)) throw new Error("Firebase unavailable; deletion was not saved");
+    await db.collection("readingSubmissions").doc(base.id).set(tomb,{merge:true});
+    // Only after confirmed cloud persistence, update teacher-side mirrors.
     rpRememberDeletedAttempt(base);
     // RP324: purge the student's device-side mirror immediately. The cloud tombstone remains
     // authoritative for other devices, but the teacher-eye view must not wait for a listener refresh.
@@ -18251,24 +18259,14 @@ document.addEventListener("click", function(e){
         try{ setAttemptCounter(base.taskId,remaining); }catch(_e){}
       }
     }catch(_e){}
-    const tomb=(typeof rpDeletedPatch==="function")?rpDeletedPatch(base,(window.__eqCurrentUser&&window.__eqCurrentUser.id)||"teacher"):{...base,rpExactDeleted:true,exactAttemptDeleted:true,deletedAttemptExact:true,deleteScope:"single_attempt",deleteMode:"single_attempt",status:"deleted",reviewStatus:"deleted",studentStatus:"deleted",analysisStatus:"deleted",deleted:true,visibleToStudent:false,scoreVisible:false,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const current=recordsLive().concat(records());
     const keepMap=new Map();
     current.forEach(function(r){
-      const id=String(r&& (r.id||r._id) || "");
-      if(!id || id===base.id) return;
-      if(rpIsLocallyDeletedAttempt(r)) return;
+      const id=String(r&&(r.id||r._id)||"");
+      if(!id || id===base.id || rpIsLocallyDeletedAttempt(r)) return;
       keepMap.set(id,{...r,id:id});
     });
     saveRecords(Array.from(keepMap.values()));
-    try{
-      if(typeof fsSet==="function") await fsSet("readingSubmissions", base.id, tomb);
-      else if(typeof db!=="undefined" && db && db.collection) await db.collection("readingSubmissions").doc(base.id).set(tomb,{merge:true});
-      else await cloudSaveRecord(tomb);
-    }catch(e){
-      console.warn("RP v325 tombstone save failed",e&&e.message);
-      throw e;
-    }
     // v528: publish the authoritative tombstone to the shared metadata index only AFTER
     // the cloud write succeeds. This keeps RB and Reading Performance in sync immediately.
     try{
