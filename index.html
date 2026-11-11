@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v570-rp-cloud-delete-eye-stability</title>
+<title>EduQuiz — Smart Assessment v571-rp-exact-deletion-reconciliation</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -8818,6 +8818,35 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
             });
           }catch(_e){}
         }
+        // v571: check exact Firestore document IDs recorded on this student's device.
+        // Legacy teacher submissions may have no queryable student identity fields,
+        // so identity-scoped queries/listeners alone can never retrieve their tombstones.
+        // Read only the student's own known attempt IDs; no collection scan.
+        try{
+          const localIds=new Set();
+          ["rp_student_attempts","rp_attempt_records_v11","rp_attempt_records_v10","rp_attempt_records_v9","rp_attempt_records_v8","rp_attempt_records_v7"].forEach(function(key){
+            try{
+              const rows=JSON.parse(localStorage.getItem(key)||"[]");
+              if(Array.isArray(rows))rows.forEach(function(r){
+                if(r && r.id && rpBelongsToCurrentStudent(r))localIds.add(String(r.id));
+              });
+            }catch(_e){}
+          });
+          // Include cloud rows already known from the previous session.
+          if(cached&&Array.isArray(cached.rows))cached.rows.forEach(function(r){if(r&&r.id&&rpBelongsToCurrentStudent(r))localIds.add(String(r.id));});
+          const ids=Array.from(localIds).filter(id=>!out.has(id)).slice(0,60);
+          for(let k=0;k<ids.length;k+=8){
+            await Promise.all(ids.slice(k,k+8).map(async function(id){
+              try{
+                const doc=await db.collection("readingSubmissions").doc(id).get();
+                if(doc.exists){
+                  const r={...doc.data(),id:doc.id};
+                  if(String(r.source||"")!=="rp_audio_chunk")out.set(id,r);
+                }
+              }catch(err){console.warn("RP exact attempt lookup failed",id,err&&err.message);}
+            }));
+          }
+        }catch(err){console.warn("RP exact attempt reconciliation unavailable",err&&err.message);}
         if(!alive) return;
         const arr=Array.from(out.values()).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);});
         if(sidCache && probeOk) cacheRoot.set(sidCache,{at:Date.now(),rows:arr});
@@ -8871,7 +8900,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
   },[user&&user.id,user&&user.studentId,user&&user.email]);
 
   // V273: one physical recording = one visible attempt, even if an old rp_direct fallback copy exists.
-  const __rpStudentRows=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
+  // v571: direct-ID lookups are explicitly tied to the student's own saved attempts.
+  // Keep them even if the teacher's deletion patch removed legacy identity fields.
+  const __rpStudentRows=[...(data.readingSubmissions||[]).filter(rpBelongsToCurrentStudent),...localRpSubmissions];
   const __rpStudentById={};
   __rpStudentRows.forEach(function(x){ if(x&&x.id)__rpStudentById[String(x.id)]=(function(old){const deleted=z=>z&&(z.deleted===true||String(z.status||"").toLowerCase()==="deleted");return deleted(old)&&!deleted(x)?old:{...old,...x};})(__rpStudentById[String(x.id)]||{}); });
   const __rpStudentDedup=[];
@@ -15914,7 +15945,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v570-rp-cloud-delete-eye-stability" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v571-rp-exact-deletion-reconciliation" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
