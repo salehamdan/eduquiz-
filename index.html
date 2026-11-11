@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v566-rp-upload-rb-bounded</title>
+<title>EduQuiz — Smart Assessment v567-rp-deleted-attempt-sync</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -8789,7 +8789,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     const sidCache=eqDigits(user.studentId||user.studentNumber||user.id||"");
     const cacheRoot=window.__EQ_RP_STUDENT_CACHE||(window.__EQ_RP_STUDENT_CACHE=new Map());
     const cached=sidCache?cacheRoot.get(sidCache):null;
-    if(cached && (Date.now()-Number(cached.at||0))<300000 && Array.isArray(cached.rows) && cached.rows.length){ setLocalRpSubmissions(cached.rows||[]); try{window.__eqReadDiag&&window.__eqReadDiag("cache:student-rp-session",0);}catch(_e){} return ()=>{alive=false;}; }
+    if(cached && Array.isArray(cached.rows) && cached.rows.length){ setLocalRpSubmissions(cached.rows||[]); }
+    // v567: refresh the student-scoped records when the teacher deletes an attempt.
+    // Cached rows are only a placeholder, never a reason to skip Firebase updates.
     (async()=>{
       try{
         const out=new Map();
@@ -8822,13 +8824,51 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
         setLocalRpSubmissions(arr);
       }catch(err){ console.warn("v504 student RP scoped load unavailable",err&&err.message); }
     })();
-    return function(){alive=false;};
+    const unsubs=[];
+    // Two narrowly scoped listeners; no collection-wide scan. The deletion tombstone
+    // replaces the original document, so it is delivered through the same query.
+    const liveById=new Map();
+    let initialLoaded=false;
+    function publishLive(){
+      if(!alive)return;
+      setLocalRpSubmissions(prev=>{
+        const merged=new Map((prev||[]).map(r=>[String(r.id||""),r]));
+        liveById.forEach((r,id)=>merged.set(id,r));
+        const rows=Array.from(merged.values());
+        if(sidCache)cacheRoot.set(sidCache,{at:Date.now(),rows});
+        return rows;
+      });
+    }
+    const liveProbes=[];
+    const sn=String(user.studentId||user.studentNumber||"").trim();
+    const uid=String(user.id||"").trim();
+    if(sn)liveProbes.push(["studentNumber",sn]);
+    if(uid)liveProbes.push(["studentUserId",uid]);
+    liveProbes.forEach(([field,value])=>{
+      try{
+        const unsub=db.collection("readingSubmissions").where(field,"==",value).onSnapshot(snap=>{
+          if(!alive)return;
+          snap.docChanges().forEach(change=>{
+            const doc=change.doc, id=String(doc.id);
+            if(change.type==="removed")liveById.delete(id);
+            else {
+              const r={id,...doc.data()};
+              if(rpBelongsToCurrentStudent(r)&&String(r.source||"")!=="rp_audio_chunk")liveById.set(id,r);
+            }
+          });
+          initialLoaded=true;
+          publishLive();
+        },err=>console.warn("RP student scoped listener",err&&err.message));
+        if(typeof unsub==="function")unsubs.push(unsub);
+      }catch(e){console.warn("RP student listener unavailable",e&&e.message);}
+    });
+    return function(){alive=false;unsubs.forEach(fn=>{try{fn();}catch(_e){}});};
   },[user&&user.id,user&&user.studentId,user&&user.email]);
 
   // V273: one physical recording = one visible attempt, even if an old rp_direct fallback copy exists.
   const __rpStudentRows=[...(data.readingSubmissions||[]),...localRpSubmissions].filter(rpBelongsToCurrentStudent);
   const __rpStudentById={};
-  __rpStudentRows.forEach(function(x){ if(x&&x.id)__rpStudentById[String(x.id)]={...(__rpStudentById[String(x.id)]||{}),...x}; });
+  __rpStudentRows.forEach(function(x){ if(x&&x.id)__rpStudentById[String(x.id)]=(function(old){const deleted=z=>z&&(z.deleted===true||String(z.status||"").toLowerCase()==="deleted");return deleted(old)&&!deleted(x)?old:{...old,...x};})(__rpStudentById[String(x.id)]||{}); });
   const __rpStudentDedup=[];
   Object.values(__rpStudentById).sort(function(a,b){return rpAttemptTimeMs(a)-rpAttemptTimeMs(b);}).forEach(function(x){
     const sid=eqDigits(x.studentNumber||x.studentId||x.studentUserId||x.userId||"")||String(x.studentName||"").trim().toLowerCase();
@@ -9069,7 +9109,9 @@ function ReadingProgressStudent({user,data,reload,onHome,onReading}){
     // Do not create artificial pending counters when Firebase already has any final teacher decision,
     // including deleted attempts. Otherwise the student page recreates a fake Waiting card.
     const hasFinal=terminalCloud.length>0;
-    const counted = (cut||hasFinal) ? arr.length : Math.max(arr.length, getAttemptCounter(t.id));
+    const hasDeletedDecision=globalDeletedRecords.some(d=>rpSameTaskForStudentRecordFinalAware(d,t));
+    const counted = (cut||hasFinal||hasDeletedDecision) ? arr.length : Math.max(arr.length, getAttemptCounter(t.id));
+    if(hasDeletedDecision) setAttemptCounter(t.id,arr.length);
     while(arr.length<counted){
       arr.push({id:"local_counter_"+t.id+"_"+arr.length,taskId:t.id,studentId:user.id,status:"submitted",createdAt:today()});
     }
@@ -15869,7 +15911,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v566-rp-upload-rb-bounded" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v567-rp-deleted-attempt-sync" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
