@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>EduQuiz — Smart Assessment v563-rp-audio-inbox-from-v562</title>
+<title>EduQuiz — Smart Assessment v565-rp-audio-inbox-syntax-fixed</title>
 <!-- RP180_FIREBASE_RP_PURGE_EXCEPT_HUSSEIN_FAYEZ_20260703 -->
 <!-- RP166_STUDENT_FINAL_DECISION_WINS_NO_STALE_PENDING_20260703 -->
 <!-- RP167_STUDENT_TASK_FINAL_STATE_OVERRIDES_PENDING_20260703 -->
@@ -9825,15 +9825,14 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       else prompt("Copy share text:",txt);
     }catch(e){}
   }
-  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(29,Number(retakeLimit)||0)); const storedKey=localStorage.getItem("rp_openai_api_key")||""; if(autoAnalysis && !storedKey){setMsg("⚠️ Auto analysis requires an OpenAI key. Please enter it in the Auto Correction settings above.");return;} const oldTask=tasks.find(t=>t.id===editingTaskId); let savedAudio=modelAudioDataUrl||"";
-    if(teacherAudioFile){
+  async function saveTask(){if(!title.trim()||!text.trim()){setMsg("Add title and text first.");return;} const id=editingTaskId||uid(); const safeLimit=Math.max(0,Math.min(29,Number(retakeLimit)||0)); const storedKey=localStorage.getItem("rp_openai_api_key")||""; if(autoAnalysis && !storedKey){setMsg("⚠️ Auto analysis requires an OpenAI key. Please enter it in the Auto Correction settings above.");return;} const oldTask=tasks.find(t=>t.id===editingTaskId); let savedAudio=modelAudioDataUrl||""; if(teacherAudioFile){
       if(!(FIREBASE_OK&&storage&&storage.ref)){setMsg("⚠️ Firebase Storage unavailable; task not saved.");return;}
-      setTeacherAudioUploading(true);setMsg("⏳ Uploading teacher audio to Firebase Storage...");
+      setTeacherAudioUploading(true);setMsg("⏳ Uploading teacher audio...");
       try{
         const safeName=String(teacherAudioFile.name||"recording").replace(/[^a-zA-Z0-9._-]/g,"_").slice(-80);
         savedAudio=await rpUploadAudio(teacherAudioFile,"rp_model_audio/"+encodeURIComponent(String(user.id))+"/"+encodeURIComponent(id)+"/"+Date.now()+"_"+safeName);
-      }catch(err){setMsg("⚠️ Audio upload failed; task not saved: "+(err.message||err));setTeacherAudioUploading(false);return;}
-      setTeacherAudioUploading(false);
+      }catch(err){setMsg("⚠️ Audio upload failed: "+(err.message||err));return;}
+      finally{setTeacherAudioUploading(false);}
     }
     if(!savedAudio && oldTask && String(oldTask.text||"").trim()===text.trim()) savedAudio=oldTask.modelAudioDataUrl||oldTask.modelAudioUrl||""; const taskObj={id,teacherId:user.id,title:title.trim(),level,wordCount:Number(wordCount),retakeLimit:safeLimit,autoAnalysis:autoAnalysis,openaiKey:autoAnalysis?storedKey:"",modelAudioDataUrl:savedAudio||"",openDate:openDate||"",closeDate:closeDate||"",lines:Math.max(1,Math.ceil(text.trim().split(/\s+/).filter(Boolean).length/8)),text:text.trim(),classIds,studentIds,status:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.status||"open"):"open",createdAt:editingTaskId?(tasks.find(t=>t.id===editingTaskId)?.createdAt||today()):today(),updatedAt:today()}; setLocalTeacherTasks(prev=>rpMergeById(prev,[taskObj])); setMsg("Updating... Saving task"); try{await fsSet("readingTasks",id,taskObj); setMsg((editingTaskId?"✅ Reading task updated.":"✅ Reading task created.")+(savedAudio?" AI audio saved for students.":" No saved AI audio: student will use device voice fallback.")); resetTaskForm(); await reload(); setTimeout(function(){try{reload();}catch(e){}},1200); setTimeout(function(){try{reload();}catch(e){}},3500);}catch(e){setMsg("⚠️ Save task failed.");}}
   async function analyzeOne(sub, forceV2){
@@ -10243,7 +10242,7 @@ function ReadingProgressTeacher({user,data,reload,myClasses,myStudents}){
       <div style={{marginTop:"8px",padding:"10px",border:"1px solid "+C.br,borderRadius:"10px"}}>
         <label style={{display:"block",fontSize:"12px",fontWeight:800}}>🎵 Upload your own audio (MP3, M4A, WAV, WebM, OGG)</label>
         <input type="file" accept="audio/*,.mp3,.m4a,.wav,.webm,.ogg" onChange={e=>{const f=e.target.files&&e.target.files[0];if(!f){setTeacherAudioFile(null);return;}if(f.size>10*1024*1024){setMsg("⚠️ Maximum audio file size is 10 MB.");e.target.value="";return;}setTeacherAudioFile(f);setMsg("🎵 Selected: "+f.name+". Press Save Task to upload.");}} style={{width:"100%",marginTop:"6px"}}/>
-        {teacherAudioFile&&<audio controls src={URL.createObjectURL(teacherAudioFile)} style={{width:"100%",marginTop:"8px"}/>}
+        {teacherAudioFile&&<audio controls src={URL.createObjectURL(teacherAudioFile)} style={{width:"100%",marginTop:"8px"}}/>}
         <div style={{fontSize:"10px",color:C.mu}}>Your uploaded audio overrides AI audio for this task. Without either, students use device speech.</div>
       </div>
       <div style={{fontSize:"11px",color:C.mu,marginTop:"8px",fontWeight:800}}>Select Classes</div>
@@ -15851,7 +15850,7 @@ function TeacherApp({user, data, onLogout, reload, viewAsStudent}) {
 
   return (
     <div style={{height:"100vh",display:"flex",flexDirection:"column",fontFamily:F,background:C.bg}}>
-      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v563-rp-audio-inbox-from-v562" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
+      <HDR title={user.name} sub="Teacher Dashboard · EDUQUIZ v565-rp-audio-inbox-syntax-fixed" right={<><Btn size="sm" color={C.s} onClick={()=>setView("create")}>+ Quiz</Btn><Btn size="sm" color={C.w} onClick={()=>{setNavOpen(false);setReadDiagOpen(false);setViewAsOpen(true);}}>👁</Btn><Btn size="sm" color={C.mu} onClick={()=>{if(confirm("Update to the latest version? The app will reload."))forceUpdate();}}>🔄</Btn><Btn size="sm" color={C.p} onClick={()=>setProfileOpen(true)}>🔐 Login</Btn><Btn size="sm" onClick={onLogout} color="#475569">Logout</Btn></>}/>
       <div style={{position:"relative",background:C.wh,borderBottom:"2px solid "+C.br,padding:"8px 12px",display:"flex",alignItems:"center",gap:"9px",flexShrink:0}}>
         <button onClick={()=>{setTab("overview");setNavOpen(false);setReadDiagOpen(false);}} style={{padding:"9px 12px",border:"1px solid "+(tab==="overview"?"#93c5fd":C.br),borderRadius:"10px",background:tab==="overview"?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>⌂ Main</button>
         <button onClick={()=>{const next=!navOpen;setNavOpen(next);if(!next)setReadDiagOpen(false);}} style={{position:"relative",padding:"9px 12px",border:"1px solid "+C.br,borderRadius:"10px",background:navOpen?"#eff6ff":"#fff",color:C.p,fontWeight:900,fontSize:"13px",cursor:"pointer",fontFamily:F}}>☰ Sections{(referralAlertCount+rtUnreadCount+projectPendingCount)>0&&<span style={{position:"absolute",top:"-7px",right:"-7px",background:C.d,color:"#fff",borderRadius:"999px",minWidth:"20px",height:"20px",padding:"0 5px",fontSize:"11px",lineHeight:"20px",textAlign:"center"}}>{referralAlertCount+rtUnreadCount+projectPendingCount}</span>}</button>
